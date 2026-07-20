@@ -55,6 +55,9 @@ class IProjectOrchestrator(ABC):
     @abstractmethod
     def generate_video(self, project_id: str) -> ProjectRecord: ...
 
+    @abstractmethod
+    def retry_generation(self, project_id: str) -> ProjectRecord: ...
+
 
 class SyncProjectOrchestrator(IProjectOrchestrator):
     """Synchronous, non-durable driver: each method call runs to
@@ -100,6 +103,9 @@ class SyncProjectOrchestrator(IProjectOrchestrator):
 
     def generate_video(self, project_id: str) -> ProjectRecord:
         return self._lifecycle.generate_video(project_id)
+
+    def retry_generation(self, project_id: str) -> ProjectRecord:
+        return self._lifecycle.retry_generation(project_id)
 
     def run_to_completion(self, project_id: str) -> ProjectRecord:
         """Convenience for local dev/tests: drives a freshly-created

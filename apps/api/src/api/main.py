@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from config_sdk import get_settings
 from fastapi import FastAPI
 
-from .routes import jobs, projects
+from .routes import assets, auth, jobs, projects
 from .state import build_app_state
 
 
@@ -23,8 +23,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.include_router(auth.router)
 app.include_router(projects.router)
 app.include_router(jobs.router)
+app.include_router(assets.router)
 
 
 @app.get("/healthz")

@@ -88,6 +88,10 @@ class ProjectActivities:
     def generate_video(self, project_id: str) -> dict[str, Any]:
         return self._lifecycle.generate_video(project_id).to_dict()
 
+    @activity.defn
+    def retry_generation(self, project_id: str) -> dict[str, Any]:
+        return self._lifecycle.retry_generation(project_id).to_dict()
+
     def all_activities(self) -> list[Any]:
         """The bound-method list a Worker registers:
         Worker(..., activities=activities.all_activities())."""
@@ -99,4 +103,5 @@ class ProjectActivities:
             self.approve_render_plan,
             self.reject_render_plan,
             self.generate_video,
+            self.retry_generation,
         ]

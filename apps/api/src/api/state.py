@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from ai_director import CreativeDirector
 from asset_manager import AssetManager
+from auth import IAuthProvider, IUserStore, InMemoryUserStore, LocalAuthProvider
 from config_sdk import Settings
 from creative_compiler import CreativeCompiler
 from director_memory import IDirectorMemoryStore, InMemoryDirectorMemoryStore
@@ -19,6 +20,7 @@ from render_orchestrator import (
     ProjectLifecycle,
     SyncProjectOrchestrator,
 )
+from storage_sdk import IStorageProvider, LocalFilesystemStorageProvider
 from video_engine_adapter.adapters import Wan21Adapter
 from video_engine_adapter.compute import LocalProvider
 from video_engine_sdk import IComputeProvider
@@ -30,6 +32,8 @@ class AppState:
     job_store: IGenerationJobStore
     asset_manager: AssetManager
     orchestrator: IProjectOrchestrator
+    user_store: IUserStore
+    auth_provider: IAuthProvider
 
 
 def build_app_state(settings: Settings) -> AppState:
@@ -69,8 +73,9 @@ def build_app_state(settings: Settings) -> AppState:
     else:
         compute = LocalProvider()
 
+    storage: IStorageProvider = LocalFilesystemStorageProvider()
     job_store: IGenerationJobStore = InMemoryGenerationJobStore()
-    asset_manager = AssetManager()
+    asset_manager = AssetManager(storage=storage)
     pipeline = GenerationPipeline(
         engine=engine, compute_provider=compute, asset_manager=asset_manager, job_store=job_store
     )
@@ -80,9 +85,14 @@ def build_app_state(settings: Settings) -> AppState:
     lifecycle = ProjectLifecycle(director, compiler, pipeline, project_store, memory, events)
     orchestrator: IProjectOrchestrator = SyncProjectOrchestrator(lifecycle)
 
+    user_store: IUserStore = InMemoryUserStore()
+    auth_provider: IAuthProvider = LocalAuthProvider(user_store)
+
     return AppState(
         project_store=project_store,
         job_store=job_store,
         asset_manager=asset_manager,
         orchestrator=orchestrator,
+        user_store=user_store,
+        auth_provider=auth_provider,
     )

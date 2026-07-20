@@ -146,3 +146,59 @@ def test_generate_video_failure_path_sets_status_failed_and_publishes_event():
     assert record.error_message is not None
     assert record.asset_ids == []
     assert stack.events.history[-1].type.value == "generation_failed"
+
+
+class _SwitchableComputeProvider(IComputeProvider):
+    """Fails every job while `.fail` is True, succeeds identically to
+    LocalProvider once flipped - simulates a transient outage that
+    retry-generation recovers from without needing a new render plan."""
+
+    provider_id = "switchable"
+
+    def __init__(self) -> None:
+        self.fail = True
+        self._handles: dict[str, bool] = {}
+
+    def submit(self, payload: EngineJobPayload) -> ComputeJobHandle:
+        job_id = f"job-{len(self._handles)}"
+        self._handles[job_id] = self.fail
+        return ComputeJobHandle(provider_id=self.provider_id, external_job_id=job_id)
+
+    def get_status(self, handle: ComputeJobHandle) -> ComputeJobStatus:
+        failed = self._handles[handle.external_job_id]
+        return ComputeJobStatus.FAILED if failed else ComputeJobStatus.SUCCEEDED
+
+    def fetch_output(self, handle: ComputeJobHandle) -> EngineJobOutput:
+        return EngineJobOutput(output_uri=f"file:///tmp/{handle.external_job_id}.mp4", engine_metadata={})
+
+    def cancel(self, handle: ComputeJobHandle) -> None:
+        pass
+
+
+def test_retry_generation_requires_failed_status():
+    stack = build_stack()
+    record = stack.lifecycle.create_project(**SAMPLE_BRIEF)
+
+    with pytest.raises(ProjectLifecycleError, match="created, expected failed"):
+        stack.lifecycle.retry_generation(record.project_id)
+
+
+def test_retry_generation_recovers_after_transient_failure():
+    compute = _SwitchableComputeProvider()
+    stack = build_stack(compute_provider=compute)
+    record = stack.lifecycle.create_project(**SAMPLE_BRIEF)
+    stack.lifecycle.generate_creative_plan(record.project_id)
+    stack.lifecycle.approve_storyboard(record.project_id)
+    stack.lifecycle.approve_render_plan(record.project_id)
+
+    record = stack.lifecycle.generate_video(record.project_id)
+    assert record.status == ProjectStatus.FAILED
+    assert record.error_message is not None
+
+    compute.fail = False
+    record = stack.lifecycle.retry_generation(record.project_id)
+
+    assert record.status == ProjectStatus.COMPLETED
+    assert record.error_message is None
+    assert len(record.asset_ids) > 0
+    assert stack.events.history[-1].type.value == "generation_completed"

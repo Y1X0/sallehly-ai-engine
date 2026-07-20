@@ -22,6 +22,7 @@ _ACTIVITY_NAMES = [
     "approve_render_plan",
     "reject_render_plan",
     "generate_video",
+    "retry_generation",
 ]
 
 

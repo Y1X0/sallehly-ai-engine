@@ -176,6 +176,19 @@ class ProjectLifecycle:
 
     def generate_video(self, project_id: str) -> ProjectRecord:
         record = self._require(project_id, expected=ProjectStatus.APPROVED)
+        return self._run_generation(record)
+
+    def retry_generation(self, project_id: str) -> ProjectRecord:
+        """Re-runs generation for a project whose previous attempt ended
+        in FAILED, against the same already-approved render plan (no
+        re-approval needed - approval covers the creative content, not
+        the GPU job outcome)."""
+        record = self._require(project_id, expected=ProjectStatus.FAILED)
+        record.error_message = None
+        return self._run_generation(record)
+
+    def _run_generation(self, record: ProjectRecord) -> ProjectRecord:
+        project_id = record.project_id
         self._transition(record, ProjectStatus.GENERATING)
         self._publish(EventType.GENERATION_STARTED, project_id)
 

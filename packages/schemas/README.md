@@ -25,6 +25,7 @@ text.
 | `render_plan.schema.json` | Render Configuration Compiler (via `CreativeCompiler`) | Frontend (human approval gate 2), then Render Orchestrator |
 | `generation_job.schema.json` | Render Orchestrator (`GenerationPipeline`) | Frontend / API (job status polling) |
 | `asset_record.schema.json` | Asset Manager | Render Orchestrator, Frontend/API (asset lookup) |
+| `user.schema.json` | Auth (`IAuthProvider.register`) | Frontend/API (`GET /users/me`) |
 
 ## Rules
 

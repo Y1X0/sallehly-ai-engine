@@ -18,22 +18,112 @@ servers:
     description: Local dev
 
 paths:
-  /projects:
+  /auth/register:
     post:
-      summary: Create a project from a creative brief
+      summary: Register a new user
       description: >
-        Creates the Project (status=created). Does not trigger planning -
-        call POST /projects/{id}/generate-plan next.
+        Creates a user and its personal default workspace
+        (workspace_id=ws_<user_id>). See packages/auth - there is no
+        team/workspace-membership model yet, every user gets exactly one
+        workspace that is theirs alone.
+      security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [workspace_id, created_by, prompt, target_duration_sec, aspect_ratio]
+              required: [email, password]
               properties:
-                workspace_id: { type: string }
-                created_by: { type: string }
+                email: { type: string }
+                password: { type: string }
+      responses:
+        "201":
+          description: The created user (never includes password_hash/password_salt)
+          content:
+            application/json:
+              schema:
+                $ref: "../../packages/schemas/json/user.schema.json"
+        "409":
+          description: Email already registered
+
+  /auth/login:
+    post:
+      summary: Authenticate and receive a bearer token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string }
+                password: { type: string }
+      responses:
+        "200":
+          description: Bearer token + the authenticated user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
+                  user:
+                    $ref: "../../packages/schemas/json/user.schema.json"
+        "401":
+          description: Invalid email or password
+
+  /users/me:
+    get:
+      summary: Get the currently authenticated user
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "../../packages/schemas/json/user.schema.json"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /projects:
+    get:
+      summary: List projects in the caller's own workspace
+      description: >
+        workspace_id is always the authenticated user's own
+        (current_user.workspace_id) - never taken from a query parameter,
+        so a token can only ever list its own workspace's projects.
+      responses:
+        "200":
+          description: Projects
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  projects:
+                    type: array
+                    items:
+                      $ref: "../../packages/schemas/json/project.schema.json"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      summary: Create a project from a creative brief
+      description: >
+        Creates the Project (status=created). Does not trigger planning -
+        call POST /projects/{id}/generate-plan next. workspace_id and
+        created_by are derived from the bearer token, not accepted from
+        the client.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt, target_duration_sec, aspect_ratio]
+              properties:
                 prompt: { type: string }
                 target_duration_sec: { type: number, exclusiveMinimum: 0 }
                 aspect_ratio: { type: string, enum: ["16:9", "9:16", "1:1", "21:9", "4:5"] }
@@ -48,6 +138,8 @@ paths:
             application/json:
               schema:
                 $ref: "../../packages/schemas/json/project.schema.json"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /projects/{project_id}:
     get:
@@ -61,6 +153,8 @@ paths:
             application/json:
               schema:
                 $ref: "../../packages/schemas/json/project.schema.json"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -80,6 +174,8 @@ paths:
             application/json:
               schema:
                 $ref: "../../packages/schemas/json/project.schema.json"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -102,6 +198,8 @@ paths:
             application/json:
               schema:
                 $ref: "../../packages/schemas/json/project.schema.json"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -135,6 +233,8 @@ paths:
             application/json:
               schema:
                 $ref: "../../packages/schemas/json/project.schema.json"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -153,6 +253,8 @@ paths:
             application/json:
               schema:
                 $ref: "../../packages/schemas/json/project.schema.json"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -188,6 +290,8 @@ paths:
             application/json:
               schema:
                 $ref: "../../packages/schemas/json/project.schema.json"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -209,6 +313,32 @@ paths:
             application/json:
               schema:
                 $ref: "../../packages/schemas/json/project.schema.json"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/InvalidTransition"
+
+  /projects/{project_id}/retry-generation:
+    post:
+      summary: Retry generation after a failed attempt
+      description: >
+        Requires status=failed. Re-runs GenerationPipeline.generate_plan
+        against the same already-approved render plan (no re-approval
+        needed - approval covers the creative content, not the GPU job
+        outcome). failed -> generating -> completed (or failed again).
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Project now completed or failed again
+          content:
+            application/json:
+              schema:
+                $ref: "../../packages/schemas/json/project.schema.json"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -232,8 +362,42 @@ paths:
                     type: array
                     items:
                       $ref: "../../packages/schemas/json/asset_record.schema.json"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /assets/upload:
+    post:
+      summary: Upload a reference asset (e.g. an image)
+      description: >
+        Frontend flow: upload here to get an asset_id, then pass it in
+        POST /projects' reference_asset_ids. project_id is optional - a
+        reference image is commonly uploaded before its project exists,
+        in which case the asset is filed under the caller's workspace.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+                project_id: { type: string }
+      responses:
+        "201":
+          description: Registered asset
+          content:
+            application/json:
+              schema:
+                $ref: "../../packages/schemas/json/asset_record.schema.json"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: project_id was given but doesn't exist
 
   /jobs/{job_id}:
     get:
@@ -284,6 +448,22 @@ components:
       schema: { type: string }
 
   responses:
+    Unauthorized:
+      description: Missing/malformed/invalid or expired bearer token
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              detail: { type: string }
+    Forbidden:
+      description: Authenticated, but not the owner of this project
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              detail: { type: string }
     NotFound:
       description: Resource not found
       content:

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import pytest
 from conftest import SAMPLE_BRIEF, build_stack
 from persistence import ProjectStatus
+from render_orchestrator import ProjectLifecycleError
 
 
 def test_run_to_completion_drives_full_flow_with_auto_approval():
@@ -35,6 +37,17 @@ def test_orchestrator_methods_match_lifecycle_step_by_step():
 
     record = stack.orchestrator.generate_video(record.project_id)
     assert record.status == ProjectStatus.COMPLETED
+
+
+def test_orchestrator_exposes_retry_generation():
+    stack = build_stack()
+    record = stack.orchestrator.create_project(**SAMPLE_BRIEF)
+    record = stack.orchestrator.run_to_completion(record.project_id)
+    assert record.status == ProjectStatus.COMPLETED
+
+    # retry only valid from FAILED; a completed project can't be retried
+    with pytest.raises(ProjectLifecycleError, match="completed, expected failed"):
+        stack.orchestrator.retry_generation(record.project_id)
 
 
 def test_two_independent_projects_do_not_interfere():

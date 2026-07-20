@@ -2,19 +2,18 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from auth import User
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from render_orchestrator import ProjectLifecycleError
 
-from ..dependencies import get_app_state
+from ..dependencies import get_app_state, get_current_user
 from ..state import AppState
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
 class CreateProjectRequest(BaseModel):
-    workspace_id: str
-    created_by: str
     prompt: str
     target_duration_sec: float = Field(gt=0)
     aspect_ratio: str
@@ -39,12 +38,41 @@ def _run(fn: Callable[..., Any], *args: Any) -> dict[str, Any]:
     return record.to_dict()
 
 
+def _get_owned_project(project_id: str, state: AppState, current_user: User) -> dict[str, Any]:
+    """Loads a project and enforces ownership. Every project-scoped route
+    goes through this so a token can never read/mutate another user's
+    project just by guessing an id."""
+    record = state.project_store.get(project_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"No such project: {project_id}")
+    if record.created_by != current_user.user_id:
+        raise HTTPException(status_code=403, detail="Not the owner of this project")
+    return record
+
+
+@router.get("")
+def list_projects(
+    state: AppState = Depends(get_app_state),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Lists projects in the caller's own workspace. `workspace_id` is
+    never taken from the client - a token only ever sees its own
+    personal workspace (see packages/auth's personal-workspace-per-user
+    model)."""
+    records = state.project_store.list_for_workspace(current_user.workspace_id)
+    return {"projects": [record.to_dict() for record in records]}
+
+
 @router.post("", status_code=201)
-def create_project(body: CreateProjectRequest, state: AppState = Depends(get_app_state)) -> dict[str, Any]:
+def create_project(
+    body: CreateProjectRequest,
+    state: AppState = Depends(get_app_state),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
     return _run(
         state.orchestrator.create_project,
-        body.workspace_id,
-        body.created_by,
+        current_user.workspace_id,
+        current_user.user_id,
         body.prompt,
         body.target_duration_sec,
         body.aspect_ratio,
@@ -54,51 +82,92 @@ def create_project(body: CreateProjectRequest, state: AppState = Depends(get_app
 
 
 @router.get("/{project_id}")
-def get_project(project_id: str, state: AppState = Depends(get_app_state)) -> dict[str, Any]:
-    record = state.project_store.get(project_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail=f"No such project: {project_id}")
-    return record.to_dict()
+def get_project(
+    project_id: str,
+    state: AppState = Depends(get_app_state),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    return _get_owned_project(project_id, state, current_user).to_dict()
 
 
 @router.post("/{project_id}/generate-plan")
-def generate_plan(project_id: str, state: AppState = Depends(get_app_state)) -> dict[str, Any]:
+def generate_plan(
+    project_id: str,
+    state: AppState = Depends(get_app_state),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    _get_owned_project(project_id, state, current_user)
     return _run(state.orchestrator.generate_creative_plan, project_id)
 
 
 @router.post("/{project_id}/approve-storyboard")
-def approve_storyboard(project_id: str, state: AppState = Depends(get_app_state)) -> dict[str, Any]:
+def approve_storyboard(
+    project_id: str,
+    state: AppState = Depends(get_app_state),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    _get_owned_project(project_id, state, current_user)
     return _run(state.orchestrator.approve_storyboard, project_id)
 
 
 @router.post("/{project_id}/reject-storyboard")
 def reject_storyboard(
-    project_id: str, body: RejectStoryboardRequest, state: AppState = Depends(get_app_state)
+    project_id: str,
+    body: RejectStoryboardRequest,
+    state: AppState = Depends(get_app_state),
+    current_user: User = Depends(get_current_user),
 ) -> dict[str, Any]:
+    _get_owned_project(project_id, state, current_user)
     return _run(state.orchestrator.reject_storyboard, project_id, body.feedback)
 
 
 @router.post("/{project_id}/approve-render")
-def approve_render(project_id: str, state: AppState = Depends(get_app_state)) -> dict[str, Any]:
+def approve_render(
+    project_id: str,
+    state: AppState = Depends(get_app_state),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    _get_owned_project(project_id, state, current_user)
     return _run(state.orchestrator.approve_render_plan, project_id)
 
 
 @router.post("/{project_id}/reject-render")
 def reject_render(
-    project_id: str, body: RejectRenderRequest, state: AppState = Depends(get_app_state)
+    project_id: str,
+    body: RejectRenderRequest,
+    state: AppState = Depends(get_app_state),
+    current_user: User = Depends(get_current_user),
 ) -> dict[str, Any]:
+    _get_owned_project(project_id, state, current_user)
     return _run(state.orchestrator.reject_render_plan, project_id, body.feedback, body.quality_tier)
 
 
 @router.post("/{project_id}/generate-video")
-def generate_video(project_id: str, state: AppState = Depends(get_app_state)) -> dict[str, Any]:
+def generate_video(
+    project_id: str,
+    state: AppState = Depends(get_app_state),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    _get_owned_project(project_id, state, current_user)
     return _run(state.orchestrator.generate_video, project_id)
 
 
+@router.post("/{project_id}/retry-generation")
+def retry_generation(
+    project_id: str,
+    state: AppState = Depends(get_app_state),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    _get_owned_project(project_id, state, current_user)
+    return _run(state.orchestrator.retry_generation, project_id)
+
+
 @router.get("/{project_id}/assets")
-def list_assets(project_id: str, state: AppState = Depends(get_app_state)) -> dict[str, Any]:
-    record = state.project_store.get(project_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail=f"No such project: {project_id}")
+def list_assets(
+    project_id: str,
+    state: AppState = Depends(get_app_state),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    record = _get_owned_project(project_id, state, current_user)
     assets = [state.asset_manager.get(asset_id) for asset_id in record.asset_ids]
     return {"project_id": project_id, "assets": [asset for asset in assets if asset is not None]}

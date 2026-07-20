@@ -15,7 +15,11 @@ depend on `IProjectOrchestrator` rather than calling
 
 | Method & Path | Calls |
 |---|---|
-| `POST /projects` | `orchestrator.create_project` |
+| `POST /auth/register` | `auth_provider.register` |
+| `POST /auth/login` | `auth_provider.authenticate` |
+| `GET /users/me` | `auth_provider.verify_token` (via `get_current_user`) |
+| `GET /projects` | `project_store.list_for_workspace(current_user.workspace_id)` |
+| `POST /projects` | `orchestrator.create_project` (`workspace_id`/`created_by` from the token, not the request body) |
 | `GET /projects/{id}` | `project_store.get` |
 | `POST /projects/{id}/generate-plan` | `orchestrator.generate_creative_plan` |
 | `POST /projects/{id}/approve-storyboard` | `orchestrator.approve_storyboard` |
@@ -23,9 +27,17 @@ depend on `IProjectOrchestrator` rather than calling
 | `POST /projects/{id}/approve-render` | `orchestrator.approve_render_plan` |
 | `POST /projects/{id}/reject-render` | `orchestrator.reject_render_plan` (recompiles the render plan, optionally with a new `quality_tier`) |
 | `POST /projects/{id}/generate-video` | `orchestrator.generate_video` |
+| `POST /projects/{id}/retry-generation` | `orchestrator.retry_generation` (requires status=`failed`) |
 | `GET /projects/{id}/assets` | `asset_manager.get` for each of the project's `asset_ids` |
+| `POST /assets/upload` | `asset_manager.persist_local_copy` + `asset_manager.register` (multipart file upload, e.g. reference images) |
 | `GET /jobs/{id}` | `job_store.get` |
 | `GET /jobs/{id}/status` | `job_store.get` (status/retry_count/error_message only) |
+
+Every route except `/auth/register` and `/auth/login` requires
+`Authorization: Bearer <token>` (`get_current_user`, `401` if
+missing/invalid). Every project-scoped route also checks
+`record.created_by == current_user.user_id` (`403` otherwise) - see
+`packages/auth`.
 
 A `409` is returned when a request doesn't match the project's current
 `ProjectStatus` (e.g. approving a storyboard that isn't

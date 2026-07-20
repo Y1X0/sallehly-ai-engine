@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from ai_director import CreativeDirector
 from asset_manager import AssetManager
+from auth import IAuthProvider, InMemoryUserStore, IUserStore, LocalAuthProvider
 from creative_compiler import CreativeCompiler
 from director_memory import IDirectorMemoryStore, InMemoryDirectorMemoryStore
 from llm_providers.local_heuristic_provider import LocalHeuristicLLMProvider
@@ -36,6 +37,8 @@ class Stack:
     events: InMemoryEventBus
     lifecycle: ProjectLifecycle
     orchestrator: SyncProjectOrchestrator
+    user_store: IUserStore
+    auth_provider: IAuthProvider
 
 
 def build_stack(
@@ -62,6 +65,9 @@ def build_stack(
     lifecycle = ProjectLifecycle(director, compiler, pipeline, project_store, memory, events)
     orchestrator = SyncProjectOrchestrator(lifecycle)
 
+    user_store = InMemoryUserStore()
+    auth_provider = LocalAuthProvider(user_store)
+
     return Stack(
         memory=memory,
         project_store=project_store,
@@ -70,12 +76,23 @@ def build_stack(
         events=events,
         lifecycle=lifecycle,
         orchestrator=orchestrator,
+        user_store=user_store,
+        auth_provider=auth_provider,
     )
 
 
 SAMPLE_BRIEF = dict(
     workspace_id="ws1",
     created_by="user1",
+    prompt="A 12-second warm premium product ad for a minimalist watch",
+    target_duration_sec=12,
+    aspect_ratio="16:9",
+)
+
+# apps/api's POST /projects derives workspace_id/created_by from the
+# authenticated user's token rather than trusting the client - this is
+# the request body shape for API-level tests (see test_api.py).
+SAMPLE_PROJECT_REQUEST = dict(
     prompt="A 12-second warm premium product ad for a minimalist watch",
     target_duration_sec=12,
     aspect_ratio="16:9",
