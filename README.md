@@ -10,18 +10,22 @@ never generates pixels. A separate, swappable **Video Engine** layer
 renders the actual video.
 
 ```
-User Brief
-   -> AI Director (LLM layer, provider-agnostic)
-   -> Creative Compiler (Style / Camera / Motion / Lighting -> Storyboard)
-   -> [approval gate 1: storyboard]
-   -> Render Specification Generator (engine-agnostic RenderPlan)
-   -> [approval gate 2: render plan]
-   -> Video Engine Adapter (Wan2.1)
-   -> Compute Provider (RunPod today, Vast.ai/Kubernetes later)
+POST /projects  (apps/api)
+   -> ProjectLifecycle: Creative Planning
+        -> AI Director (LLM layer, provider-agnostic)
+        -> Creative Compiler (Style / Camera / Motion / Lighting -> Storyboard)
+   -> [approval gate 1: storyboard]  (WAITING_STORYBOARD_APPROVAL)
+        -> Render Specification Generator (engine-agnostic RenderPlan)
+   -> [approval gate 2: render plan]  (WAITING_RENDER_APPROVAL)
+   -> Video Engine Adapter (Wan2.1) + Compute Provider (RunPod / local)
    -> GenerationJob (queued -> running -> completed/failed) + AssetManager
-   -> Post-Processing
+   -> Post-Processing (Phase 5)
    -> Final MP4
 ```
+
+Driven synchronously (`SyncProjectOrchestrator`) today, or by a durable
+`ProjectGenerationWorkflow` (Temporal) in production - same
+`ProjectLifecycle` either way.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full system
 design, [`docs/DECISIONS.md`](docs/DECISIONS.md) for the decision log, and
@@ -29,34 +33,44 @@ design, [`docs/DECISIONS.md`](docs/DECISIONS.md) for the decision log, and
 
 ## Status
 
-**Phase 3 — Video generation layer connected.** The full brief-to-
-generated-artifact pipeline is implemented and tested end-to-end:
+**Phase 4 — Production-grade lifecycle, API, and durable-workflow path.**
+A user can submit a creative idea over real HTTP and the system manages
+the complete lifecycle through to a generated video asset:
 
 - **Phase 1** (`services/ai-director`, `CreativeDirector`): Creative
-  Brief Parser → Story Planner (both LLM-backed, schema-validated +
-  retried structured output) → Scene Generator → Shot Planner
-  (deterministic) → `DirectorPlan`.
-- **Phase 2** (`services/creative-compiler`, `CreativeCompiler`): Style
-  → Camera → Motion → Lighting Directors (all deterministic) → Storyboard
-  Generator → **approval gate 1** → Render Specification Generator
-  (capability-driven, engine-agnostic) → **approval gate 2** →
-  `RenderPlan`.
+  Brief Parser → Story Planner (LLM-backed) → Scene Generator → Shot
+  Planner (deterministic) → `DirectorPlan`.
+- **Phase 2** (`services/creative-compiler`, `CreativeCompiler`): Style →
+  Camera → Motion → Lighting Directors (deterministic) → Storyboard
+  Generator → **approval gate 1** → Render Specification Generator →
+  **approval gate 2** → `RenderPlan`.
 - **Phase 3** (`services/video-engine-adapter`, `services/render-orchestrator`,
-  `services/asset-manager`): `Wan21Adapter` completed (i2v conditioning,
-  seed handling), production `RunPodProvider` (real HTTP client, retry-
-  with-backoff, tested against `httpx.MockTransport`), `GenerationPipeline`
-  tracking each shot as a `GenerationJob` (`queued → running →
-  completed`/`failed`), `AssetManager` registering results with
-  versioning. `CreativeDirector`/`CreativeCompiler` remain completely
-  unaware any of this exists - `GenerationPipeline` is the only bridge
-  (see `docs/adr/0009-generation-pipeline.md`).
+  `services/asset-manager`): `Wan21Adapter` + production `RunPodProvider`
+  (real HTTP client, retry-with-backoff) → `GenerationPipeline` tracking
+  each shot as a `GenerationJob` → `AssetManager`. `CreativeDirector`/
+  `CreativeCompiler` remain unaware any of this exists.
+- **Phase 4** (`services/render-orchestrator`, `packages/persistence`,
+  `apps/api`): `ProjectLifecycle` — the single implementation of
+  `Project Created → Creative Planning → Storyboard Gate → Render Gate →
+  Generation → Asset Processing → Completion`, including reject-with-
+  feedback/regenerate on both gates — driven synchronously today
+  (`SyncProjectOrchestrator`) or, in production, by a real
+  `ProjectGenerationWorkflow` (Temporal: durable, resumes after a crash).
+  `apps/api` exposes the full endpoint surface
+  (`POST /projects`, `.../generate-plan`, `.../approve-storyboard`,
+  `.../approve-render`, `.../generate-video`, `GET /jobs/{id}`,
+  `GET /projects/{id}/assets`, ...), tested end-to-end via
+  `TestClient` against a fully offline default stack
+  (`LocalHeuristicLLMProvider` + `Wan21Adapter` + `LocalProvider` — no
+  API key, no GPU, no network).
 
-Real GPU execution still requires deploying `workers/gpu-worker` with
-actual Wan2.1 weights onto a RunPod endpoint - an infrastructure step
-outside what this repository can execute in this environment. Everything
-on the code side of that boundary is implemented and tested against
-`LocalProvider` (no GPU) and mocked RunPod HTTP responses. See the
-roadmap in `docs/ARCHITECTURE.md#8-roadmap`.
+Two things remain genuinely unexecuted in this environment, both
+documented rather than glossed over: real GPU inference (`workers/gpu-worker`
+needs actual Wan2.1 weights deployed to a GPU) and live Temporal
+execution (its ephemeral test server needs a binary download this
+sandbox's network policy blocks). Everything on the code side of both
+boundaries is implemented and tested against local/mocked equivalents.
+See the roadmap in `docs/ARCHITECTURE.md#8-roadmap`.
 
 ## Repository layout
 
@@ -64,7 +78,7 @@ roadmap in `docs/ARCHITECTURE.md#8-roadmap`.
 |---|---|
 | `apps/` | User-facing applications (web dashboard, public API gateway) |
 | `services/` | Independently deployable backend services — one per pipeline stage |
-| `packages/` | Shared libraries: contracts (`schemas`), provider interfaces (`llm-providers`, `video-engine-sdk`, `storage-sdk`), cross-cutting utilities |
+| `packages/` | Shared libraries: contracts (`schemas`), provider interfaces (`llm-providers`, `video-engine-sdk`, `storage-sdk`), persistence (`persistence`), cross-cutting utilities |
 | `libraries/` | Content, not code: prompt fragments and DirectorPlan templates |
 | `plugins/` | Registered extensions: LLM providers, video engines, post-fx filters |
 | `workers/` | GPU-side execution containers (what actually runs on rented GPUs) |

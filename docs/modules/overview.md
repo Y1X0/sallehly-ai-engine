@@ -24,14 +24,15 @@ for the same list with paths.
 - [Render Specification Generator](../../services/render-config-compiler/README.md)
 - [Prompt Builder](../../services/prompt-builder/README.md) *(not started - prompt composition is currently inline in Render Config Compiler)*
 
-## Execution Layer (implemented, Phase 3)
+## Execution Layer (implemented, Phase 3-4)
 
 - [Video Engine Adapter (Wan2.1 + RunPod)](../../services/video-engine-adapter/README.md)
-- [GenerationPipeline / Render Orchestrator](../../services/render-orchestrator/README.md)
+- [GenerationPipeline + ProjectLifecycle + Temporal workflow](../../services/render-orchestrator/README.md)
 - [GPU Worker](../../workers/gpu-worker/README.md) *(container structurally complete; real inference call needs a GPU deployment)*
 
 ## Delivery Layer
 
+- [API (apps/api)](../../apps/api/README.md) *(implemented, Phase 4 - full project lifecycle over HTTP)*
 - [Post-Processing](../../services/post-processing/README.md)
 - [Export Service](../../services/export-service/README.md)
 
@@ -41,6 +42,7 @@ for the same list with paths.
 - [Config SDK](../../packages/config-sdk/README.md)
 - [Observability](../../packages/observability/README.md)
 - [Director Memory](../../packages/director-memory/README.md)
+- [Project Persistence](../../packages/persistence/README.md) *(implemented, Phase 4)*
 
 ## Contracts
 

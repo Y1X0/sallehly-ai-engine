@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.sallehly.ai/project.schema.json",
   "title": "Project",
-  "description": "Top-level entity that ties a user's request to every artifact produced across the pipeline. One Project may accumulate multiple DirectorPlan revisions (e.g. after 'changes_requested' storyboard feedback).",
+  "description": "Top-level entity that ties a user's request to every artifact produced across the pipeline. Mirrors persistence.ProjectRecord.to_dict() exactly - DirectorPlan/Storyboard/RenderPlan bodies live in IDirectorMemoryStore (queried by project_id, not embedded here); generation_job_ids/asset_ids are references into IGenerationJobStore/AssetManager. See docs/adr/0010-persistence-and-lifecycle.md.",
   "type": "object",
   "required": ["project_id", "workspace_id", "created_by", "status", "brief"],
   "properties": {
@@ -10,35 +10,53 @@
     "workspace_id": { "type": "string" },
     "created_by": { "type": "string", "description": "User id." },
     "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" },
     "status": {
       "type": "string",
-      "enum": ["draft", "planning", "storyboard_review", "rendering", "post_processing", "completed", "failed", "cancelled"]
+      "enum": [
+        "created",
+        "planning",
+        "waiting_storyboard_approval",
+        "waiting_render_approval",
+        "approved",
+        "rejected",
+        "generating",
+        "completed",
+        "failed"
+      ]
+    },
+    "rejected_stage": {
+      "type": ["string", "null"],
+      "enum": ["storyboard", "render_plan", null],
+      "description": "Which gate was most recently rejected, set only while/immediately after status=rejected."
     },
     "brief": {
       "type": "object",
       "description": "The raw user request that seeds the AI Director.",
-      "required": ["prompt"],
+      "required": ["prompt", "target_duration_sec", "aspect_ratio"],
       "properties": {
         "prompt": { "type": "string" },
         "reference_asset_ids": { "type": "array", "items": { "type": "string" } },
         "target_duration_sec": { "type": "number" },
         "aspect_ratio": { "type": "string" },
-        "style_preset_id": { "type": "string" }
+        "style_preset_id": { "type": ["string", "null"] }
       },
       "additionalProperties": false
     },
-    "active_director_plan_id": { "type": "string" },
-    "director_plan_history": {
+    "generation_job_ids": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Ids of prior DirectorPlan revisions, most recent last."
+      "description": "Ids resolvable via IGenerationJobStore, one per shot, set once generate_video has run."
     },
-    "storyboard_id": { "type": "string" },
-    "render_job_ids": {
+    "asset_ids": {
       "type": "array",
-      "items": { "type": "string" }
+      "items": { "type": "string" },
+      "description": "Ids resolvable via AssetManager, one per successfully generated shot."
     },
-    "final_video_asset_id": { "type": "string" }
+    "error_message": {
+      "type": ["string", "null"],
+      "description": "Set when status=failed - the generation failures that caused it."
+    }
   },
   "additionalProperties": false
 }

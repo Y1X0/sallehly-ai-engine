@@ -1,58 +1,83 @@
 # services/render-orchestrator
 
-## GenerationPipeline (Phase 3) + Render Orchestrator (Phase 4)
+## GenerationPipeline (Phase 3) + ProjectLifecycle/Orchestrator/Workflow (Phase 4)
 
-**Responsibility:** drives an approved `RenderPlan`
-(`render_plan.schema.json`) to finished shots: for each `RenderSpec`,
-converts it to the `video_engine_sdk.types.RenderSpec` dataclass, calls
-`IVideoEngine.build_job_payload`, submits via the configured
-`IComputeProvider`, polls to completion, retries on failure, hands the
-result to `AssetManager`, and tracks every step as a `GenerationJob`
-(`generation_job.schema.json`) with a `queued -> running -> completed`/
-`failed` lifecycle.
+**Responsibility:** everything from "a render plan exists" to "GPU
+generation finished" (`GenerationPipeline`), and everything from "a
+project is created" to "a generated video asset exists"
+(`ProjectLifecycle`, orchestrated either synchronously or by a durable
+Temporal workflow).
 
-**Input:** an approved `render_plan.schema.json` (or an individual `render_configuration.schema.json` entry)
+## Contents
 
-**Output:** a `GenerationJob` per shot, each pointing at an `asset_record.schema.json` on success
+```
+jobs.py               GenerationJob / GenerationJobStatus / IGenerationJobStore  (Phase 3)
+pipeline.py            GenerationPipeline - RenderSpec -> engine -> compute -> AssetManager (Phase 3)
+events.py               EventType / Event / IEventBus  (Phase 4)
+project_lifecycle.py    ProjectLifecycle - the one place the full-lifecycle business logic lives (Phase 4)
+orchestrator.py         IProjectOrchestrator / SyncProjectOrchestrator - what apps/api depends on (Phase 4)
+workflows/
+  activities.py          Temporal @activity.defn wrappers around ProjectLifecycle
+  render_workflow.py      Temporal @workflow.defn ProjectGenerationWorkflow
+```
 
-**Consumed by:** Post-Processing (Phase 5, via each job's `output_asset_id`)
+## Three layers
 
-## Two layers, added in two phases
-
-- **`GenerationPipeline` (`pipeline.py`) - Phase 3, implemented.** Plain,
-  synchronous Python: submit, poll (blocking loop), fetch, retry up to
-  `max_retries`. Fully testable today with `LocalProvider` (no GPU) or a
-  mocked `RunPodProvider` (`httpx.MockTransport`).
-- **Temporal workflow (`workflows/render_workflow.py`) - Phase 4, not yet
-  implemented.** Wraps this same logic in Temporal activities for
-  durability (survives process restarts) and turns the human approval
-  gates into proper signals instead of a caller blocking on a Python
-  call. The business logic in `pipeline.py` does not change - Temporal
-  activities call it, they don't reimplement it.
+1. **`GenerationPipeline`** (Phase 3): `RenderSpec` dict → `IVideoEngine`
+   + `IComputeProvider` → `GenerationJob` → `AssetManager`. See
+   `docs/adr/0009-generation-pipeline.md`.
+2. **`ProjectLifecycle`** (Phase 4): the full flow -
+   `create_project → generate_creative_plan → approve/reject_storyboard →
+   approve/reject_render_plan → generate_video` - composing
+   `CreativeDirector` + `CreativeCompiler` + `GenerationPipeline` +
+   `IProjectStore`, publishing an `Event` at every transition. **This is
+   the only place this logic lives** - see
+   `docs/adr/0010-persistence-and-lifecycle.md`.
+3. **Two drivers of `ProjectLifecycle`**, same method calls either way:
+   - **`SyncProjectOrchestrator`** (`orchestrator.py`): synchronous,
+     in-process. What `apps/api` and every test in this repo use.
+   - **`ProjectGenerationWorkflow`** (`workflows/`): a real Temporal
+     workflow whose activities (`workflows/activities.py`) each call one
+     `ProjectLifecycle` method. Durable - survives a worker crash,
+     resumes from Temporal's replayed event history - which
+     `SyncProjectOrchestrator` cannot do. **Not executable in this
+     environment**: `temporalio.testing.WorkflowEnvironment`'s ephemeral
+     test server downloads a native binary from `temporal.download` on
+     first use, which this sandbox's network policy blocks (the same
+     class of limitation as Phase 3's live GPU inference). The workflow/
+     activity definitions are verified to register correctly with the
+     `temporalio` SDK (decorators, signal/query names) but have not been
+     executed end-to-end against a live or ephemeral Temporal server -
+     see `docs/adr/0010-persistence-and-lifecycle.md` for exactly what
+     was and wasn't verifiable here.
 
 ## Interface
 
 ```python
-from render_orchestrator import GenerationPipeline
-from video_engine_adapter.adapters import Wan21Adapter
-from video_engine_adapter.compute import LocalProvider  # or RunPodProvider
+from render_orchestrator import GenerationPipeline, ProjectLifecycle, SyncProjectOrchestrator
 
-pipeline = GenerationPipeline(
-    engine=Wan21Adapter(),
-    compute_provider=LocalProvider(),
-)
-jobs = pipeline.generate_plan(approved_render_plan)  # one GenerationJob per shot
+pipeline = GenerationPipeline(engine=Wan21Adapter(), compute_provider=LocalProvider())
+lifecycle = ProjectLifecycle(creative_director, creative_compiler, pipeline, project_store, memory)
+orchestrator = SyncProjectOrchestrator(lifecycle)
+
+record = orchestrator.create_project(workspace_id="ws1", created_by="u1", prompt="...", target_duration_sec=12, aspect_ratio="16:9")
+orchestrator.generate_creative_plan(record.project_id)
+orchestrator.approve_storyboard(record.project_id)
+orchestrator.approve_render_plan(record.project_id)
+record = orchestrator.generate_video(record.project_id)  # -> COMPLETED, asset_ids populated
 ```
 
-Neither this class nor anything above it in the call stack (`CreativeCompiler`,
-`CreativeDirector`) is coupled to Wan2.1 specifically - swap the `engine`/
-`compute_provider` constructor arguments for a future custom model or a
-different GPU provider and nothing else changes. See
-`docs/adr/0009-generation-pipeline.md`.
+Neither `ProjectLifecycle` nor `GenerationPipeline` nor anything above
+them in the call stack (`CreativeCompiler`, `CreativeDirector`) is
+coupled to Wan2.1, Claude, or Temporal specifically - every dependency is
+injected already configured. See ADR 0001, 0002, 0009, 0010.
 
-## Status (Phase 3)
+## Status (Phase 4)
 
-`GenerationPipeline`, `GenerationJob`/`IGenerationJobStore` implemented
-and tested (`tests/test_generation_pipeline.py`) against `LocalProvider`,
-including forced-failure/retry paths. `workflows/render_workflow.py`
-remains a Phase 4 target.
+`GenerationPipeline` (Phase 3), `ProjectLifecycle`, `SyncProjectOrchestrator`,
+`IEventBus`, and the Temporal workflow/activity definitions are all
+implemented. The full project lifecycle - including the reject/
+regenerate path on both approval gates and the generation failure path -
+is tested end-to-end through `apps/api`'s real HTTP endpoints
+(`tests/test_api.py`) and directly (`tests/test_project_lifecycle.py`,
+`tests/test_project_orchestrator.py`).

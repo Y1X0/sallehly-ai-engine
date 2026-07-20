@@ -7,10 +7,30 @@ dependencies = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
   "schemas",
+  "config-sdk",
+  "ai-director",
+  "creative-compiler",
+  "director-memory",
+  "llm-providers",
+  "render-orchestrator",
+  "persistence",
+  "asset-manager",
+  "video-engine-adapter",
+  "video-engine-sdk",
 ]
 
 [tool.uv.sources]
 schemas = { workspace = true }
+config-sdk = { workspace = true }
+ai-director = { workspace = true }
+creative-compiler = { workspace = true }
+director-memory = { workspace = true }
+llm-providers = { workspace = true }
+render-orchestrator = { workspace = true }
+persistence = { workspace = true }
+asset-manager = { workspace = true }
+video-engine-adapter = { workspace = true }
+video-engine-sdk = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

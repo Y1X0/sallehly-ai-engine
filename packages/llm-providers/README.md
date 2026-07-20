@@ -38,7 +38,7 @@ llm = RetryingLLMProvider(ClaudeProvider(api_key=...), max_retries=2)
 |---|---|---|
 | Claude (Anthropic) | `claude_provider.py` | Implemented — forced tool-use structured output via the `anthropic` SDK |
 | OpenAI | *(not started)* | Add as `openai_provider.py` when needed |
-| Local / self-hosted LLM | *(not started)* | Add as `local_llm_provider.py` when needed |
+| Local heuristic (offline dev/API default) | `local_heuristic_provider.py`: `LocalHeuristicLLMProvider` | Implemented — keyword/regex stubs for `CreativeBrief`/`StoryOutline`, no network or API key. Answers *arbitrary* requests (unlike `FakeLLMProvider`'s fixed scripted list), so it's what `apps/api` runs against by default in this environment. Never for production use. |
 | Test double | `testing.py`: `FakeLLMProvider` | Implemented — scripted responses, used by `tests/test_creative_pipeline.py` |
 
 ## Adding a new provider

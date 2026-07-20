@@ -12,8 +12,8 @@ either side be replaced without rewriting the rest of the system. See
 
 ```mermaid
 flowchart TD
-    U[User / Client] --> API[apps/api]
-    API --> ORCH[Render Orchestrator<br/>Phase 3: GenerationPipeline<br/>Phase 4: + Temporal Workflow]
+    U[User / Client] --> API["apps/api<br/>(IProjectOrchestrator)"]
+    API --> ORCH["ProjectLifecycle<br/>(services/render-orchestrator)<br/>driven by SyncProjectOrchestrator today,<br/>ProjectGenerationWorkflow (Temporal) in production"]
 
     subgraph CD["CreativeDirector orchestrator (services/ai-director)"]
         BP[Creative Brief Parser<br/>LLM]
@@ -69,6 +69,10 @@ ADR 0007 originally had it, and why there are two approval gates -
 storyboard (catches a wrong shot/camera/lighting plan) and render plan
 (catches anything specific to the engine-compiled RenderSpecs, e.g. a
 shot split for exceeding `max_shot_duration_sec`) - rather than one.
+See [ADR 0010](adr/0010-persistence-and-lifecycle.md) for why
+`ProjectLifecycle` is the single place that owns sequencing through both
+gates and generation, with two interchangeable drivers (synchronous vs.
+Temporal) sharing the exact same interface.
 
 ## 3. Data flow contracts
 
@@ -115,16 +119,21 @@ description. Summary:
 | Creative Compiler | Render Spec Generator | `services/render-config-compiler` | **Implemented** (deterministic) |
 | Creative Compiler | Prompt Builder (dedicated fragment library) | `services/prompt-builder` | Not started - prompt composition is currently inline in Render Config Compiler |
 | Execution | Video Engine Adapter (Wan2.1 + RunPod) | `services/video-engine-adapter` | **Implemented** (Wan2.1, RunPod, local); Vast.ai still a stub |
-| Execution | GenerationPipeline (job lifecycle) | `services/render-orchestrator` | **Implemented**; Temporal workflow wrapper is Phase 4 |
+| Execution | GenerationPipeline (job lifecycle) | `services/render-orchestrator` | **Implemented** |
+| Execution | ProjectLifecycle + SyncProjectOrchestrator | `services/render-orchestrator` | **Implemented** |
+| Execution | ProjectGenerationWorkflow (Temporal) | `services/render-orchestrator/workflows` | Implemented, structurally validated; not executable in this environment (ADR 0010) |
 | Execution | GPU Worker container | `workers/gpu-worker` | Structurally complete; real Wan2.1 inference call needs a GPU deployment step outside this environment |
+| Delivery | API layer | `apps/api` | **Implemented** - full project lifecycle over real HTTP, tested with `TestClient` |
 | Delivery | Post-Processing | `services/post-processing` | Phase 5 |
 | Delivery | Export Service | `services/export-service` | Phase 5 |
 | Cross-cutting | Asset Manager | `services/asset-manager` | **Implemented** |
 | Cross-cutting | Config SDK | `packages/config-sdk` | **Implemented** |
-| Cross-cutting | Observability | `packages/observability` | Phase 4 |
+| Cross-cutting | Observability | `packages/observability` | Phase 5+ |
 | Cross-cutting | Director Memory | `packages/director-memory` | **Implemented** |
+| Cross-cutting | Project persistence | `packages/persistence` | **Implemented** (in-memory; Postgres-backed is a later swap) |
+| Cross-cutting | Event system | `services/render-orchestrator` (`events.py`) | **Implemented** (in-memory; external delivery e.g. webhooks/queue is a later swap) |
 | Contracts | Schemas | `packages/schemas` | **Implemented** |
-| Contracts | LLM Provider interface | `packages/llm-providers` | **Implemented** |
+| Contracts | LLM Provider interface | `packages/llm-providers` | **Implemented** (Claude, local-heuristic offline default) |
 | Contracts | Prompt template engine | `packages/prompt-engine` | **Implemented** |
 | Contracts | Video Engine / Compute Provider interfaces | `packages/video-engine-sdk` | **Implemented** |
 | Contracts | Storage abstraction | `packages/storage-sdk` | **Implemented** (local filesystem; S3/R2 Phase 5+) |
@@ -189,6 +198,8 @@ code - this is a documented extension point, not a built feature.
 | LLM prompt templating | Jinja2, versioned YAML files (`packages/prompt-engine` + `libraries/prompt-templates`) | [0006](adr/0006-structured-output-retry-decorator.md) |
 | Structured output enforcement | Anthropic tool-use forced `tool_choice` + `RetryingLLMProvider` schema-validate-and-retry decorator | [0006](adr/0006-structured-output-retry-decorator.md) |
 | Compute provider HTTP client | `httpx` (sync client, `httpx.MockTransport` in tests) | [0009](adr/0009-generation-pipeline.md) |
+| API framework | FastAPI + Pydantic request models, `fastapi.testclient.TestClient` in tests | [0010](adr/0010-persistence-and-lifecycle.md) |
+| Durable workflow SDK | `temporalio` (Python SDK) - real workflow/activity code, not live-executable in this environment | [0010](adr/0010-persistence-and-lifecycle.md) |
 | Package/workspace management | `uv` workspace (`pyproject.toml` at root) | — |
 | Local dev | `docker-compose.yml` (Postgres, Redis, MinIO, optional Temporal dev server) | — |
 
@@ -205,9 +216,9 @@ independent product, not a feature of it.
 | **0 — Foundation** | Monorepo structure, JSON Schemas, `ILLMProvider`/`IVideoEngine`/`IComputeProvider` interfaces, Wan2.1 adapter spec + stub, API contract, local dev environment | Done |
 | **1 — Creative Director MVP** | `ClaudeProvider.generate_structured` (real Anthropic SDK call, untested against the live API in this environment), `RetryingLLMProvider`, `CreativeBriefParser`, `StoryPlanner`, `SceneGenerator`, `ShotPlanner`, `CreativeDirector` orchestrator, `packages/prompt-engine` + versioned templates, `packages/director-memory`, end-to-end tested against `FakeLLMProvider` | Done |
 | **2 — Creative Compiler** | Camera/Motion/Lighting/Style Directors, Storyboard Generator (gate 1), Render Specification Generator + `render_plan.schema.json` (gate 2), `CreativeCompiler` orchestrator, end-to-end tested from `FakeLLMProvider` through both approval gates | Done |
-| **3 — Video Engine Adapter + Wan2.1** *(this repo's current state)* | `Wan21Adapter` completed (i2v conditioning mapping, seed handling, generation params), production `RunPodProvider` (real HTTP client, retry-with-backoff, tested against `httpx.MockTransport`), `GenerationPipeline` + `GenerationJob` lifecycle, `AssetManager` + `packages/storage-sdk`, engine/compute registries wired in `config_sdk`. Real GPU execution still needs `workers/gpu-worker` deployed with actual Wan2.1 weights - an infra step outside this environment | Done |
-| **4 — Orchestration** | Temporal workflow wrapping `GenerationPipeline`'s logic in durable activities, storyboard/render-plan human-approval signals over the real API | Next |
-| **5 — Post-Processing & Export** | Stitching, upscaling, color grade, audio, multi-format export | Not started |
+| **3 — Video Engine Adapter + Wan2.1** | `Wan21Adapter` completed (i2v conditioning mapping, seed handling, generation params), production `RunPodProvider` (real HTTP client, retry-with-backoff, tested against `httpx.MockTransport`), `GenerationPipeline` + `GenerationJob` lifecycle, `AssetManager` + `packages/storage-sdk`, engine/compute registries wired in `config_sdk`. Real GPU execution still needs `workers/gpu-worker` deployed with actual Wan2.1 weights - an infra step outside this environment | Done |
+| **4 — Orchestration** *(this repo's current state)* | `ProjectLifecycle` (full create→plan→both gates→generate flow, with reject/regenerate on each gate), `packages/persistence` (`IProjectStore`), event system (`IEventBus`), `SyncProjectOrchestrator`, real `ProjectGenerationWorkflow`/activities (`temporalio`, structurally validated but not live-executable here), `apps/api` implementing the full project/job/asset endpoint surface, `LocalHeuristicLLMProvider` for a fully offline API. Tested end-to-end via `TestClient` including failure and regeneration paths | Done |
+| **5 — Post-Processing & Export** | Stitching, upscaling, color grade, audio, multi-format export | Next |
 | **6 — Frontend MVP** | `apps/web-dashboard`: brief → storyboard approval → render → download | Not started |
 | **7 — Scale-out** | `VastAIProvider` completion, `KubernetesProvider`, autoscaling, caching, billing | Not started |
 | **8 — Custom foundation model track** | `services/training`; new `IVideoEngine` implementation replacing/augmenting Wan2.1 | Not started |

@@ -1,18 +1,27 @@
 [project]
 name = "render-orchestrator"
 version = "0.1.0"
-description = "Render Orchestrator"
+description = "GenerationPipeline (Phase 3) + ProjectLifecycle/ProjectOrchestrator (Phase 4) + Temporal workflow"
 requires-python = ">=3.11"
 dependencies = [
   "schemas",
   "video-engine-sdk",
   "asset-manager",
+  "ai-director",
+  "creative-compiler",
+  "director-memory",
+  "persistence",
+  "temporalio>=1.30.0",
 ]
 
 [tool.uv.sources]
 schemas = { workspace = true }
 video-engine-sdk = { workspace = true }
 asset-manager = { workspace = true }
+ai-director = { workspace = true }
+creative-compiler = { workspace = true }
+director-memory = { workspace = true }
+persistence = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

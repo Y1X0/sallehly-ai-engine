@@ -1,0 +1,222 @@
+from __future__ import annotations
+
+import uuid
+from typing import Any
+
+from ai_director import CreativeDirector, ProjectBrief
+from creative_compiler import CreativeCompiler
+from director_memory import IDirectorMemoryStore
+from persistence import IProjectStore, ProjectRecord, ProjectStatus
+
+from .events import Event, EventType, IEventBus, InMemoryEventBus
+from .jobs import GenerationJobStatus
+from .pipeline import GenerationPipeline
+
+
+class ProjectLifecycleError(Exception):
+    """Raised when a requested transition isn't valid for the project's
+    current status (e.g. approving a storyboard that isn't awaiting
+    approval), or the project/artifact doesn't exist."""
+
+
+class ProjectLifecycle:
+    """The step implementations behind the full project lifecycle:
+
+        Project Created -> Creative Planning -> Storyboard Approval Gate
+                         -> Render Plan Approval Gate -> Generation Job
+                         -> GPU Generation -> Asset Processing -> Completion
+
+    This is the ONE place this logic lives. Both the Temporal workflow
+    (workflows/, durable, production) and ProjectOrchestrator
+    (orchestrator.py, synchronous, local dev/testing) call these same
+    methods - see docs/adr/0010-persistence-and-lifecycle.md for why the
+    logic isn't duplicated between the two.
+
+    Does not import or know about Wan2.1/RunPod/Claude specifically:
+    CreativeDirector, CreativeCompiler, and GenerationPipeline are
+    injected already configured with whatever concrete providers are
+    active (see ADR 0001, 0002, 0009) - this class only calls the
+    provider-agnostic methods those three already exposed in Phases 1-3.
+    """
+
+    def __init__(
+        self,
+        creative_director: CreativeDirector,
+        creative_compiler: CreativeCompiler,
+        generation_pipeline: GenerationPipeline,
+        project_store: IProjectStore,
+        memory: IDirectorMemoryStore,
+        event_bus: IEventBus | None = None,
+    ) -> None:
+        self._director = creative_director
+        self._compiler = creative_compiler
+        self._pipeline = generation_pipeline
+        self._projects = project_store
+        self._memory = memory
+        self._events = event_bus or InMemoryEventBus()
+
+    def create_project(
+        self,
+        workspace_id: str,
+        created_by: str,
+        prompt: str,
+        target_duration_sec: float,
+        aspect_ratio: str,
+        reference_asset_ids: list[str] | None = None,
+        style_preset_id: str | None = None,
+    ) -> ProjectRecord:
+        record = ProjectRecord(
+            project_id=f"proj_{uuid.uuid4().hex[:12]}",
+            workspace_id=workspace_id,
+            created_by=created_by,
+            brief={
+                "prompt": prompt,
+                "target_duration_sec": target_duration_sec,
+                "aspect_ratio": aspect_ratio,
+                "reference_asset_ids": reference_asset_ids or [],
+                "style_preset_id": style_preset_id,
+            },
+            status=ProjectStatus.CREATED,
+        )
+        self._projects.create(record)
+        self._publish(EventType.PROJECT_CREATED, record.project_id)
+        return record
+
+    def generate_creative_plan(self, project_id: str) -> ProjectRecord:
+        record = self._require(project_id)
+        self._transition(record, ProjectStatus.PLANNING)
+
+        brief = ProjectBrief(
+            project_id=project_id,
+            prompt=record.brief["prompt"],
+            target_duration_sec=record.brief["target_duration_sec"],
+            aspect_ratio=record.brief["aspect_ratio"],
+            reference_asset_ids=record.brief.get("reference_asset_ids") or None,
+            style_preset_id=record.brief.get("style_preset_id"),
+        )
+        director_plan = self._director.generate_director_plan(brief)
+        self._publish(EventType.PLAN_GENERATED, project_id, {"logline": director_plan["logline"]})
+
+        _, storyboard = self._compiler.compile_storyboard(director_plan)
+        self._publish(EventType.STORYBOARD_READY, project_id, {"frame_count": len(storyboard["frames"])})
+
+        self._transition(record, ProjectStatus.WAITING_STORYBOARD_APPROVAL)
+        return record
+
+    def approve_storyboard(self, project_id: str) -> ProjectRecord:
+        record = self._require(project_id, expected=ProjectStatus.WAITING_STORYBOARD_APPROVAL)
+
+        storyboard = self._latest("storyboard", project_id)
+        self._compiler.approve_storyboard(project_id, storyboard)
+
+        render_plan = self._compiler.compile_render_plan(project_id)
+        self._publish(EventType.RENDER_READY, project_id, {"shot_count": len(render_plan["render_specs"])})
+
+        self._transition(record, ProjectStatus.WAITING_RENDER_APPROVAL)
+        return record
+
+    def reject_storyboard(self, project_id: str, feedback: list[str]) -> ProjectRecord:
+        record = self._require(project_id, expected=ProjectStatus.WAITING_STORYBOARD_APPROVAL)
+
+        storyboard = self._latest("storyboard", project_id)
+        self._compiler.request_storyboard_changes(
+            project_id, storyboard, feedback=[{"comment": item} for item in feedback]
+        )
+        record.rejected_stage = "storyboard"
+        self._transition(record, ProjectStatus.REJECTED)
+
+        director_plan = self._director.regenerate_with_feedback(project_id, feedback)
+        self._publish(
+            EventType.PLAN_GENERATED, project_id, {"logline": director_plan["logline"], "revision": True}
+        )
+
+        _, new_storyboard = self._compiler.compile_storyboard(director_plan)
+        self._publish(
+            EventType.STORYBOARD_READY,
+            project_id,
+            {"frame_count": len(new_storyboard["frames"]), "revision": True},
+        )
+
+        record.rejected_stage = None
+        self._transition(record, ProjectStatus.WAITING_STORYBOARD_APPROVAL)
+        return record
+
+    def approve_render_plan(self, project_id: str) -> ProjectRecord:
+        record = self._require(project_id, expected=ProjectStatus.WAITING_RENDER_APPROVAL)
+
+        render_plan = self._latest("render_plan", project_id)
+        self._compiler.approve_render_plan(project_id, render_plan)
+
+        self._transition(record, ProjectStatus.APPROVED)
+        return record
+
+    def reject_render_plan(
+        self, project_id: str, feedback: list[str], quality_tier: str | None = None
+    ) -> ProjectRecord:
+        record = self._require(project_id, expected=ProjectStatus.WAITING_RENDER_APPROVAL)
+
+        render_plan = self._latest("render_plan", project_id)
+        self._compiler.request_render_plan_changes(
+            project_id, render_plan, feedback=[{"comment": item} for item in feedback]
+        )
+        record.rejected_stage = "render_plan"
+        self._transition(record, ProjectStatus.REJECTED)
+
+        kwargs = {"quality_tier": quality_tier} if quality_tier else {}
+        new_render_plan = self._compiler.compile_render_plan(project_id, **kwargs)
+        self._publish(
+            EventType.RENDER_READY,
+            project_id,
+            {"shot_count": len(new_render_plan["render_specs"]), "revision": True},
+        )
+
+        record.rejected_stage = None
+        self._transition(record, ProjectStatus.WAITING_RENDER_APPROVAL)
+        return record
+
+    def generate_video(self, project_id: str) -> ProjectRecord:
+        record = self._require(project_id, expected=ProjectStatus.APPROVED)
+        self._transition(record, ProjectStatus.GENERATING)
+        self._publish(EventType.GENERATION_STARTED, project_id)
+
+        render_plan = self._latest("render_plan", project_id)
+        jobs = self._pipeline.generate_plan(render_plan)
+
+        record.generation_job_ids = [job.job_id for job in jobs]
+        record.asset_ids = [job.output_asset_id for job in jobs if job.output_asset_id]
+
+        failed = [job for job in jobs if job.status == GenerationJobStatus.FAILED]
+        if failed:
+            record.error_message = "; ".join(job.error_message or "unknown error" for job in failed)
+            self._transition(record, ProjectStatus.FAILED)
+            self._publish(
+                EventType.GENERATION_FAILED, project_id, {"failed_shot_ids": [job.shot_id for job in failed]}
+            )
+        else:
+            self._transition(record, ProjectStatus.COMPLETED)
+            self._publish(EventType.GENERATION_COMPLETED, project_id, {"asset_ids": record.asset_ids})
+
+        return record
+
+    def _require(self, project_id: str, expected: ProjectStatus | None = None) -> ProjectRecord:
+        record = self._projects.get(project_id)
+        if record is None:
+            raise ProjectLifecycleError(f"No such project: {project_id}")
+        if expected is not None and record.status != expected:
+            raise ProjectLifecycleError(
+                f"Project {project_id} is {record.status.value}, expected {expected.value}"
+            )
+        return record
+
+    def _latest(self, stage: str, project_id: str) -> dict[str, Any]:
+        entry = self._memory.latest(project_id, stage)
+        if entry is None:
+            raise ProjectLifecycleError(f"No {stage} found for project {project_id}")
+        return entry.content
+
+    def _transition(self, record: ProjectRecord, status: ProjectStatus) -> None:
+        record.status = status
+        self._projects.save(record)
+
+    def _publish(self, event_type: EventType, project_id: str, data: dict[str, Any] | None = None) -> None:
+        self._events.publish(Event(type=event_type, project_id=project_id, data=data or {}))
