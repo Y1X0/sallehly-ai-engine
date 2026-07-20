@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.sallehly.ai/lighting.schema.json",
   "title": "LightingSetup",
-  "description": "Output of the Lighting Engine for a single shot.",
+  "description": "Output of the Lighting Director for a single shot.",
   "type": "object",
   "required": ["time_of_day", "mood"],
   "properties": {
@@ -25,6 +25,20 @@
     },
     "fill_light_ratio": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.5 },
     "rim_light": { "type": "boolean", "default": false },
+    "volumetric_effects": {
+      "type": "object",
+      "description": "Atmospheric effects (haze, god-rays, fog) - separate from key/fill/rim, which light the subject.",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "intensity": { "type": "string", "enum": ["subtle", "medium", "strong"], "default": "subtle" }
+      },
+      "additionalProperties": false
+    },
+    "grading_direction": {
+      "type": "string",
+      "description": "Advisory color-grading hint derived from this shot's lighting (e.g. 'warm highlights, deep cool shadows'). The Style Director owns the actual color_grade values on the global style; this is input to that decision, not a competing source of truth.",
+      "examples": ["warm highlights, soft shadows", "neutral, balanced tones", "cool shadows, warm practicals"]
+    },
     "environment_reference": {
       "type": "string",
       "description": "Reference to an HDRI/environment asset id in the Asset Manager, if any."

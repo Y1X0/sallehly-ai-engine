@@ -21,14 +21,14 @@ flowchart TD
         BP --> STP
     end
 
-    subgraph L1[Creative Compiler - Phase 2]
+    subgraph CC["CreativeCompiler orchestrator (services/creative-compiler)"]
         SB[Scene Generator]
         SP[Shot Planner]
-        SG[Storyboard Generator]
+        STY[Style Director]
         CAM[Camera Director]
         MOT[Motion Director]
         LIT[Lighting Director]
-        STY[Style Director]
+        SG[Storyboard Generator]
         RC[Render Spec Generator]
     end
 
@@ -44,21 +44,25 @@ flowchart TD
     end
 
     ORCH --> BP
-    STP --> SB --> SP --> SG
-    SG -.->|human approval gate 1: story/shots| API
-    SG --> CAM --> MOT --> LIT --> STY --> RC
-    RC -.->|human approval gate 2: full render, optional| API
+    STP --> SB --> SP
+    SP --> STY --> CAM --> MOT --> LIT --> SG
+    SG -.->|approval gate 1: storyboard| API
+    SG --> RC
+    RC -.->|approval gate 2: render plan| API
     RC --> ORCH
     ORCH --> ENGINE --> COMPUTE
     COMPUTE --> ORCH
     ORCH --> PP --> EXP --> CDN --> API
 ```
 
-See [ADR 0007](adr/0007-pipeline-stage-terminology-and-ordering.md) for
-why the storyboard approval gate sits right after Shot Planner (cheapest
-possible checkpoint: catches a wrong story/shot breakdown before any
-per-shot camera/lighting/motion/style planning runs) rather than at the
-end of the Creative Compiler.
+See [ADR 0008](adr/0008-storyboard-after-technical-planning.md) for why
+the Storyboard Generator runs after Camera/Motion/Lighting planning
+(a storyboard frame needs to describe lens choice and lighting, which
+don't exist until those Directors have run) rather than before it as
+ADR 0007 originally had it, and why there are two approval gates -
+storyboard (catches a wrong shot/camera/lighting plan) and render plan
+(catches anything specific to the engine-compiled RenderSpecs, e.g. a
+shot split for exceeding `max_shot_duration_sec`) - rather than one.
 
 ## 3. Data flow contracts
 
@@ -69,9 +73,10 @@ flowchart LR
     SO --> DP["DirectorPlan<br/>(director_plan.schema.json)"]
     DP --> Scene["Scene[]<br/>(scene.schema.json)"]
     Scene --> Shot["Shot<br/>(shot.schema.json)<br/>camera+motion+lighting+style"]
-    Shot --> SB["Storyboard<br/>(storyboard.schema.json)"]
-    SB -->|approved| RS["RenderSpec<br/>(render_configuration.schema.json)"]
-    CM["CapabilityManifest<br/>(capability_manifest.schema.json)"] -.clamps.-> RS
+    Shot --> SB["Storyboard<br/>(storyboard.schema.json)<br/>gate 1"]
+    SB -->|approved| RP["RenderPlan<br/>(render_plan.schema.json)<br/>gate 2"]
+    CM["CapabilityManifest<br/>(capability_manifest.schema.json)"] -.clamps.-> RP
+    RP -->|approved| RS["RenderSpec[]<br/>(render_configuration.schema.json,<br/>embedded in RenderPlan)"]
     RS --> Clip["RawClip"]
     Clip --> Final["Final MP4"]
 ```
@@ -91,15 +96,16 @@ description. Summary:
 | Creative Director | CreativeDirector (orchestrator) | `services/ai-director` | **Implemented** |
 | Creative Director | Creative Brief Parser | `services/creative-brief-parser` | **Implemented** |
 | Creative Director | Story Planner | `services/story-planner` | **Implemented** |
+| Creative Compiler | CreativeCompiler (orchestrator) | `services/creative-compiler` | **Implemented** |
 | Creative Compiler | Scene Generator | `services/scene-builder` | **Implemented** (deterministic) |
 | Creative Compiler | Shot Planner | `services/shot-planner` | **Implemented** (deterministic) |
-| Creative Compiler | Prompt Builder | `services/prompt-builder` | Phase 2 |
-| Creative Compiler | Storyboard Generator | `services/storyboard-generator` | Phase 2 |
-| Creative Compiler | Camera Director | `services/camera-engine` | Phase 2 |
-| Creative Compiler | Motion Director | `services/motion-engine` | Phase 2 |
-| Creative Compiler | Lighting Director | `services/lighting-engine` | Phase 2 |
-| Creative Compiler | Style Director | `services/style-engine` | Phase 2 |
-| Creative Compiler | Render Spec Generator | `services/render-config-compiler` | Phase 2 |
+| Creative Compiler | Style Director | `services/style-engine` | **Implemented** (deterministic) |
+| Creative Compiler | Camera Director | `services/camera-engine` | **Implemented** (deterministic) |
+| Creative Compiler | Motion Director | `services/motion-engine` | **Implemented** (deterministic) |
+| Creative Compiler | Lighting Director | `services/lighting-engine` | **Implemented** (deterministic) |
+| Creative Compiler | Storyboard Generator | `services/storyboard-generator` | **Implemented** (deterministic) |
+| Creative Compiler | Render Spec Generator | `services/render-config-compiler` | **Implemented** (deterministic) |
+| Creative Compiler | Prompt Builder (dedicated fragment library) | `services/prompt-builder` | Not started - prompt composition is currently inline in Render Config Compiler |
 | Execution | Video Engine Adapter (Wan2.1) | `services/video-engine-adapter` | Phase 3 (structurally complete) |
 | Execution | Render Orchestrator | `services/render-orchestrator` | Phase 4 |
 | Execution | GPU Worker container | `workers/gpu-worker` | Phase 3 |
@@ -144,6 +150,20 @@ Three independent axes of change, three independent interfaces. See
 [ADR 0001](adr/0001-director-engine-separation.md) and
 [ADR 0002](adr/0002-compute-provider-abstraction.md).
 
+### Forward compatibility: image generation models
+
+`storyboard.schema.json`'s `preview_image_asset_id` field and
+`render_configuration.schema.json`'s `conditioning_images` field both
+anticipate an image-generation engine (for cheap storyboard preview
+frames, and for `image_to_video` conditioning inputs) without requiring
+one to exist yet. When one is built, it follows the exact same pattern as
+`IVideoEngine`/`IComputeProvider` (ADR 0002): a new `IImageEngine`
+interface in a sibling package (e.g. `packages/image-engine-sdk`), reusing
+`IComputeProvider` as-is since that interface is already generic over
+"container image + JSON payload in, artifact URI out" and has no
+video-specific assumptions. Neither field is populated by any Phase 0-2
+code - this is a documented extension point, not a built feature.
+
 ## 6. Technology stack
 
 | Concern | Choice | ADR |
@@ -174,8 +194,8 @@ independent product, not a feature of it.
 |---|---|---|
 | **0 — Foundation** | Monorepo structure, JSON Schemas, `ILLMProvider`/`IVideoEngine`/`IComputeProvider` interfaces, Wan2.1 adapter spec + stub, API contract, local dev environment | Done |
 | **1 — Creative Director MVP** *(this repo's current state)* | `ClaudeProvider.generate_structured` (real Anthropic SDK call, untested against the live API in this environment), `RetryingLLMProvider`, `CreativeBriefParser`, `StoryPlanner`, `SceneGenerator`, `ShotPlanner`, `CreativeDirector` orchestrator, `packages/prompt-engine` + versioned templates, `packages/director-memory`, end-to-end tested against `FakeLLMProvider` | Done |
-| **2 — Creative Compiler** | Implement Prompt Builder, Storyboard Generator, Camera/Motion/Lighting/Style Directors, and the Render Spec Generator (`render-config-compiler`) | Next |
-| **3 — Video Engine Adapter + Wan2.1** | Implement `Wan21Adapter`'s real inference call, `RunPodProvider`, one end-to-end text-to-video render | Not started |
+| **2 — Creative Compiler** *(this repo's current state)* | Camera/Motion/Lighting/Style Directors, Storyboard Generator (gate 1), Render Specification Generator + `render_plan.schema.json` (gate 2), `CreativeCompiler` orchestrator, end-to-end tested from `FakeLLMProvider` through both approval gates | Done |
+| **3 — Video Engine Adapter + Wan2.1** | Implement `Wan21Adapter`'s real inference call, `RunPodProvider`, one end-to-end text-to-video render | Next |
 | **4 — Orchestration** | Temporal workflow in Render Orchestrator, storyboard human-approval signal, retries | Not started |
 | **5 — Post-Processing & Export** | Stitching, upscaling, color grade, audio, multi-format export | Not started |
 | **6 — Frontend MVP** | `apps/web-dashboard`: brief → storyboard approval → render → download | Not started |

@@ -13,15 +13,16 @@ for the same list with paths.
 - [Scene Generator](../../services/scene-builder/README.md)
 - [Shot Planner](../../services/shot-planner/README.md)
 
-## Creative Compiler (Phase 2)
+## Creative Compiler (implemented, Phase 2)
 
-- [Prompt Builder](../../services/prompt-builder/README.md)
-- [Storyboard Generator](../../services/storyboard-generator/README.md)
+- [CreativeCompiler orchestrator](../../services/creative-compiler/README.md)
+- [Style Director](../../services/style-engine/README.md)
 - [Camera Director](../../services/camera-engine/README.md)
 - [Motion Director](../../services/motion-engine/README.md)
 - [Lighting Director](../../services/lighting-engine/README.md)
-- [Style Director](../../services/style-engine/README.md)
+- [Storyboard Generator](../../services/storyboard-generator/README.md)
 - [Render Specification Generator](../../services/render-config-compiler/README.md)
+- [Prompt Builder](../../services/prompt-builder/README.md) *(not started - prompt composition is currently inline in Render Config Compiler)*
 
 ## Execution Layer
 

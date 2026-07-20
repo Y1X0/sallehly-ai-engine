@@ -1,14 +1,24 @@
 # services/lighting-engine
 
-## Lighting Engine (Lighting Planner)
+## Lighting Director (Lighting Engine)
 
-**Responsibility:** Defines the lighting setup for each shot: time of day, mood, key/fill/rim light direction and hardness, and any HDRI/environment reference - kept consistent within a scene and deliberately evolved across scenes only when the story calls for a mood shift.
+**Responsibility:** deterministic lighting planning for each shot: infers
+a `time_of_day` from the DirectorPlan's global style (keyword rules over
+`global_style.visual_style`), then derives mood, key/fill light,
+rim-light (for close-ups, to separate subject from background),
+volumetric/atmospheric effects, and an advisory `grading_direction`.
 
-**Input:** `shot.schema.json` + `scene.continuity_notes`
+`grading_direction` is a hint, not a competing source of truth - the
+Style Director owns the final `color_grade` values on the global style
+(see `lighting.schema.json`'s field description).
 
-**Output:** Populates `shot.lighting` (`lighting.schema.json`)
+**Input:** `shot.schema.json` + the shot's `camera` (for rim-light decision) + `director_plan.global_style`
 
-**Consumed by:** Style Engine
+**Output:** populates `shot.lighting` (`lighting.schema.json`)
 
-**Status:** Interface/package scaffolded in Phase 0. Business logic is a
-Phase 2 target - see `docs/ARCHITECTURE.md#roadmap`.
+**Consumed by:** Storyboard Generator, Style Director (as a grading hint), Render Configuration Compiler
+
+## Status (Phase 2)
+
+Implemented as `LightingDirector.plan_lighting(shot, camera, global_style)`.
+Deterministic keyword-rule inference - no LLM call needed.

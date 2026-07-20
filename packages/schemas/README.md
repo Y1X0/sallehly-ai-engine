@@ -19,9 +19,10 @@ text.
 | `motion.schema.json` | Motion Engine | embedded in `shot` |
 | `lighting.schema.json` | Lighting Engine | embedded in `shot`, `render_configuration` |
 | `style.schema.json` | Style Engine | embedded in `director_plan` (global) and `shot` (override) |
-| `storyboard.schema.json` | Storyboard Generator | Frontend (human approval gate) |
+| `storyboard.schema.json` | Storyboard Generator | Frontend (human approval gate 1) |
 | `capability_manifest.schema.json` | Model Registry (per engine) | Render Configuration Compiler |
-| `render_configuration.schema.json` | Render Configuration Compiler | Video Engine Adapter (`IVideoEngine.submit`) |
+| `render_configuration.schema.json` | Render Configuration Compiler | Video Engine Adapter (`IVideoEngine.submit`), embedded in `render_plan` |
+| `render_plan.schema.json` | Render Configuration Compiler (via `CreativeCompiler`) | Frontend (human approval gate 2), then Render Orchestrator |
 
 ## Rules
 

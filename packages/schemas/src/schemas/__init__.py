@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from functools import lru_cache
 from pathlib import Path
@@ -40,6 +41,19 @@ def validate(instance: Any, schema_name: str) -> None:
     which silently fails to resolve $refs like "style.schema.json"."""
     validator = jsonschema.Draft202012Validator(load_schema(schema_name), registry=_registry())
     validator.validate(instance)
+
+
+def content_hash(obj: Any) -> str:
+    """Short, deterministic content hash of any JSON-serializable object.
+
+    Used as `director_plan_version` on both Storyboard and RenderPlan -
+    computing it the same way from the same DirectorPlan content is what
+    lets RenderPlan assert it was compiled from the exact plan revision
+    the Storyboard (gate 1) was approved against, without a separate
+    version counter to keep in sync.
+    """
+    canonical = json.dumps(obj, sort_keys=True, default=str)
+    return hashlib.sha256(canonical.encode()).hexdigest()[:12]
 
 
 def without_required(schema: dict[str, Any], exclude: set[str]) -> dict[str, Any]:

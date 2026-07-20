@@ -12,9 +12,11 @@ renders the actual video.
 ```
 User Brief
    -> AI Director (LLM layer, provider-agnostic)
-   -> Creative Compiler (Scene / Storyboard / Camera / Motion / Lighting / Style)
-   -> Render Configuration (engine-agnostic RenderSpec)
-   -> Video Engine Adapter (Wan2.1 today)
+   -> Creative Compiler (Style / Camera / Motion / Lighting -> Storyboard)
+   -> [approval gate 1: storyboard]
+   -> Render Specification Generator (engine-agnostic RenderPlan)
+   -> [approval gate 2: render plan]
+   -> Video Engine Adapter (Wan2.1 today - not yet connected)
    -> Compute Provider (RunPod / Vast.ai today, Kubernetes later)
    -> Post-Processing
    -> Final MP4
@@ -26,15 +28,24 @@ design, [`docs/DECISIONS.md`](docs/DECISIONS.md) for the decision log, and
 
 ## Status
 
-**Phase 1 — Creative Director MVP.** The full brief-to-`DirectorPlan`
-pipeline is implemented and tested end-to-end (`tests/test_creative_pipeline.py`):
-Creative Brief Parser → Story Planner (both LLM-backed, with
-schema-validated + retried structured output) → Scene Generator → Shot
-Planner (deterministic), orchestrated by `CreativeDirector`
-(`services/ai-director`). Phase 2 (Camera/Motion/Lighting/Style
-Directors, Storyboard Generator, Render Spec Generator) and everything
-past it is not yet implemented. See the roadmap in
-`docs/ARCHITECTURE.md#8-roadmap`.
+**Phase 2 — Creative Compiler complete.** The full brief-to-approved-
+`RenderPlan` pipeline is implemented and tested end-to-end
+(`tests/test_creative_pipeline.py`, `tests/test_creative_compiler.py`):
+
+- **Phase 1** (`services/ai-director`, `CreativeDirector`): Creative
+  Brief Parser → Story Planner (both LLM-backed, schema-validated +
+  retried structured output) → Scene Generator → Shot Planner
+  (deterministic) → `DirectorPlan`.
+- **Phase 2** (`services/creative-compiler`, `CreativeCompiler`): Style
+  → Camera → Motion → Lighting Directors (all deterministic) → Storyboard
+  Generator → **approval gate 1** → Render Specification Generator
+  (capability-driven, engine-agnostic) → **approval gate 2** →
+  `RenderPlan`, ready for a Video Engine Adapter.
+
+Wan2.1 is deliberately **not connected yet** - the Render Specification
+Generator is tested against a hand-built test `CapabilityManifest`, not
+the real engine. Phase 3 (Wan2.1 adapter + RunPod) is next. See the
+roadmap in `docs/ARCHITECTURE.md#8-roadmap`.
 
 ## Repository layout
 

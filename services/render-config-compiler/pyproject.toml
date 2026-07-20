@@ -5,10 +5,12 @@ description = "Render Configuration Compiler"
 requires-python = ">=3.11"
 dependencies = [
   "schemas",
+  "video-engine-sdk",
 ]
 
 [tool.uv.sources]
 schemas = { workspace = true }
+video-engine-sdk = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

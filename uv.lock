@@ -10,6 +10,7 @@ members = [
     "camera-engine",
     "config-sdk",
     "creative-brief-parser",
+    "creative-compiler",
     "director-memory",
     "export-service",
     "lighting-engine",
@@ -219,6 +220,35 @@ requires-dist = [
     { name = "llm-providers", editable = "packages/llm-providers" },
     { name = "prompt-engine", editable = "packages/prompt-engine" },
     { name = "schemas", editable = "packages/schemas" },
+]
+
+[[package]]
+name = "creative-compiler"
+version = "0.1.0"
+source = { editable = "services/creative-compiler" }
+dependencies = [
+    { name = "camera-engine" },
+    { name = "director-memory" },
+    { name = "lighting-engine" },
+    { name = "motion-engine" },
+    { name = "render-config-compiler" },
+    { name = "schemas" },
+    { name = "storyboard-generator" },
+    { name = "style-engine" },
+    { name = "video-engine-sdk" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "camera-engine", editable = "services/camera-engine" },
+    { name = "director-memory", editable = "packages/director-memory" },
+    { name = "lighting-engine", editable = "services/lighting-engine" },
+    { name = "motion-engine", editable = "services/motion-engine" },
+    { name = "render-config-compiler", editable = "services/render-config-compiler" },
+    { name = "schemas", editable = "packages/schemas" },
+    { name = "storyboard-generator", editable = "services/storyboard-generator" },
+    { name = "style-engine", editable = "services/style-engine" },
+    { name = "video-engine-sdk", editable = "packages/video-engine-sdk" },
 ]
 
 [[package]]
@@ -911,10 +941,14 @@ version = "0.1.0"
 source = { editable = "services/render-config-compiler" }
 dependencies = [
     { name = "schemas" },
+    { name = "video-engine-sdk" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "schemas", editable = "packages/schemas" }]
+requires-dist = [
+    { name = "schemas", editable = "packages/schemas" },
+    { name = "video-engine-sdk", editable = "packages/video-engine-sdk" },
+]
 
 [[package]]
 name = "render-orchestrator"

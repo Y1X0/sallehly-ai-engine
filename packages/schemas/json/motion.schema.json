@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.sallehly.ai/motion.schema.json",
   "title": "MotionSetup",
-  "description": "Output of the Motion Engine for a single shot: subject motion, independent of camera movement (see camera.schema.json).",
+  "description": "Output of the Motion Director for a single shot: subject motion and its timing, independent of camera movement (see camera.schema.json, which owns camera motion).",
   "type": "object",
   "required": ["motion_strength"],
   "properties": {
@@ -15,6 +15,12 @@
       "minimum": 0,
       "maximum": 100,
       "description": "Normalized 0-100 value. Render Configuration Compiler rescales this to the active engine's motion_strength_range from its CapabilityManifest."
+    },
+    "easing_curve": {
+      "type": "string",
+      "enum": ["linear", "ease_in", "ease_out", "ease_in_out", "custom_bezier"],
+      "default": "ease_in_out",
+      "description": "Animation curve for subject motion over the shot's duration. Kept consistent with this shot's camera.movement.easing by default, but is a distinct value - a shot can have a linear camera dolly with an ease-in-out subject movement, or vice versa."
     },
     "speed_ramp": {
       "type": "array",

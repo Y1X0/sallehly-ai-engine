@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/render_plan.schema.json",
+  "title": "RenderPlan",
+  "description": "Output of the Render Specification Generator: the complete, engine-agnostic RenderSpec list for a project, gated behind human approval (gate 2, 'final scene planning') before any Video Engine Adapter is invoked. Mirrors the same draft/pending_review/approved/changes_requested lifecycle as Storyboard (gate 1).",
+  "type": "object",
+  "required": ["project_id", "director_plan_version", "engine_id", "render_specs", "status"],
+  "properties": {
+    "project_id": { "type": "string" },
+    "director_plan_version": {
+      "type": "string",
+      "description": "Must match the Storyboard this plan was compiled from, so an approval can't be silently applied to a since-revised plan."
+    },
+    "engine_id": {
+      "type": "string",
+      "description": "Which engine's CapabilityManifest this plan was compiled against (e.g. 'wan2.1'). Set by the Render Specification Generator, never chosen by any upstream Planner."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "pending_review", "approved", "changes_requested"],
+      "default": "draft"
+    },
+    "render_specs": {
+      "type": "array",
+      "items": { "$ref": "render_configuration.schema.json" },
+      "minItems": 1
+    },
+    "reviewer_feedback": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "shot_id": { "type": "string" },
+          "comment": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

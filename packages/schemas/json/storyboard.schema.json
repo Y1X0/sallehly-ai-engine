@@ -2,12 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.sallehly.ai/storyboard.schema.json",
   "title": "Storyboard",
-  "description": "Output of the Storyboard Generator: a lightweight, cheap-to-produce preview of the whole DirectorPlan for human approval BEFORE any full-cost video rendering happens.",
+  "description": "Output of the Storyboard Generator: a complete visual storyboard synthesizing the Camera/Motion/Lighting/Style Directors' decisions for every shot, for human approval (gate 1) before the Render Specification Generator compiles the final technical plan (gate 2, see render_plan.schema.json). See docs/adr/0008-storyboard-after-technical-planning.md for why this runs after per-shot planning rather than before it.",
   "type": "object",
   "required": ["project_id", "director_plan_version", "frames", "status"],
   "properties": {
     "project_id": { "type": "string" },
-    "director_plan_version": { "type": "string" },
+    "director_plan_version": {
+      "type": "string",
+      "description": "Short content hash of the DirectorPlan this storyboard was generated from - changes automatically whenever the plan is revised."
+    },
     "status": {
       "type": "string",
       "enum": ["draft", "pending_review", "approved", "changes_requested"],
@@ -17,14 +20,56 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["frame_id", "shot_id", "description"],
+        "required": [
+          "frame_id",
+          "shot_id",
+          "visual_description",
+          "camera_framing",
+          "lens_choice",
+          "camera_movement",
+          "lighting",
+          "environment",
+          "mood",
+          "transition"
+        ],
         "properties": {
           "frame_id": { "type": "string" },
           "shot_id": { "type": "string" },
-          "description": { "type": "string" },
+          "visual_description": {
+            "type": "string",
+            "description": "What happens in this shot, in plain language."
+          },
+          "camera_framing": {
+            "type": "string",
+            "description": "Human-readable rendering of Shot.camera.shot_type/angle - e.g. 'medium close-up, eye-level'."
+          },
+          "lens_choice": {
+            "type": "string",
+            "description": "Human-readable rendering of Shot.camera.focal_length_mm_equiv/depth_of_field - e.g. '50mm equivalent, shallow depth of field'."
+          },
+          "camera_movement": {
+            "type": "string",
+            "description": "Human-readable rendering of Shot.camera.movement - e.g. 'slow dolly-in, ease-in-out'."
+          },
+          "lighting": {
+            "type": "string",
+            "description": "Human-readable rendering of Shot.lighting - e.g. 'golden-hour key light from camera-left, soft fill, subtle volumetric haze'."
+          },
+          "environment": {
+            "type": "string",
+            "description": "Setting/location description, from the parent Scene."
+          },
+          "mood": {
+            "type": "string",
+            "description": "Short mood descriptor, from Shot.lighting.mood / the global style."
+          },
+          "transition": {
+            "type": "string",
+            "description": "Human-readable rendering of Shot.transition_in/transition_out - e.g. 'cut in, dissolve out'."
+          },
           "preview_image_asset_id": {
             "type": "string",
-            "description": "Optional low-cost generated preview image for this shot."
+            "description": "Optional low-cost generated preview image for this shot. Not populated until an image-generation engine is wired up (see docs/ARCHITECTURE.md's forward-compatibility notes for IImageEngine)."
           }
         },
         "additionalProperties": false
