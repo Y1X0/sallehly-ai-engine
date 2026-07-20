@@ -26,6 +26,7 @@ members = [
     "scene-builder",
     "schemas",
     "shot-planner",
+    "storage-sdk",
     "story-planner",
     "storyboard-generator",
     "style-engine",
@@ -133,10 +134,14 @@ version = "0.1.0"
 source = { editable = "services/asset-manager" }
 dependencies = [
     { name = "schemas" },
+    { name = "storage-sdk" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "schemas", editable = "packages/schemas" }]
+requires-dist = [
+    { name = "schemas", editable = "packages/schemas" },
+    { name = "storage-sdk", editable = "packages/storage-sdk" },
+]
 
 [[package]]
 name = "attrs"
@@ -955,11 +960,17 @@ name = "render-orchestrator"
 version = "0.1.0"
 source = { editable = "services/render-orchestrator" }
 dependencies = [
+    { name = "asset-manager" },
     { name = "schemas" },
+    { name = "video-engine-sdk" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "schemas", editable = "packages/schemas" }]
+requires-dist = [
+    { name = "asset-manager", editable = "services/asset-manager" },
+    { name = "schemas", editable = "packages/schemas" },
+    { name = "video-engine-sdk", editable = "packages/video-engine-sdk" },
+]
 
 [[package]]
 name = "rpds-py"
@@ -1188,6 +1199,11 @@ wheels = [
 ]
 
 [[package]]
+name = "storage-sdk"
+version = "0.1.0"
+source = { editable = "packages/storage-sdk" }
+
+[[package]]
 name = "story-planner"
 version = "0.1.0"
 source = { editable = "services/story-planner" }
@@ -1315,12 +1331,14 @@ name = "video-engine-adapter"
 version = "0.1.0"
 source = { editable = "services/video-engine-adapter" }
 dependencies = [
+    { name = "config-sdk" },
     { name = "httpx" },
     { name = "video-engine-sdk" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "config-sdk", editable = "packages/config-sdk" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "video-engine-sdk", editable = "packages/video-engine-sdk" },
 ]

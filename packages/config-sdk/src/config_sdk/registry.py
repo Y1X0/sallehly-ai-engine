@@ -21,6 +21,17 @@ class Registry(Generic[T]):
             raise ValueError(f"{self._name}: '{key}' is already registered")
         self._factories[key] = factory
 
+    def register_if_absent(self, key: str, factory: Callable[..., T]) -> None:
+        """Like register(), but a no-op if `key` is already registered.
+        Used by module-level bootstrap functions (e.g.
+        video_engine_adapter.register_defaults) that may be called more
+        than once within a process (tests re-importing a module, ...)."""
+        if key not in self._factories:
+            self._factories[key] = factory
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._factories
+
     def create(self, key: str, /, **kwargs: object) -> T:
         try:
             factory = self._factories[key]

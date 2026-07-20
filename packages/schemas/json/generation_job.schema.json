@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/generation_job.schema.json",
+  "title": "GenerationJob",
+  "description": "One unit of GPU work tracked by the Render Orchestrator's GenerationPipeline: submitting a single RenderSpec to a chosen IVideoEngine/IComputeProvider pair and following it to completion or failure.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "job_id",
+    "project_id",
+    "shot_id",
+    "render_spec",
+    "engine_id",
+    "compute_provider_id",
+    "status",
+    "retry_count",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "job_id": { "type": "string" },
+    "project_id": { "type": "string" },
+    "shot_id": { "type": "string" },
+    "render_spec": { "$ref": "render_configuration.schema.json" },
+    "engine_id": { "type": "string" },
+    "compute_provider_id": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["queued", "running", "completed", "failed"]
+    },
+    "external_job_id": {
+      "type": "string",
+      "description": "The IComputeProvider's own job id (e.g. a RunPod job id), once submitted."
+    },
+    "output_asset_id": {
+      "type": "string",
+      "description": "Set on completion - the asset_id AssetManager registered the resulting RawClip under."
+    },
+    "error_message": {
+      "type": "string",
+      "description": "Set on failure - the last error, after all retries were exhausted."
+    },
+    "retry_count": { "type": "integer", "minimum": 0 },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

@@ -5,10 +5,12 @@ description = "Asset Manager"
 requires-python = ">=3.11"
 dependencies = [
   "schemas",
+  "storage-sdk",
 ]
 
 [tool.uv.sources]
 schemas = { workspace = true }
+storage-sdk = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

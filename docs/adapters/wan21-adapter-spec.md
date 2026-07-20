@@ -40,16 +40,18 @@ that file must be kept in sync.
 | `resolution` ("832x480") | `width`, `height` | split on "x" |
 | `duration_sec`, `fps` | `num_frames` | `round(duration_sec * fps)` |
 | `fps` | `fps` | passthrough |
-| `seed` | `seed` | passthrough |
-| `motion_strength` (0-100) | *(engine-native motion param)* | rescale from the 0-100 normalized range into whatever Wan2.1 actually exposes — open question #2 |
-| `conditioning_images` | `image` / `input_image` | first entry only (manifest caps at 1) |
-| `mode` | `task` | `text_to_video->t2v`, `image_to_video->i2v`, `video_edit->v2v` |
-| `quality_tier` | `sampling_steps` | `"final" -> 40`, `"preview" -> 15` (cheap/fast storyboard-stage preview vs full-cost final render, see `render_configuration.schema.json`) |
+| `seed` | `seed` | passthrough, **key omitted entirely** if `None` (Wan2.1 picks its own random seed rather than being sent a null) |
+| `motion_strength` (0-100) | `motion_strength` | passed through as-is; still open whether Wan2.1's real API takes this range directly or needs its own rescale - see open question #2 |
+| `conditioning_images` (mode=`image_to_video`) | `image` | first (only) entry - `capability_manifest.max_conditioning_images` caps this at 1 |
+| `conditioning_images` (mode=`video_edit`) | `reference_images` | full list, passed through |
+| `mode` | `task` | `text_to_video->t2v`, `image_to_video->i2v`, `video_edit->v2v`; adapter raises `ValueError` if `mode` isn't in its own `capabilities().modes` (defensive - the Compiler should never produce this) |
+| `quality_tier` | `sampling_steps` | `"final"->40`, `"standard"->25`, `"preview"->15` (cheap/fast storyboard-stage preview vs full-cost final render, see `render_configuration.schema.json`) |
+| *(none - Wan2.1-only default)* | `guidance_scale` | hardcoded `6.0` - see below |
 
 Fields intentionally **not** mapped from any shared schema: anything
-Wan2.1-specific that no other engine would understand (e.g. a
-checkpoint-specific guidance-scale tuning knob) is hardcoded inside this
-adapter, never added to `render_configuration.schema.json`.
+Wan2.1-specific that no other engine would understand (`guidance_scale`
+above) is hardcoded inside this adapter, never added to
+`render_configuration.schema.json`.
 
 ## 4. Execution container contract
 

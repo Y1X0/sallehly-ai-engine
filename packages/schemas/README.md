@@ -23,6 +23,8 @@ text.
 | `capability_manifest.schema.json` | Model Registry (per engine) | Render Configuration Compiler |
 | `render_configuration.schema.json` | Render Configuration Compiler | Video Engine Adapter (`IVideoEngine.submit`), embedded in `render_plan` |
 | `render_plan.schema.json` | Render Configuration Compiler (via `CreativeCompiler`) | Frontend (human approval gate 2), then Render Orchestrator |
+| `generation_job.schema.json` | Render Orchestrator (`GenerationPipeline`) | Frontend / API (job status polling) |
+| `asset_record.schema.json` | Asset Manager | Render Orchestrator, Frontend/API (asset lookup) |
 
 ## Rules
 

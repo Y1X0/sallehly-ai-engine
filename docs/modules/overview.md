@@ -24,11 +24,11 @@ for the same list with paths.
 - [Render Specification Generator](../../services/render-config-compiler/README.md)
 - [Prompt Builder](../../services/prompt-builder/README.md) *(not started - prompt composition is currently inline in Render Config Compiler)*
 
-## Execution Layer
+## Execution Layer (implemented, Phase 3)
 
-- [Video Engine Adapter](../../services/video-engine-adapter/README.md)
-- [Render Orchestrator](../../services/render-orchestrator/README.md)
-- [GPU Worker](../../workers/gpu-worker/README.md)
+- [Video Engine Adapter (Wan2.1 + RunPod)](../../services/video-engine-adapter/README.md)
+- [GenerationPipeline / Render Orchestrator](../../services/render-orchestrator/README.md)
+- [GPU Worker](../../workers/gpu-worker/README.md) *(container structurally complete; real inference call needs a GPU deployment)*
 
 ## Delivery Layer
 
@@ -48,6 +48,7 @@ for the same list with paths.
 - [LLM Providers](../../packages/llm-providers/README.md)
 - [Prompt Engine](../../packages/prompt-engine/README.md)
 - [Video Engine SDK](../../packages/video-engine-sdk/README.md)
+- [Storage SDK](../../packages/storage-sdk/README.md)
 
 ## Content
 

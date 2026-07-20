@@ -5,10 +5,14 @@ description = "Render Orchestrator"
 requires-python = ">=3.11"
 dependencies = [
   "schemas",
+  "video-engine-sdk",
+  "asset-manager",
 ]
 
 [tool.uv.sources]
 schemas = { workspace = true }
+video-engine-sdk = { workspace = true }
+asset-manager = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

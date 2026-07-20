@@ -16,8 +16,9 @@ User Brief
    -> [approval gate 1: storyboard]
    -> Render Specification Generator (engine-agnostic RenderPlan)
    -> [approval gate 2: render plan]
-   -> Video Engine Adapter (Wan2.1 today - not yet connected)
-   -> Compute Provider (RunPod / Vast.ai today, Kubernetes later)
+   -> Video Engine Adapter (Wan2.1)
+   -> Compute Provider (RunPod today, Vast.ai/Kubernetes later)
+   -> GenerationJob (queued -> running -> completed/failed) + AssetManager
    -> Post-Processing
    -> Final MP4
 ```
@@ -28,9 +29,8 @@ design, [`docs/DECISIONS.md`](docs/DECISIONS.md) for the decision log, and
 
 ## Status
 
-**Phase 2 — Creative Compiler complete.** The full brief-to-approved-
-`RenderPlan` pipeline is implemented and tested end-to-end
-(`tests/test_creative_pipeline.py`, `tests/test_creative_compiler.py`):
+**Phase 3 — Video generation layer connected.** The full brief-to-
+generated-artifact pipeline is implemented and tested end-to-end:
 
 - **Phase 1** (`services/ai-director`, `CreativeDirector`): Creative
   Brief Parser → Story Planner (both LLM-backed, schema-validated +
@@ -40,11 +40,22 @@ design, [`docs/DECISIONS.md`](docs/DECISIONS.md) for the decision log, and
   → Camera → Motion → Lighting Directors (all deterministic) → Storyboard
   Generator → **approval gate 1** → Render Specification Generator
   (capability-driven, engine-agnostic) → **approval gate 2** →
-  `RenderPlan`, ready for a Video Engine Adapter.
+  `RenderPlan`.
+- **Phase 3** (`services/video-engine-adapter`, `services/render-orchestrator`,
+  `services/asset-manager`): `Wan21Adapter` completed (i2v conditioning,
+  seed handling), production `RunPodProvider` (real HTTP client, retry-
+  with-backoff, tested against `httpx.MockTransport`), `GenerationPipeline`
+  tracking each shot as a `GenerationJob` (`queued → running →
+  completed`/`failed`), `AssetManager` registering results with
+  versioning. `CreativeDirector`/`CreativeCompiler` remain completely
+  unaware any of this exists - `GenerationPipeline` is the only bridge
+  (see `docs/adr/0009-generation-pipeline.md`).
 
-Wan2.1 is deliberately **not connected yet** - the Render Specification
-Generator is tested against a hand-built test `CapabilityManifest`, not
-the real engine. Phase 3 (Wan2.1 adapter + RunPod) is next. See the
+Real GPU execution still requires deploying `workers/gpu-worker` with
+actual Wan2.1 weights onto a RunPod endpoint - an infrastructure step
+outside what this repository can execute in this environment. Everything
+on the code side of that boundary is implemented and tested against
+`LocalProvider` (no GPU) and mocked RunPod HTTP responses. See the
 roadmap in `docs/ARCHITECTURE.md#8-roadmap`.
 
 ## Repository layout
@@ -53,7 +64,7 @@ roadmap in `docs/ARCHITECTURE.md#8-roadmap`.
 |---|---|
 | `apps/` | User-facing applications (web dashboard, public API gateway) |
 | `services/` | Independently deployable backend services — one per pipeline stage |
-| `packages/` | Shared libraries: contracts (`schemas`), provider interfaces (`llm-providers`, `video-engine-sdk`), cross-cutting utilities |
+| `packages/` | Shared libraries: contracts (`schemas`), provider interfaces (`llm-providers`, `video-engine-sdk`, `storage-sdk`), cross-cutting utilities |
 | `libraries/` | Content, not code: prompt fragments and DirectorPlan templates |
 | `plugins/` | Registered extensions: LLM providers, video engines, post-fx filters |
 | `workers/` | GPU-side execution containers (what actually runs on rented GPUs) |

@@ -13,7 +13,7 @@ either side be replaced without rewriting the rest of the system. See
 ```mermaid
 flowchart TD
     U[User / Client] --> API[apps/api]
-    API --> ORCH[Render Orchestrator<br/>Temporal Workflow]
+    API --> ORCH[Render Orchestrator<br/>Phase 3: GenerationPipeline<br/>Phase 4: + Temporal Workflow]
 
     subgraph CD["CreativeDirector orchestrator (services/ai-director)"]
         BP[Creative Brief Parser<br/>LLM]
@@ -32,9 +32,14 @@ flowchart TD
         RC[Render Spec Generator]
     end
 
-    subgraph L2[Execution Layer]
+    subgraph L2["Execution Layer (GenerationPipeline)"]
         ENGINE[IVideoEngine<br/>Wan21Adapter]
-        COMPUTE[IComputeProvider<br/>RunPod / Vast.ai / local]
+        COMPUTE[IComputeProvider<br/>RunPod / local / Vast.ai]
+        JOB[GenerationJob<br/>queued -> running -> completed/failed]
+        ASSET[AssetManager<br/>asset_record.schema.json]
+        ENGINE --> JOB
+        COMPUTE --> JOB
+        JOB --> ASSET
     end
 
     subgraph L3[Delivery Layer]
@@ -50,8 +55,9 @@ flowchart TD
     SG --> RC
     RC -.->|approval gate 2: render plan| API
     RC --> ORCH
-    ORCH --> ENGINE --> COMPUTE
-    COMPUTE --> ORCH
+    ORCH --> ENGINE
+    ORCH --> COMPUTE
+    ASSET --> ORCH
     ORCH --> PP --> EXP --> CDN --> API
 ```
 
@@ -77,8 +83,10 @@ flowchart LR
     SB -->|approved| RP["RenderPlan<br/>(render_plan.schema.json)<br/>gate 2"]
     CM["CapabilityManifest<br/>(capability_manifest.schema.json)"] -.clamps.-> RP
     RP -->|approved| RS["RenderSpec[]<br/>(render_configuration.schema.json,<br/>embedded in RenderPlan)"]
-    RS --> Clip["RawClip"]
-    Clip --> Final["Final MP4"]
+    RS --> GJ["GenerationJob<br/>(generation_job.schema.json)<br/>queued/running/completed/failed"]
+    GJ --> Clip["RawClip"]
+    Clip --> AR["AssetRecord<br/>(asset_record.schema.json)"]
+    AR --> Final["Final MP4 (Phase 5)"]
 ```
 
 `CreativeBrief` and `StoryOutline` are intermediate artifacts internal to
@@ -106,19 +114,20 @@ description. Summary:
 | Creative Compiler | Storyboard Generator | `services/storyboard-generator` | **Implemented** (deterministic) |
 | Creative Compiler | Render Spec Generator | `services/render-config-compiler` | **Implemented** (deterministic) |
 | Creative Compiler | Prompt Builder (dedicated fragment library) | `services/prompt-builder` | Not started - prompt composition is currently inline in Render Config Compiler |
-| Execution | Video Engine Adapter (Wan2.1) | `services/video-engine-adapter` | Phase 3 (structurally complete) |
-| Execution | Render Orchestrator | `services/render-orchestrator` | Phase 4 |
-| Execution | GPU Worker container | `workers/gpu-worker` | Phase 3 |
+| Execution | Video Engine Adapter (Wan2.1 + RunPod) | `services/video-engine-adapter` | **Implemented** (Wan2.1, RunPod, local); Vast.ai still a stub |
+| Execution | GenerationPipeline (job lifecycle) | `services/render-orchestrator` | **Implemented**; Temporal workflow wrapper is Phase 4 |
+| Execution | GPU Worker container | `workers/gpu-worker` | Structurally complete; real Wan2.1 inference call needs a GPU deployment step outside this environment |
 | Delivery | Post-Processing | `services/post-processing` | Phase 5 |
 | Delivery | Export Service | `services/export-service` | Phase 5 |
-| Cross-cutting | Asset Manager | `services/asset-manager` | Phase 3 |
-| Cross-cutting | Config SDK | `packages/config-sdk` | Implemented |
+| Cross-cutting | Asset Manager | `services/asset-manager` | **Implemented** |
+| Cross-cutting | Config SDK | `packages/config-sdk` | **Implemented** |
 | Cross-cutting | Observability | `packages/observability` | Phase 4 |
 | Cross-cutting | Director Memory | `packages/director-memory` | **Implemented** |
 | Contracts | Schemas | `packages/schemas` | **Implemented** |
 | Contracts | LLM Provider interface | `packages/llm-providers` | **Implemented** |
 | Contracts | Prompt template engine | `packages/prompt-engine` | **Implemented** |
-| Contracts | Video Engine / Compute Provider interfaces | `packages/video-engine-sdk` | Implemented (interfaces); adapters Phase 3 |
+| Contracts | Video Engine / Compute Provider interfaces | `packages/video-engine-sdk` | **Implemented** |
+| Contracts | Storage abstraction | `packages/storage-sdk` | **Implemented** (local filesystem; S3/R2 Phase 5+) |
 | Content | Prompt Library (video-gen fragments) | `libraries/prompt-library` | Seeded |
 | Content | Prompt Templates (LLM director prompts) | `libraries/prompt-templates` | **Implemented** |
 | Content | Template Library (DirectorPlan genre templates) | `libraries/template-library` | Seeded |
@@ -179,6 +188,7 @@ code - this is a documented extension point, not a built feature.
 | Schema validation | JSON Schema (`packages/schemas`) + `jsonschema` at runtime boundaries | — |
 | LLM prompt templating | Jinja2, versioned YAML files (`packages/prompt-engine` + `libraries/prompt-templates`) | [0006](adr/0006-structured-output-retry-decorator.md) |
 | Structured output enforcement | Anthropic tool-use forced `tool_choice` + `RetryingLLMProvider` schema-validate-and-retry decorator | [0006](adr/0006-structured-output-retry-decorator.md) |
+| Compute provider HTTP client | `httpx` (sync client, `httpx.MockTransport` in tests) | [0009](adr/0009-generation-pipeline.md) |
 | Package/workspace management | `uv` workspace (`pyproject.toml` at root) | — |
 | Local dev | `docker-compose.yml` (Postgres, Redis, MinIO, optional Temporal dev server) | — |
 
@@ -193,10 +203,10 @@ independent product, not a feature of it.
 | Phase | Deliverable | Status |
 |---|---|---|
 | **0 — Foundation** | Monorepo structure, JSON Schemas, `ILLMProvider`/`IVideoEngine`/`IComputeProvider` interfaces, Wan2.1 adapter spec + stub, API contract, local dev environment | Done |
-| **1 — Creative Director MVP** *(this repo's current state)* | `ClaudeProvider.generate_structured` (real Anthropic SDK call, untested against the live API in this environment), `RetryingLLMProvider`, `CreativeBriefParser`, `StoryPlanner`, `SceneGenerator`, `ShotPlanner`, `CreativeDirector` orchestrator, `packages/prompt-engine` + versioned templates, `packages/director-memory`, end-to-end tested against `FakeLLMProvider` | Done |
-| **2 — Creative Compiler** *(this repo's current state)* | Camera/Motion/Lighting/Style Directors, Storyboard Generator (gate 1), Render Specification Generator + `render_plan.schema.json` (gate 2), `CreativeCompiler` orchestrator, end-to-end tested from `FakeLLMProvider` through both approval gates | Done |
-| **3 — Video Engine Adapter + Wan2.1** | Implement `Wan21Adapter`'s real inference call, `RunPodProvider`, one end-to-end text-to-video render | Next |
-| **4 — Orchestration** | Temporal workflow in Render Orchestrator, storyboard human-approval signal, retries | Not started |
+| **1 — Creative Director MVP** | `ClaudeProvider.generate_structured` (real Anthropic SDK call, untested against the live API in this environment), `RetryingLLMProvider`, `CreativeBriefParser`, `StoryPlanner`, `SceneGenerator`, `ShotPlanner`, `CreativeDirector` orchestrator, `packages/prompt-engine` + versioned templates, `packages/director-memory`, end-to-end tested against `FakeLLMProvider` | Done |
+| **2 — Creative Compiler** | Camera/Motion/Lighting/Style Directors, Storyboard Generator (gate 1), Render Specification Generator + `render_plan.schema.json` (gate 2), `CreativeCompiler` orchestrator, end-to-end tested from `FakeLLMProvider` through both approval gates | Done |
+| **3 — Video Engine Adapter + Wan2.1** *(this repo's current state)* | `Wan21Adapter` completed (i2v conditioning mapping, seed handling, generation params), production `RunPodProvider` (real HTTP client, retry-with-backoff, tested against `httpx.MockTransport`), `GenerationPipeline` + `GenerationJob` lifecycle, `AssetManager` + `packages/storage-sdk`, engine/compute registries wired in `config_sdk`. Real GPU execution still needs `workers/gpu-worker` deployed with actual Wan2.1 weights - an infra step outside this environment | Done |
+| **4 — Orchestration** | Temporal workflow wrapping `GenerationPipeline`'s logic in durable activities, storyboard/render-plan human-approval signals over the real API | Next |
 | **5 — Post-Processing & Export** | Stitching, upscaling, color grade, audio, multi-format export | Not started |
 | **6 — Frontend MVP** | `apps/web-dashboard`: brief → storyboard approval → render → download | Not started |
 | **7 — Scale-out** | `VastAIProvider` completion, `KubernetesProvider`, autoscaling, caching, billing | Not started |

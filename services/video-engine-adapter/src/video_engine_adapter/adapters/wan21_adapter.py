@@ -12,6 +12,12 @@ from video_engine_sdk import (
 
 WAN21_CONTAINER_IMAGE = "sallehly/wan21-worker:2.1.0"
 
+# Wan2.1-specific generation defaults - these are NOT RenderSpec fields
+# (per ADR 0001, engine-specific knobs never belong in the shared schema)
+# and are hardcoded here rather than exposed upstream.
+_DEFAULT_GUIDANCE_SCALE = 6.0
+_SAMPLING_STEPS = {"final": 40, "standard": 25, "preview": 15}
+
 
 class Wan21Adapter(IVideoEngine):
     """First IVideoEngine implementation, wrapping the open-source Wan2.1
@@ -42,10 +48,18 @@ class Wan21Adapter(IVideoEngine):
         )
 
     def build_job_payload(self, spec: RenderSpec) -> EngineJobPayload:
+        capabilities = self.capabilities()
+        if spec.mode not in capabilities.modes:
+            raise ValueError(
+                f"Wan21Adapter received mode={spec.mode!r}, which its own CapabilityManifest "
+                f"does not list ({capabilities.modes}). The Render Configuration Compiler should "
+                "never produce a RenderSpec whose mode the active engine doesn't support."
+            )
+
         width, height = (int(dim) for dim in spec.resolution.split("x"))
         num_frames = round(spec.duration_sec * spec.fps)
 
-        wan21_input = {
+        wan21_input: dict[str, object] = {
             "task": self._map_mode(spec.mode),
             "prompt": spec.positive_prompt,
             "negative_prompt": spec.negative_prompt or "",
@@ -53,17 +67,28 @@ class Wan21Adapter(IVideoEngine):
             "height": height,
             "num_frames": num_frames,
             "fps": spec.fps,
-            "seed": spec.seed,
             "motion_strength": spec.motion_strength,
-            "conditioning_images": list(spec.conditioning_images),
-            "sampling_steps": 40 if spec.quality_tier == "final" else 15,
+            "guidance_scale": _DEFAULT_GUIDANCE_SCALE,
+            "sampling_steps": _SAMPLING_STEPS.get(spec.quality_tier, _SAMPLING_STEPS["final"]),
         }
+
+        # Wan2.1 does not accept a null seed - omit it entirely and let the
+        # worker generate one, rather than sending seed=None.
+        if spec.seed is not None:
+            wan21_input["seed"] = spec.seed
+
+        # image_to_video wants a single conditioning image under its own
+        # native key; video_edit may use multiple. text_to_video sends none.
+        if spec.mode == "image_to_video" and spec.conditioning_images:
+            wan21_input["image"] = spec.conditioning_images[0]
+        elif spec.mode == "video_edit" and spec.conditioning_images:
+            wan21_input["reference_images"] = list(spec.conditioning_images)
 
         return EngineJobPayload(
             container_image=WAN21_CONTAINER_IMAGE,
             input=wan21_input,
             resources=ComputeResourceRequirements(
-                min_vram_gb=24.0,
+                min_vram_gb=capabilities.min_vram_gb or 24.0,
                 gpu_count=1,
                 timeout_sec=900,
             ),
