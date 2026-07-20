@@ -130,6 +130,53 @@ def test_full_lifecycle_over_http_reaches_completed_with_assets_and_jobs():
         assert len(assets_body["assets"]) == len(asset_ids)
 
 
+def test_plan_storyboard_and_render_plan_are_retrievable_over_http():
+    with _client() as client:
+        headers = _auth_headers(client)
+        project = _create_project(client, headers)
+        project_id = project["project_id"]
+
+        # not generated yet
+        assert client.get(f"/projects/{project_id}/plan", headers=headers).status_code == 404
+        assert client.get(f"/projects/{project_id}/storyboard", headers=headers).status_code == 404
+        assert client.get(f"/projects/{project_id}/render-plan", headers=headers).status_code == 404
+
+        client.post(f"/projects/{project_id}/generate-plan", headers=headers)
+
+        plan = client.get(f"/projects/{project_id}/plan", headers=headers)
+        assert plan.status_code == 200
+        assert plan.json()["project_id"] == project_id
+
+        storyboard = client.get(f"/projects/{project_id}/storyboard", headers=headers)
+        assert storyboard.status_code == 200
+        assert len(storyboard.json()["frames"]) > 0
+
+        # render plan doesn't exist until the storyboard gate is approved
+        assert client.get(f"/projects/{project_id}/render-plan", headers=headers).status_code == 404
+
+        client.post(f"/projects/{project_id}/approve-storyboard", headers=headers)
+
+        render_plan = client.get(f"/projects/{project_id}/render-plan", headers=headers)
+        assert render_plan.status_code == 200
+        assert len(render_plan.json()["render_specs"]) > 0
+
+
+def test_plan_storyboard_render_plan_require_ownership():
+    with _client() as client:
+        owner_headers = _auth_headers(client)
+        project = _create_project(client, owner_headers)
+        client.post(f"/projects/{project['project_id']}/generate-plan", headers=owner_headers)
+
+        other_headers = _auth_headers(client)
+        assert client.get(f"/projects/{project['project_id']}/plan", headers=other_headers).status_code == 403
+        assert (
+            client.get(f"/projects/{project['project_id']}/storyboard", headers=other_headers).status_code == 403
+        )
+        assert (
+            client.get(f"/projects/{project['project_id']}/render-plan", headers=other_headers).status_code == 403
+        )
+
+
 def test_get_missing_job_returns_404():
     with _client() as client:
         response = client.get("/jobs/does-not-exist")
@@ -292,6 +339,7 @@ def test_generation_failure_surfaces_as_failed_status_over_http():
         orchestrator=stack.orchestrator,
         user_store=stack.user_store,
         auth_provider=stack.auth_provider,
+        memory=stack.memory,
     )
     app.dependency_overrides[get_app_state] = lambda: failing_state
     try:

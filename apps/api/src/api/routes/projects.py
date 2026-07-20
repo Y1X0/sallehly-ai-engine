@@ -162,6 +162,52 @@ def retry_generation(
     return _run(state.orchestrator.retry_generation, project_id)
 
 
+@router.get("/{project_id}/plan")
+def get_plan(
+    project_id: str,
+    state: AppState = Depends(get_app_state),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """The DirectorPlan (scenes/shots) for the Creative Workspace UI's
+    story editor/scene timeline/shot cards. Prefers the CreativeCompiler's
+    enriched copy (director_plan_enriched: camera/lighting/motion/style
+    filled in per shot) once storyboard compilation has run, falling
+    back to the CreativeDirector's original plan before that."""
+    _get_owned_project(project_id, state, current_user)
+    entry = state.memory.latest(project_id, "director_plan_enriched") or state.memory.latest(
+        project_id, "director_plan"
+    )
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"No plan generated yet for project {project_id}")
+    return entry.content
+
+
+@router.get("/{project_id}/storyboard")
+def get_storyboard(
+    project_id: str,
+    state: AppState = Depends(get_app_state),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    _get_owned_project(project_id, state, current_user)
+    entry = state.memory.latest(project_id, "storyboard")
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"No storyboard generated yet for project {project_id}")
+    return entry.content
+
+
+@router.get("/{project_id}/render-plan")
+def get_render_plan(
+    project_id: str,
+    state: AppState = Depends(get_app_state),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    _get_owned_project(project_id, state, current_user)
+    entry = state.memory.latest(project_id, "render_plan")
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"No render plan generated yet for project {project_id}")
+    return entry.content
+
+
 @router.get("/{project_id}/assets")
 def list_assets(
     project_id: str,

@@ -34,6 +34,7 @@ class AppState:
     orchestrator: IProjectOrchestrator
     user_store: IUserStore
     auth_provider: IAuthProvider
+    memory: IDirectorMemoryStore
 
 
 def build_app_state(settings: Settings) -> AppState:
@@ -95,4 +96,5 @@ def build_app_state(settings: Settings) -> AppState:
         orchestrator=orchestrator,
         user_store=user_store,
         auth_provider=auth_provider,
+        memory=memory,
     )

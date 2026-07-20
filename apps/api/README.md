@@ -22,6 +22,9 @@ depend on `IProjectOrchestrator` rather than calling
 | `POST /projects` | `orchestrator.create_project` (`workspace_id`/`created_by` from the token, not the request body) |
 | `GET /projects/{id}` | `project_store.get` |
 | `POST /projects/{id}/generate-plan` | `orchestrator.generate_creative_plan` |
+| `GET /projects/{id}/plan` | `memory.latest(id, "director_plan_enriched" \| "director_plan")` - for the story editor/scene timeline/shot cards |
+| `GET /projects/{id}/storyboard` | `memory.latest(id, "storyboard")` - for gate-1 review |
+| `GET /projects/{id}/render-plan` | `memory.latest(id, "render_plan")` - for gate-2 review |
 | `POST /projects/{id}/approve-storyboard` | `orchestrator.approve_storyboard` |
 | `POST /projects/{id}/reject-storyboard` | `orchestrator.reject_storyboard` (regenerates the storyboard using the feedback) |
 | `POST /projects/{id}/approve-render` | `orchestrator.approve_render_plan` |

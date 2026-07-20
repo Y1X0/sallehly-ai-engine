@@ -181,6 +181,66 @@ paths:
         "409":
           $ref: "#/components/responses/InvalidTransition"
 
+  /projects/{project_id}/plan:
+    get:
+      summary: Get the generated DirectorPlan (scenes/shots)
+      description: >
+        For the Creative Workspace UI's story editor/scene timeline/shot
+        cards. Returns the CreativeCompiler's enriched copy
+        (director_plan_enriched: camera/lighting/motion/style filled in
+        per shot) once storyboard compilation has run, otherwise the
+        CreativeDirector's original plan. 404 until generate-plan has
+        run at least once.
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: DirectorPlan
+          content:
+            application/json:
+              schema:
+                $ref: "../../packages/schemas/json/director_plan.schema.json"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /projects/{project_id}/storyboard:
+    get:
+      summary: Get the generated storyboard, for gate-1 review
+      description: 404 until generate-plan has run at least once.
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Storyboard
+          content:
+            application/json:
+              schema:
+                $ref: "../../packages/schemas/json/storyboard.schema.json"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /projects/{project_id}/render-plan:
+    get:
+      summary: Get the compiled render plan, for gate-2 review
+      description: 404 until approve-storyboard has run (render plan compilation happens there).
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: RenderPlan
+          content:
+            application/json:
+              schema:
+                $ref: "../../packages/schemas/json/render_plan.schema.json"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /projects/{project_id}/approve-storyboard:
     post:
       summary: Approve the storyboard (gate 1), compiling the render plan
