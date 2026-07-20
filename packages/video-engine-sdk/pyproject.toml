@@ -1,0 +1,13 @@
+[project]
+name = "video-engine-sdk"
+version = "0.1.0"
+description = "Engine-agnostic contracts: IVideoEngine (which model) and IComputeProvider (where it runs)"
+requires-python = ">=3.11"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/video_engine_sdk"]

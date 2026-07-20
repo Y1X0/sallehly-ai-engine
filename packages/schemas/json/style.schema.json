@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/style.schema.json",
+  "title": "StyleSetup",
+  "description": "Output of the Style Engine. A global StyleSetup is set once per DirectorPlan and inherited by every shot to keep the whole video visually consistent; individual shots may override specific fields.",
+  "type": "object",
+  "required": ["visual_style"],
+  "properties": {
+    "visual_style": {
+      "type": "string",
+      "examples": ["cinematic photorealistic", "anime", "stop-motion claymation", "product commercial clean"]
+    },
+    "color_grade": {
+      "type": "object",
+      "properties": {
+        "lut_reference": { "type": "string", "description": "Asset id of a LUT, if applicable." },
+        "palette": { "type": "array", "items": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" } },
+        "contrast": { "type": "string", "enum": ["low", "medium", "high"], "default": "medium" },
+        "saturation": { "type": "string", "enum": ["muted", "natural", "vivid"], "default": "natural" }
+      },
+      "additionalProperties": false
+    },
+    "consistency_seed": {
+      "type": "integer",
+      "description": "Shared seed used across shots in the same DirectorPlan to keep subjects/style visually consistent, where the active engine supports seeding."
+    },
+    "style_embedding_ref": {
+      "type": "string",
+      "description": "Optional reference to a stored style/character embedding in the vector store, for engines that support it."
+    },
+    "reference_image_ids": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Asset ids of mood-board / reference images."
+    }
+  },
+  "additionalProperties": false
+}

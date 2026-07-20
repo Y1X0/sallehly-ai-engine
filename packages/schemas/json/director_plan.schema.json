@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/director_plan.schema.json",
+  "title": "DirectorPlan",
+  "description": "The sole output contract of the AI Director layer. Produced by any ILLMProvider implementation (Claude today, any other LLM later) via structured/tool-call output validated against this schema. Nothing downstream ever talks back to the LLM directly - everything consumes this document.",
+  "type": "object",
+  "required": ["schema_version", "project_id", "logline", "target_duration_sec", "aspect_ratio", "global_style", "scenes"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "project_id": { "type": "string" },
+    "logline": { "type": "string", "description": "One or two sentence summary of the whole video." },
+    "target_duration_sec": { "type": "number", "exclusiveMinimum": 0 },
+    "aspect_ratio": { "type": "string", "enum": ["16:9", "9:16", "1:1", "21:9", "4:5"] },
+    "global_style": { "$ref": "style.schema.json" },
+    "negative_prompt_global": {
+      "type": "string",
+      "description": "Applied to every shot unless overridden."
+    },
+    "mood_reference_asset_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "continuity_notes": { "type": "string" },
+    "scenes": {
+      "type": "array",
+      "items": { "$ref": "scene.schema.json" },
+      "minItems": 1
+    },
+    "generated_by": {
+      "type": "object",
+      "description": "Provenance of which LLM provider produced this plan - for audit and A/B comparison, never a hard dependency.",
+      "properties": {
+        "provider_id": { "type": "string", "examples": ["claude", "gpt-5", "local-llm"] },
+        "model": { "type": "string" },
+        "prompt_template_id": { "type": "string" },
+        "prompt_template_version": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

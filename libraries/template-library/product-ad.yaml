@@ -1,0 +1,25 @@
+template_id: product-ad
+version: "1"
+description: >
+  A short (15-30s) product commercial: hero shot, feature highlights,
+  closing brand/logo beat. Used when ProjectBrief.style_preset_id ==
+  "product-ad".
+recommended_target_duration_sec: [15, 30]
+recommended_aspect_ratio: "1:1"
+
+global_style_defaults:
+  visual_style: "product commercial clean"
+  color_grade:
+    contrast: medium
+    saturation: vivid
+
+scene_skeleton:
+  - order: 0
+    role: hero_shot
+    guidance: "Establish the product in an aspirational setting, 1 shot, 3-5s."
+  - order: 1
+    role: feature_highlights
+    guidance: "2-3 shots, each isolating one product feature with a close-up/insert shot and deliberate camera movement."
+  - order: 2
+    role: closing_brand_beat
+    guidance: "Final shot returns to product + logo/brand mark, static or slow push-in, 2-3s."

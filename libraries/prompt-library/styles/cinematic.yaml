@@ -1,0 +1,19 @@
+style_id: cinematic
+version: "1"
+fragments:
+  - id: cinematic_lighting_base
+    text: "cinematic lighting, shot on 35mm film, shallow depth of field, filmic color grade"
+    tags: [lighting, lens]
+
+  - id: cinematic_camera_base
+    text: "smooth camera movement, professional cinematography, well-composed framing"
+    tags: [camera]
+
+  - id: cinematic_detail_base
+    text: "highly detailed, photorealistic, natural skin tones, realistic textures"
+    tags: [detail]
+
+  - id: negative_common_artifacts
+    negative: true
+    text: "distorted anatomy, extra limbs, warped faces, flickering, jittery motion, text, watermark, logo, low quality, blurry"
+    tags: [negative, universal]

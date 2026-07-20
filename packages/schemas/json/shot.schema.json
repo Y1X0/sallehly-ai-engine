@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/shot.schema.json",
+  "title": "Shot",
+  "description": "A single shot within a Scene. Produced incrementally by Shot Planner -> Camera Engine -> Motion Engine -> Lighting Engine -> Style Engine, in that order. This is the unit of work that the Render Configuration Compiler turns into one RenderSpec.",
+  "type": "object",
+  "required": ["shot_id", "order", "duration_sec", "description"],
+  "properties": {
+    "shot_id": { "type": "string" },
+    "order": { "type": "integer", "minimum": 0 },
+    "duration_sec": { "type": "number", "exclusiveMinimum": 0 },
+    "description": {
+      "type": "string",
+      "description": "Plain-language creative description of what happens in this shot, written by the Scene Analyzer / AI Director."
+    },
+    "transition_in": {
+      "type": "string",
+      "enum": ["cut", "dissolve", "match_cut", "wipe", "fade_from_black"],
+      "default": "cut"
+    },
+    "transition_out": {
+      "type": "string",
+      "enum": ["cut", "dissolve", "match_cut", "wipe", "fade_to_black"],
+      "default": "cut"
+    },
+    "camera": { "$ref": "camera.schema.json" },
+    "motion": { "$ref": "motion.schema.json" },
+    "lighting": { "$ref": "lighting.schema.json" },
+    "style_override": {
+      "$ref": "style.schema.json",
+      "description": "Optional per-shot override; unset fields inherit from the DirectorPlan's global style."
+    },
+    "storyboard_frame_id": {
+      "type": "string",
+      "description": "Reference to the corresponding Storyboard frame, once generated."
+    },
+    "asset_references": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Asset ids used as conditioning input (e.g. for image-to-video)."
+    }
+  },
+  "additionalProperties": false
+}

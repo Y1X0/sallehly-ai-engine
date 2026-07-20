@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/capability_manifest.schema.json",
+  "title": "CapabilityManifest",
+  "description": "Declares what a specific Video Engine version can do. The Render Configuration Compiler reads this before compiling a RenderSpec, so upstream planners never need engine-specific knowledge.",
+  "type": "object",
+  "required": ["engine_id", "engine_version", "modes", "max_shot_duration_sec", "resolutions", "fps_options"],
+  "properties": {
+    "engine_id": { "type": "string", "examples": ["wan2.1"] },
+    "engine_version": { "type": "string", "examples": ["2.1.0"] },
+    "license": { "type": "string", "examples": ["Apache-2.0"] },
+    "modes": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["text_to_video", "image_to_video", "video_edit"] },
+      "minItems": 1
+    },
+    "max_shot_duration_sec": { "type": "number", "exclusiveMinimum": 0 },
+    "min_shot_duration_sec": { "type": "number", "minimum": 0, "default": 1 },
+    "resolutions": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[0-9]+x[0-9]+$" },
+      "minItems": 1
+    },
+    "fps_options": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 1 },
+      "minItems": 1
+    },
+    "motion_strength_range": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 2,
+      "maxItems": 2,
+      "default": [0, 100]
+    },
+    "supports_negative_prompt": { "type": "boolean", "default": true },
+    "supports_seed": { "type": "boolean", "default": true },
+    "supports_conditioning_images": { "type": "boolean", "default": false },
+    "max_conditioning_images": { "type": "integer", "minimum": 0, "default": 0 },
+    "gpu_requirements": {
+      "type": "object",
+      "properties": {
+        "min_vram_gb": { "type": "number" },
+        "recommended_gpu": { "type": "string", "examples": ["NVIDIA RTX 4090", "NVIDIA A100 80GB"] }
+      }
+    },
+    "average_render_seconds_per_shot": { "type": "number" }
+  },
+  "additionalProperties": false
+}

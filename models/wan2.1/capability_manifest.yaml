@@ -1,0 +1,36 @@
+# Read by the Render Configuration Compiler via CapabilityManifest
+# (packages/schemas/json/capability_manifest.schema.json) whenever
+# VIDEO_ENGINE=wan2.1. Keep in sync with docs/adapters/wan21-adapter-spec.md
+# and Wan21Adapter.capabilities() - the three must never disagree.
+
+engine_id: wan2.1
+engine_version: "2.1.0"
+license: Apache-2.0
+
+modes:
+  - text_to_video
+  - image_to_video
+  - video_edit
+
+max_shot_duration_sec: 5.0
+min_shot_duration_sec: 1.0
+
+resolutions:
+  - "832x480"
+  - "1280x720"
+
+fps_options: [16, 24]
+
+motion_strength_range: [0, 100]
+
+supports_negative_prompt: true
+supports_seed: true
+supports_conditioning_images: true
+max_conditioning_images: 1
+
+gpu_requirements:
+  min_vram_gb: 24
+  recommended_gpu: "NVIDIA RTX 4090 (24GB) or better"
+
+# Placeholder - fill in once Phase 3 measures real render times.
+average_render_seconds_per_shot: null

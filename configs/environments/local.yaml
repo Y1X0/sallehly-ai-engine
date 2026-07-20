@@ -1,0 +1,22 @@
+# Local development defaults. Real secrets come from .env (never this file).
+environment: local
+
+llm:
+  provider: claude
+  model: claude-sonnet-5
+
+video:
+  engine: wan2.1
+  compute_provider: local   # LocalProvider - no GPU, no network, see packages/video-engine-sdk/README.md
+
+storage:
+  backend: minio
+  bucket: video-engine-assets
+
+workflow:
+  engine: temporal
+  address: localhost:7233
+  namespace: default
+
+feature_flags:
+  storyboard_preview_images: false   # Phase 2+: enable once an image-gen pipeline is wired up

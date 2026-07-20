@@ -1,0 +1,26 @@
+# Template for the production environment config. Copy to production.yaml
+# and fill in real values (or, preferably, keep secrets in a secret
+# manager and only reference their names here) once Phase 3+ deployment
+# is underway. Not loaded by default - production.yaml is intentionally
+# gitignored once created.
+environment: production
+
+llm:
+  provider: claude
+  model: claude-sonnet-5
+
+video:
+  engine: wan2.1
+  compute_provider: runpod   # or vastai - see docs/adr/0005-gpu-provider-runpod-vastai-first.md
+
+storage:
+  backend: s3
+  bucket: sallehly-video-engine-prod
+
+workflow:
+  engine: temporal
+  address: "REPLACE_ME:7233"
+  namespace: production
+
+feature_flags:
+  storyboard_preview_images: true

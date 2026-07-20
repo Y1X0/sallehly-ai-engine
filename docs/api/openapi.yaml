@@ -1,0 +1,216 @@
+openapi: 3.1.0
+info:
+  title: Sallehly AI Video Engine API
+  version: "1"
+  description: >
+    Public/internal API for apps/api. Implements the request path:
+    brief -> AI Director -> Creative Compiler -> storyboard approval ->
+    Video Engine render -> Post-Processing -> Export. Business schemas are
+    referenced directly from packages/schemas/json/ so this contract can
+    never drift from the internal pipeline contracts.
+servers:
+  - url: https://api.sallehly.ai/v1
+    description: Production (future)
+  - url: http://localhost:8000/v1
+    description: Local dev
+
+paths:
+  /projects:
+    post:
+      summary: Create a project from a creative brief
+      description: >
+        Creates the Project and asynchronously triggers the AI Director to
+        produce a DirectorPlan. Returns immediately with status=planning;
+        poll GET /projects/{project_id} or listen for the
+        project.director_plan.ready webhook.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt, target_duration_sec, aspect_ratio]
+              properties:
+                prompt: { type: string }
+                target_duration_sec: { type: number, exclusiveMinimum: 0 }
+                aspect_ratio: { type: string, enum: ["16:9", "9:16", "1:1", "21:9", "4:5"] }
+                reference_asset_ids:
+                  type: array
+                  items: { type: string }
+                style_preset_id: { type: string }
+      responses:
+        "201":
+          description: Project created
+          content:
+            application/json:
+              schema:
+                $ref: "../../packages/schemas/json/project.schema.json"
+
+  /projects/{project_id}:
+    get:
+      summary: Get a project's current state
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Project
+          content:
+            application/json:
+              schema:
+                $ref: "../../packages/schemas/json/project.schema.json"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /projects/{project_id}/director-plan:
+    get:
+      summary: Get the active DirectorPlan for a project
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: DirectorPlan
+          content:
+            application/json:
+              schema:
+                $ref: "../../packages/schemas/json/director_plan.schema.json"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /projects/{project_id}/storyboard:
+    get:
+      summary: Get the current storyboard for human review
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Storyboard
+          content:
+            application/json:
+              schema:
+                $ref: "../../packages/schemas/json/storyboard.schema.json"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /projects/{project_id}/storyboard/approve:
+    post:
+      summary: Approve the storyboard, unblocking full-cost rendering
+      description: >
+        Sends a Temporal signal to the paused render workflow. This is the
+        human-in-the-loop checkpoint that exists specifically to avoid
+        spending GPU cost on a plan the user has not confirmed.
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "202":
+          description: Approval accepted; render jobs are being enqueued
+        "409":
+          description: Storyboard is not in pending_review status
+
+  /projects/{project_id}/storyboard/request-changes:
+    post:
+      summary: Reject the current storyboard with feedback
+      description: >
+        Sets storyboard.status = changes_requested and routes the feedback
+        back to the AI Director / affected Planners for a revised
+        DirectorPlan revision.
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [feedback]
+              properties:
+                feedback:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      frame_id: { type: string }
+                      comment: { type: string }
+      responses:
+        "202":
+          description: Feedback accepted; a revised DirectorPlan will be generated
+
+  /render-jobs/{job_id}:
+    get:
+      summary: Get render job status
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Render job status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job_id: { type: string }
+                  project_id: { type: string }
+                  shot_id: { type: string }
+                  status:
+                    type: string
+                    enum: [queued, running, succeeded, failed, cancelled]
+                  progress: { type: number, minimum: 0, maximum: 1 }
+                  engine_id: { type: string }
+                  compute_provider_id: { type: string }
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /projects/{project_id}/export:
+    get:
+      summary: Get the final exported video asset(s), once available
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Export result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  project_id: { type: string }
+                  status: { type: string, enum: [pending, ready, failed] }
+                  assets:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        format: { type: string, examples: ["mp4_h264", "prores"] }
+                        aspect_ratio: { type: string }
+                        url: { type: string, format: uri }
+                        thumbnail_url: { type: string, format: uri }
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  parameters:
+    ProjectId:
+      name: project_id
+      in: path
+      required: true
+      schema: { type: string }
+
+  responses:
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string }
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+
+security:
+  - BearerAuth: []

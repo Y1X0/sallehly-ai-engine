@@ -1,0 +1,25 @@
+# Model Registry
+#
+# Every video engine the platform can select via VIDEO_ENGINE must have an
+# entry here, plus a matching capability_manifest.yaml and IVideoEngine
+# implementation in services/video-engine-adapter. Weights themselves are
+# never committed to this repo (see .gitignore) - only metadata.
+
+engines:
+  - engine_id: wan2.1
+    engine_version: "2.1.0"
+    status: primary
+    license: Apache-2.0
+    source: https://github.com/Wan-Video/Wan2.1
+    adapter: services/video-engine-adapter/src/video_engine_adapter/adapters/wan21_adapter.py
+    capability_manifest: models/wan2.1/capability_manifest.yaml
+    weights_location: "TBD - not fetched yet (Phase 3)"
+    notes: >
+      First engine. See docs/adapters/wan21-adapter-spec.md for the full
+      integration spec and open questions (checkpoint size, motion
+      strength mapping) to resolve during Phase 3.
+
+  # Phase 8 (docs/ARCHITECTURE.md roadmap): a custom foundation model gets
+  # its own entry here once training produces a usable checkpoint. It
+  # implements the same IVideoEngine interface as wan2.1 above - see
+  # docs/adr/0001-director-engine-separation.md.

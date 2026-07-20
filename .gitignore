@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+
+# Env
+.env
+.env.local
+
+# Node (web dashboard, future)
+node_modules/
+.next/
+
+# Model weights / large binaries — never commit these
+models/**/weights/
+models/**/*.safetensors
+models/**/*.ckpt
+models/**/*.bin
+*.mp4
+*.mov
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Docker volumes
+.docker-data/

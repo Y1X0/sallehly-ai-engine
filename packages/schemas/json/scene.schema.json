@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/scene.schema.json",
+  "title": "Scene",
+  "description": "Output of the Scene Analyzer / Scene Builder: one narrative beat of the DirectorPlan, broken down into an ordered list of Shots by the Shot Planner.",
+  "type": "object",
+  "required": ["scene_id", "order", "summary", "shots"],
+  "properties": {
+    "scene_id": { "type": "string" },
+    "order": { "type": "integer", "minimum": 0 },
+    "summary": { "type": "string" },
+    "location": { "type": "string" },
+    "characters": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Character/subject identifiers, used to enforce continuity across shots and scenes."
+    },
+    "continuity_notes": {
+      "type": "string",
+      "description": "Notes carried forward so the Style/Camera/Lighting engines keep this scene visually consistent with adjacent scenes."
+    },
+    "shots": {
+      "type": "array",
+      "items": { "$ref": "shot.schema.json" },
+      "minItems": 1
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/storyboard.schema.json",
+  "title": "Storyboard",
+  "description": "Output of the Storyboard Generator: a lightweight, cheap-to-produce preview of the whole DirectorPlan for human approval BEFORE any full-cost video rendering happens.",
+  "type": "object",
+  "required": ["project_id", "director_plan_version", "frames", "status"],
+  "properties": {
+    "project_id": { "type": "string" },
+    "director_plan_version": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "pending_review", "approved", "changes_requested"],
+      "default": "draft"
+    },
+    "frames": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["frame_id", "shot_id", "description"],
+        "properties": {
+          "frame_id": { "type": "string" },
+          "shot_id": { "type": "string" },
+          "description": { "type": "string" },
+          "preview_image_asset_id": {
+            "type": "string",
+            "description": "Optional low-cost generated preview image for this shot."
+          }
+        },
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "reviewer_feedback": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "frame_id": { "type": "string" },
+          "comment": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

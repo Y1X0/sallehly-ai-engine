@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/project.schema.json",
+  "title": "Project",
+  "description": "Top-level entity that ties a user's request to every artifact produced across the pipeline. One Project may accumulate multiple DirectorPlan revisions (e.g. after 'changes_requested' storyboard feedback).",
+  "type": "object",
+  "required": ["project_id", "workspace_id", "created_by", "status", "brief"],
+  "properties": {
+    "project_id": { "type": "string" },
+    "workspace_id": { "type": "string" },
+    "created_by": { "type": "string", "description": "User id." },
+    "created_at": { "type": "string", "format": "date-time" },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "planning", "storyboard_review", "rendering", "post_processing", "completed", "failed", "cancelled"]
+    },
+    "brief": {
+      "type": "object",
+      "description": "The raw user request that seeds the AI Director.",
+      "required": ["prompt"],
+      "properties": {
+        "prompt": { "type": "string" },
+        "reference_asset_ids": { "type": "array", "items": { "type": "string" } },
+        "target_duration_sec": { "type": "number" },
+        "aspect_ratio": { "type": "string" },
+        "style_preset_id": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "active_director_plan_id": { "type": "string" },
+    "director_plan_history": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Ids of prior DirectorPlan revisions, most recent last."
+    },
+    "storyboard_id": { "type": "string" },
+    "render_job_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "final_video_asset_id": { "type": "string" }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/motion.schema.json",
+  "title": "MotionSetup",
+  "description": "Output of the Motion Engine for a single shot: subject motion, independent of camera movement (see camera.schema.json).",
+  "type": "object",
+  "required": ["motion_strength"],
+  "properties": {
+    "subject_motion": {
+      "type": "string",
+      "examples": ["character walks left to right", "hair blowing in wind", "liquid pouring into glass"]
+    },
+    "motion_strength": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Normalized 0-100 value. Render Configuration Compiler rescales this to the active engine's motion_strength_range from its CapabilityManifest."
+    },
+    "speed_ramp": {
+      "type": "array",
+      "description": "Optional list of {t, speed_multiplier} keyframes for slow-motion / speed-ramp effects.",
+      "items": {
+        "type": "object",
+        "required": ["t", "speed_multiplier"],
+        "properties": {
+          "t": { "type": "number", "minimum": 0, "maximum": 1 },
+          "speed_multiplier": { "type": "number", "exclusiveMinimum": 0 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "loopable": { "type": "boolean", "default": false }
+  },
+  "additionalProperties": false
+}

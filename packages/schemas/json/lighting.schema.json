@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/lighting.schema.json",
+  "title": "LightingSetup",
+  "description": "Output of the Lighting Engine for a single shot.",
+  "type": "object",
+  "required": ["time_of_day", "mood"],
+  "properties": {
+    "time_of_day": {
+      "type": "string",
+      "enum": ["dawn", "morning", "midday", "golden_hour", "dusk", "night", "interior_artificial"]
+    },
+    "mood": {
+      "type": "string",
+      "examples": ["warm and hopeful", "tense and cold", "neutral commercial"]
+    },
+    "key_light": {
+      "type": "object",
+      "properties": {
+        "direction": { "type": "string", "enum": ["front", "side", "back", "top", "under"] },
+        "hardness": { "type": "string", "enum": ["soft", "hard"], "default": "soft" },
+        "color_temp_kelvin": { "type": "integer", "minimum": 1000, "maximum": 20000 }
+      },
+      "additionalProperties": false
+    },
+    "fill_light_ratio": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.5 },
+    "rim_light": { "type": "boolean", "default": false },
+    "environment_reference": {
+      "type": "string",
+      "description": "Reference to an HDRI/environment asset id in the Asset Manager, if any."
+    },
+    "notes": { "type": "string" }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/render_configuration.schema.json",
+  "title": "RenderSpec",
+  "description": "Output of the Render Configuration Compiler for a single Shot: the final, engine-agnostic contract handed to a Video Engine Adapter (IVideoEngine.submit). This is the critical abstraction boundary - swapping Wan2.1 for a future engine means writing a new adapter that consumes this same schema, with zero changes to any Planner upstream.",
+  "type": "object",
+  "required": ["schema_version", "shot_id", "duration_sec", "fps", "resolution", "positive_prompt"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "shot_id": { "type": "string" },
+    "duration_sec": { "type": "number", "exclusiveMinimum": 0 },
+    "fps": { "type": "integer", "minimum": 1 },
+    "resolution": { "type": "string", "pattern": "^[0-9]+x[0-9]+$" },
+    "aspect_ratio": { "type": "string" },
+    "mode": { "type": "string", "enum": ["text_to_video", "image_to_video", "video_edit"] },
+    "positive_prompt": { "type": "string" },
+    "negative_prompt": { "type": "string" },
+    "seed": { "type": "integer" },
+    "motion_strength": {
+      "type": "number",
+      "description": "Already rescaled by the Compiler into the active engine's CapabilityManifest.motion_strength_range."
+    },
+    "camera": { "$ref": "camera.schema.json" },
+    "lighting": { "$ref": "lighting.schema.json" },
+    "conditioning_images": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Asset ids/URIs, for image_to_video or video_edit modes."
+    },
+    "engine_id": {
+      "type": "string",
+      "description": "Which engine this RenderSpec was compiled for, set by the Compiler after reading the active CapabilityManifest. Adapters may use this only to select engine-specific serialization - Planners must never branch on it."
+    },
+    "quality_tier": {
+      "type": "string",
+      "enum": ["preview", "standard", "final"],
+      "default": "final",
+      "description": "'preview' allows a cheap/fast low-step render for storyboard-stage approval before committing to a 'final' full-cost render."
+    }
+  },
+  "additionalProperties": false
+}

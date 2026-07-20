@@ -1,0 +1,19 @@
+[project]
+name = "sallehly-ai-video-engine"
+version = "0.1.0"
+description = "AI-directed cinematic video generation platform (workspace root)"
+requires-python = ">=3.11"
+
+[tool.uv.workspace]
+members = [
+  "apps/*",
+  "services/*",
+  "packages/*",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

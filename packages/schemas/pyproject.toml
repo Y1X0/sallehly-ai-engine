@@ -1,0 +1,15 @@
+[project]
+name = "schemas"
+version = "0.1.0"
+description = "Canonical JSON Schema contracts, plus a thin Python loader"
+requires-python = ">=3.11"
+dependencies = [
+  "jsonschema>=4.21",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/schemas"]
