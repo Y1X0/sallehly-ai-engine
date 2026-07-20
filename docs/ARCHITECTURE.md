@@ -15,17 +15,21 @@ flowchart TD
     U[User / Client] --> API[apps/api]
     API --> ORCH[Render Orchestrator<br/>Temporal Workflow]
 
-    subgraph L1[Creative Intelligence Layer]
-        DIR[AI Director]
-        PB[Prompt Builder]
-        SB[Scene Builder]
-        SG[Storyboard Generator]
+    subgraph CD["CreativeDirector orchestrator (services/ai-director)"]
+        BP[Creative Brief Parser<br/>LLM]
+        STP[Story Planner<br/>LLM]
+        BP --> STP
+    end
+
+    subgraph L1[Creative Compiler - Phase 2]
+        SB[Scene Generator]
         SP[Shot Planner]
-        CAM[Camera Engine]
-        MOT[Motion Engine]
-        LIT[Lighting Engine]
-        STY[Style Engine]
-        RC[Render Config Compiler]
+        SG[Storyboard Generator]
+        CAM[Camera Director]
+        MOT[Motion Director]
+        LIT[Lighting Director]
+        STY[Style Director]
+        RC[Render Spec Generator]
     end
 
     subgraph L2[Execution Layer]
@@ -39,20 +43,30 @@ flowchart TD
         CDN[Storage / CDN]
     end
 
-    ORCH --> DIR --> PB --> SB --> SG
-    SG -.->|human approval gate| API
-    SG --> SP --> CAM --> MOT --> LIT --> STY --> RC
+    ORCH --> BP
+    STP --> SB --> SP --> SG
+    SG -.->|human approval gate 1: story/shots| API
+    SG --> CAM --> MOT --> LIT --> STY --> RC
+    RC -.->|human approval gate 2: full render, optional| API
     RC --> ORCH
     ORCH --> ENGINE --> COMPUTE
     COMPUTE --> ORCH
     ORCH --> PP --> EXP --> CDN --> API
 ```
 
+See [ADR 0007](adr/0007-pipeline-stage-terminology-and-ordering.md) for
+why the storyboard approval gate sits right after Shot Planner (cheapest
+possible checkpoint: catches a wrong story/shot breakdown before any
+per-shot camera/lighting/motion/style planning runs) rather than at the
+end of the Creative Compiler.
+
 ## 3. Data flow contracts
 
 ```mermaid
 flowchart LR
-    Brief["ProjectBrief<br/>(project.schema.json .brief)"] --> DP["DirectorPlan<br/>(director_plan.schema.json)"]
+    Brief["ProjectBrief<br/>(project.schema.json .brief)"] --> CB["CreativeBrief<br/>(creative_brief.schema.json)"]
+    CB --> SO["StoryOutline<br/>(story_outline.schema.json)"]
+    SO --> DP["DirectorPlan<br/>(director_plan.schema.json)"]
     DP --> Scene["Scene[]<br/>(scene.schema.json)"]
     Scene --> Shot["Shot<br/>(shot.schema.json)<br/>camera+motion+lighting+style"]
     Shot --> SB["Storyboard<br/>(storyboard.schema.json)"]
@@ -62,37 +76,52 @@ flowchart LR
     Clip --> Final["Final MP4"]
 ```
 
+`CreativeBrief` and `StoryOutline` are intermediate artifacts internal to
+`CreativeDirector` — persisted in `packages/director-memory` for the
+revision loop, but not part of the public API contract
+(`docs/api/openapi.yaml`), which only exposes `DirectorPlan` and later.
+
 ## 4. Module responsibilities
 
 See each module's own `README.md` for the authoritative, detailed
 description. Summary:
 
-| Layer | Module | Path |
-|---|---|---|
-| Intelligence | AI Director | `services/ai-director` |
-| Intelligence | Prompt Builder | `services/prompt-builder` |
-| Intelligence | Scene Builder | `services/scene-builder` |
-| Intelligence | Storyboard Generator | `services/storyboard-generator` |
-| Intelligence | Shot Planner | `services/shot-planner` |
-| Intelligence | Camera Engine | `services/camera-engine` |
-| Intelligence | Motion Engine | `services/motion-engine` |
-| Intelligence | Lighting Engine | `services/lighting-engine` |
-| Intelligence | Style Engine | `services/style-engine` |
-| Intelligence | Render Configuration Compiler | `services/render-config-compiler` |
-| Execution | Video Engine Adapter (Wan2.1) | `services/video-engine-adapter` |
-| Execution | Render Orchestrator | `services/render-orchestrator` |
-| Execution | GPU Worker container | `workers/gpu-worker` |
-| Delivery | Post-Processing | `services/post-processing` |
-| Delivery | Export Service | `services/export-service` |
-| Cross-cutting | Asset Manager | `services/asset-manager` |
-| Cross-cutting | Config SDK | `packages/config-sdk` |
-| Cross-cutting | Observability | `packages/observability` |
-| Contracts | Schemas | `packages/schemas` |
-| Contracts | LLM Provider interface | `packages/llm-providers` |
-| Contracts | Video Engine / Compute Provider interfaces | `packages/video-engine-sdk` |
-| Content | Prompt Library | `libraries/prompt-library` |
-| Content | Template Library | `libraries/template-library` |
-| Future | Training (custom foundation model) | `services/training` |
+| Layer | Module | Path | Status |
+|---|---|---|---|
+| Creative Director | CreativeDirector (orchestrator) | `services/ai-director` | **Implemented** |
+| Creative Director | Creative Brief Parser | `services/creative-brief-parser` | **Implemented** |
+| Creative Director | Story Planner | `services/story-planner` | **Implemented** |
+| Creative Compiler | Scene Generator | `services/scene-builder` | **Implemented** (deterministic) |
+| Creative Compiler | Shot Planner | `services/shot-planner` | **Implemented** (deterministic) |
+| Creative Compiler | Prompt Builder | `services/prompt-builder` | Phase 2 |
+| Creative Compiler | Storyboard Generator | `services/storyboard-generator` | Phase 2 |
+| Creative Compiler | Camera Director | `services/camera-engine` | Phase 2 |
+| Creative Compiler | Motion Director | `services/motion-engine` | Phase 2 |
+| Creative Compiler | Lighting Director | `services/lighting-engine` | Phase 2 |
+| Creative Compiler | Style Director | `services/style-engine` | Phase 2 |
+| Creative Compiler | Render Spec Generator | `services/render-config-compiler` | Phase 2 |
+| Execution | Video Engine Adapter (Wan2.1) | `services/video-engine-adapter` | Phase 3 (structurally complete) |
+| Execution | Render Orchestrator | `services/render-orchestrator` | Phase 4 |
+| Execution | GPU Worker container | `workers/gpu-worker` | Phase 3 |
+| Delivery | Post-Processing | `services/post-processing` | Phase 5 |
+| Delivery | Export Service | `services/export-service` | Phase 5 |
+| Cross-cutting | Asset Manager | `services/asset-manager` | Phase 3 |
+| Cross-cutting | Config SDK | `packages/config-sdk` | Implemented |
+| Cross-cutting | Observability | `packages/observability` | Phase 4 |
+| Cross-cutting | Director Memory | `packages/director-memory` | **Implemented** |
+| Contracts | Schemas | `packages/schemas` | **Implemented** |
+| Contracts | LLM Provider interface | `packages/llm-providers` | **Implemented** |
+| Contracts | Prompt template engine | `packages/prompt-engine` | **Implemented** |
+| Contracts | Video Engine / Compute Provider interfaces | `packages/video-engine-sdk` | Implemented (interfaces); adapters Phase 3 |
+| Content | Prompt Library (video-gen fragments) | `libraries/prompt-library` | Seeded |
+| Content | Prompt Templates (LLM director prompts) | `libraries/prompt-templates` | **Implemented** |
+| Content | Template Library (DirectorPlan genre templates) | `libraries/template-library` | Seeded |
+| Future | Training (custom foundation model) | `services/training` | Phase 8 |
+
+"Creative Director" here is the same layer the rest of this document
+calls the **AI Director** / **Creative Intelligence Layer** — see
+[ADR 0007](adr/0007-pipeline-stage-terminology-and-ordering.md) for the
+full terminology mapping.
 
 ## 5. The two swap points
 
@@ -128,6 +157,8 @@ Three independent axes of change, three independent interfaces. See
 | Object storage | MinIO locally, S3/R2 in production | — |
 | Vector store (Phase 2+) | Qdrant or pgvector | — |
 | Schema validation | JSON Schema (`packages/schemas`) + `jsonschema` at runtime boundaries | — |
+| LLM prompt templating | Jinja2, versioned YAML files (`packages/prompt-engine` + `libraries/prompt-templates`) | [0006](adr/0006-structured-output-retry-decorator.md) |
+| Structured output enforcement | Anthropic tool-use forced `tool_choice` + `RetryingLLMProvider` schema-validate-and-retry decorator | [0006](adr/0006-structured-output-retry-decorator.md) |
 | Package/workspace management | `uv` workspace (`pyproject.toml` at root) | — |
 | Local dev | `docker-compose.yml` (Postgres, Redis, MinIO, optional Temporal dev server) | — |
 
@@ -139,14 +170,14 @@ independent product, not a feature of it.
 
 ## 8. Roadmap
 
-| Phase | Deliverable |
-|---|---|
-| **0 — Foundation** *(this repo's current state)* | Monorepo structure, JSON Schemas, `ILLMProvider`/`IVideoEngine`/`IComputeProvider` interfaces, Wan2.1 adapter spec + stub, API contract, local dev environment |
-| **1 — AI Director MVP** | Implement `ClaudeProvider.generate_structured`; validate DirectorPlan generation end-to-end against real briefs; seed Prompt/Template Library |
-| **2 — Creative Compiler** | Implement Scene/Shot/Camera/Motion/Lighting/Style Planners and the Render Configuration Compiler |
-| **3 — Video Engine Adapter + Wan2.1** | Implement `Wan21Adapter`'s real inference call, `RunPodProvider`, one end-to-end text-to-video render |
-| **4 — Orchestration** | Temporal workflow in Render Orchestrator, storyboard human-approval signal, retries |
-| **5 — Post-Processing & Export** | Stitching, upscaling, color grade, audio, multi-format export |
-| **6 — Frontend MVP** | `apps/web-dashboard`: brief → storyboard approval → render → download |
-| **7 — Scale-out** | `VastAIProvider` completion, `KubernetesProvider`, autoscaling, caching, billing |
-| **8 — Custom foundation model track** | `services/training`; new `IVideoEngine` implementation replacing/augmenting Wan2.1 |
+| Phase | Deliverable | Status |
+|---|---|---|
+| **0 — Foundation** | Monorepo structure, JSON Schemas, `ILLMProvider`/`IVideoEngine`/`IComputeProvider` interfaces, Wan2.1 adapter spec + stub, API contract, local dev environment | Done |
+| **1 — Creative Director MVP** *(this repo's current state)* | `ClaudeProvider.generate_structured` (real Anthropic SDK call, untested against the live API in this environment), `RetryingLLMProvider`, `CreativeBriefParser`, `StoryPlanner`, `SceneGenerator`, `ShotPlanner`, `CreativeDirector` orchestrator, `packages/prompt-engine` + versioned templates, `packages/director-memory`, end-to-end tested against `FakeLLMProvider` | Done |
+| **2 — Creative Compiler** | Implement Prompt Builder, Storyboard Generator, Camera/Motion/Lighting/Style Directors, and the Render Spec Generator (`render-config-compiler`) | Next |
+| **3 — Video Engine Adapter + Wan2.1** | Implement `Wan21Adapter`'s real inference call, `RunPodProvider`, one end-to-end text-to-video render | Not started |
+| **4 — Orchestration** | Temporal workflow in Render Orchestrator, storyboard human-approval signal, retries | Not started |
+| **5 — Post-Processing & Export** | Stitching, upscaling, color grade, audio, multi-format export | Not started |
+| **6 — Frontend MVP** | `apps/web-dashboard`: brief → storyboard approval → render → download | Not started |
+| **7 — Scale-out** | `VastAIProvider` completion, `KubernetesProvider`, autoscaling, caching, billing | Not started |
+| **8 — Custom foundation model track** | `services/training`; new `IVideoEngine` implementation replacing/augmenting Wan2.1 | Not started |

@@ -10,6 +10,17 @@ members = [
   "services/*",
   "packages/*",
 ]
+# Not yet Python packages (docs-only placeholders for future phases):
+exclude = [
+  "apps/web-dashboard",
+  "services/training",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.6",
+]
 
 [tool.ruff]
 line-length = 100

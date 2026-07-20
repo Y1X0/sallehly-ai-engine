@@ -26,10 +26,15 @@ design, [`docs/DECISIONS.md`](docs/DECISIONS.md) for the decision log, and
 
 ## Status
 
-**Phase 0 — Foundation.** This repository currently contains architecture,
-contracts (JSON Schemas, API spec), interface definitions, and scaffolding
-only. No product features are implemented yet. See the roadmap in
-`docs/ARCHITECTURE.md#roadmap`.
+**Phase 1 — Creative Director MVP.** The full brief-to-`DirectorPlan`
+pipeline is implemented and tested end-to-end (`tests/test_creative_pipeline.py`):
+Creative Brief Parser → Story Planner (both LLM-backed, with
+schema-validated + retried structured output) → Scene Generator → Shot
+Planner (deterministic), orchestrated by `CreativeDirector`
+(`services/ai-director`). Phase 2 (Camera/Motion/Lighting/Style
+Directors, Storyboard Generator, Render Spec Generator) and everything
+past it is not yet implemented. See the roadmap in
+`docs/ARCHITECTURE.md#8-roadmap`.
 
 ## Repository layout
 

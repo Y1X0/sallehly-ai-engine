@@ -1,17 +1,27 @@
 [project]
 name = "ai-director"
 version = "0.1.0"
-description = "Creative Director layer: brief -> DirectorPlan, via any ILLMProvider"
+description = "Creative Director orchestrator: raw idea -> DirectorPlan, via any ILLMProvider"
 requires-python = ">=3.11"
 dependencies = [
   "llm-providers",
   "schemas",
+  "creative-brief-parser",
+  "story-planner",
+  "scene-builder",
+  "shot-planner",
+  "director-memory",
   "jsonschema>=4.21",
 ]
 
 [tool.uv.sources]
 llm-providers = { workspace = true }
 schemas = { workspace = true }
+creative-brief-parser = { workspace = true }
+story-planner = { workspace = true }
+scene-builder = { workspace = true }
+shot-planner = { workspace = true }
+director-memory = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

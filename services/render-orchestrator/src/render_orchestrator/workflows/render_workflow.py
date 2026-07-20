@@ -2,7 +2,7 @@
 for the full sequence diagram and rationale (ADR 0004).
 
 This is the only file in the entire codebase allowed to import the
-Temporal SDK - every activity it calls out to talks to AIDirector,
+Temporal SDK - every activity it calls out to talks to CreativeDirector,
 the Creative Compiler services, IVideoEngine, and IComputeProvider
 purely through their existing interfaces.
 """

@@ -10,7 +10,9 @@ text.
 | Schema | Produced by | Consumed by |
 |---|---|---|
 | `project.schema.json` | API / project service | everything |
-| `director_plan.schema.json` | AI Director | Prompt Builder, Scene Builder |
+| `creative_brief.schema.json` | Creative Brief Parser | Story Planner |
+| `story_outline.schema.json` | Story Planner | Scene Generator (Creative Director orchestrates) |
+| `director_plan.schema.json` | Creative Director (assembled from `story_outline` + generated scenes/shots) | Prompt Builder, Scene Builder |
 | `scene.schema.json` | Scene Builder | Storyboard Generator, Shot Planner |
 | `shot.schema.json` | Shot Planner (then enriched by Camera/Motion/Lighting/Style engines) | Render Configuration Compiler |
 | `camera.schema.json` | Camera Engine | embedded in `shot`, `render_configuration` |

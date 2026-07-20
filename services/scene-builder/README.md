@@ -1,14 +1,22 @@
 # services/scene-builder
 
-## Scene Analyzer / Scene Builder
+## Scene Generator (Scene Analyzer / Scene Builder)
 
-**Responsibility:** Breaks a DirectorPlan's logline into an ordered list of Scenes, allocates each scene's share of the target_duration_sec budget, and tracks continuity (recurring characters, locations, lighting mood) so later engines don't have to re-derive it per shot.
+**Responsibility:** expands a `StoryOutline`'s `scene_skeleton` into full
+`Scene` entries — carrying over each scene's summary, location, and the
+`StoryOutline`'s continuity anchors (recurring characters) and style
+hint — without shots yet. Shots are filled in immediately afterward by
+the Shot Planner, in the same `CreativeDirector` orchestration pass.
 
-**Input:** `director_plan.schema.json` (logline, target_duration_sec, continuity_notes)
+**Input:** `story_outline.schema.json` (`scene_skeleton`, `continuity_anchors`, `global_style_hint`)
 
-**Output:** `scene.schema.json` entries (without shots populated yet)
+**Output:** `scene.schema.json` entries (`shots: []`, populated next by Shot Planner)
 
-**Consumed by:** Shot Planner
+**Consumed by:** Shot Planner, then `CreativeDirector` assembles the result into `director_plan.schema.json`
 
-**Status:** Interface/package scaffolded in Phase 0. Business logic is a
-Phase 2 target - see `docs/ARCHITECTURE.md#roadmap`.
+## Status (Phase 1)
+
+Implemented as `SceneGenerator.generate_scenes()` — deterministic (see
+`docs/adr/0007-pipeline-stage-terminology-and-ordering.md`): scene
+structure follows directly from what the Story Planner already decided,
+so no additional LLM call is needed here.

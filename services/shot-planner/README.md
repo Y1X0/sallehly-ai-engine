@@ -2,13 +2,23 @@
 
 ## Shot Planner
 
-**Responsibility:** Expands each Scene into an ordered list of Shots: shot type (wide/medium/close/insert/...), duration, and in/out transitions. Does not yet decide camera, motion, lighting, or style - those are filled in by the dedicated engines that run immediately after this one in the pipeline.
+**Responsibility:** expands each `Scene` into an ordered list of bare
+`Shot` entries — shot count, duration, plain-language description, and
+in/out transitions, derived heuristically from the scene's estimated
+duration. Does not decide camera, motion, lighting, or style — those
+fields stay unset here and are filled in by the Camera/Motion/Lighting/
+Style Directors in Phase 2.
 
-**Input:** `scene.schema.json` (summary, characters, continuity_notes)
+**Input:** `Scene` (from Scene Generator) + the scene's `estimated_duration_sec` (from `story_outline.scene_skeleton`)
 
-**Output:** `shot.schema.json` entries (camera/motion/lighting/style fields still null)
+**Output:** `shot.schema.json` entries (camera/motion/lighting/style_override left unset)
 
-**Consumed by:** Camera Engine
+**Consumed by:** Camera Director (Phase 2), then `CreativeDirector` assembles the full `director_plan.schema.json`
 
-**Status:** Interface/package scaffolded in Phase 0. Business logic is a
-Phase 2 target - see `docs/ARCHITECTURE.md#roadmap`.
+## Status (Phase 1)
+
+Implemented as `ShotPlanner.plan_shots()` — a duration-budget heuristic
+(~3s/shot, rotating through a fixed shot-type sequence via
+`default_shot_type()` as a starting point for the future Camera
+Director) rather than an LLM call, per
+`docs/adr/0007-pipeline-stage-terminology-and-ordering.md`.

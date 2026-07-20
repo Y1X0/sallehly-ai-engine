@@ -19,7 +19,7 @@ requirements follow directly from this:
 
 The system has exactly one contract between the two layers:
 `DirectorPlan` (see `packages/schemas/json/director_plan.schema.json`),
-produced by `AIDirector` (`services/ai-director`) via any
+produced by `CreativeDirector` (`services/ai-director`) via any
 `ILLMProvider` implementation, and consumed only by the Creative Compiler
 pipeline (Scene Builder → ... → Render Configuration Compiler). The
 Compiler's output, `RenderSpec`
@@ -45,10 +45,10 @@ No service is permitted to:
   mechanism behind "today: Claude → Wan2.1, in a year: Claude → my
   foundation model, without rewriting the system."
 - Every cross-module payload must be validated against its schema at the
-  boundary (see `AIDirector.generate_director_plan`, which validates the
+  boundary (see `CreativeDirector.generate_director_plan`, which validates the
   LLM's output before returning it) — this is a small amount of extra
   code in exchange for the entire system being safe to swap parts out of.
 - A Planner that needs an LLM-backed creative sub-decision takes its own
   `ILLMProvider` dependency directly; it does not route back through
-  `AIDirector`, keeping that service a single testable entry point for
+  `CreativeDirector`, keeping that service a single testable entry point for
   the one contract that matters (brief in, `DirectorPlan` out).

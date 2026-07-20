@@ -1,7 +1,7 @@
 # tests
 
 Cross-service integration tests (e.g. "a ProjectBrief flows through
-AIDirector -> Creative Compiler -> LocalProvider and produces a valid
+CreativeDirector -> Creative Compiler -> LocalProvider and produces a valid
 RawClip stub") live here. Unit tests for a single service/package live
 next to it in that package's own `tests/` directory instead.
 

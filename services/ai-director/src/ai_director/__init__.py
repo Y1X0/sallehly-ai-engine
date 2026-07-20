@@ -1,3 +1,3 @@
-from .director import AIDirector, ProjectBrief
+from .creative_director import CreativeDirector, ProjectBrief
 
-__all__ = ["AIDirector", "ProjectBrief"]
+__all__ = ["CreativeDirector", "ProjectBrief"]

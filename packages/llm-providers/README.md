@@ -13,16 +13,33 @@ ILLMProvider.generate_structured(request: StructuredGenerationRequest) -> Struct
 
 `generate_structured` is the only method the rest of the system calls.
 The output is always validated against a caller-supplied JSON Schema
-(typically `packages/schemas/json/director_plan.schema.json`, but any
-Planner may also use this interface for smaller creative sub-decisions).
+(typically `packages/schemas/json/creative_brief.schema.json` or
+`story_outline.schema.json`, but any Planner may also use this interface
+for smaller creative sub-decisions).
+
+## Validation and retry
+
+`RetryingLLMProvider` (`retry.py`) wraps any `ILLMProvider` and adds
+schema validation + retry-with-feedback: if the wrapped provider's output
+fails `jsonschema.validate`, the validation error is appended to the user
+prompt and the call is retried (default: 2 retries) before raising
+`SchemaValidationError`. This is a decorator, not a per-provider feature —
+`services/ai-director`'s `CreativeDirector` always wraps whichever raw
+provider it's given:
+
+```python
+from llm_providers import RetryingLLMProvider
+llm = RetryingLLMProvider(ClaudeProvider(api_key=...), max_retries=2)
+```
 
 ## Implementations
 
 | Provider | File | Status |
 |---|---|---|
-| Claude (Anthropic) | `claude_provider.py` | Phase 1 target, stubbed now |
+| Claude (Anthropic) | `claude_provider.py` | Implemented — forced tool-use structured output via the `anthropic` SDK |
 | OpenAI | *(not started)* | Add as `openai_provider.py` when needed |
 | Local / self-hosted LLM | *(not started)* | Add as `local_llm_provider.py` when needed |
+| Test double | `testing.py`: `FakeLLMProvider` | Implemented — scripted responses, used by `tests/test_creative_pipeline.py` |
 
 ## Adding a new provider
 

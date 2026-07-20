@@ -4,10 +4,12 @@ from .base import (
     StructuredGenerationRequest,
     StructuredGenerationResult,
 )
+from .retry import RetryingLLMProvider
 
 __all__ = [
     "ILLMProvider",
     "LLMCapabilities",
     "StructuredGenerationRequest",
     "StructuredGenerationResult",
+    "RetryingLLMProvider",
 ]

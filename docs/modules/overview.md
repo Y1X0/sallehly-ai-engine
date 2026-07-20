@@ -5,18 +5,23 @@ Every module's authoritative documentation lives in its own directory as
 status. This page is just an index; see `docs/ARCHITECTURE.md#4-module-responsibilities`
 for the same list with paths.
 
-## Creative Intelligence Layer
+## Creative Director (implemented, Phase 1)
 
-- [AI Director](../../services/ai-director/README.md)
-- [Prompt Builder](../../services/prompt-builder/README.md)
-- [Scene Builder](../../services/scene-builder/README.md)
-- [Storyboard Generator](../../services/storyboard-generator/README.md)
+- [CreativeDirector orchestrator](../../services/ai-director/README.md)
+- [Creative Brief Parser](../../services/creative-brief-parser/README.md)
+- [Story Planner](../../services/story-planner/README.md)
+- [Scene Generator](../../services/scene-builder/README.md)
 - [Shot Planner](../../services/shot-planner/README.md)
-- [Camera Engine](../../services/camera-engine/README.md)
-- [Motion Engine](../../services/motion-engine/README.md)
-- [Lighting Engine](../../services/lighting-engine/README.md)
-- [Style Engine](../../services/style-engine/README.md)
-- [Render Configuration Compiler](../../services/render-config-compiler/README.md)
+
+## Creative Compiler (Phase 2)
+
+- [Prompt Builder](../../services/prompt-builder/README.md)
+- [Storyboard Generator](../../services/storyboard-generator/README.md)
+- [Camera Director](../../services/camera-engine/README.md)
+- [Motion Director](../../services/motion-engine/README.md)
+- [Lighting Director](../../services/lighting-engine/README.md)
+- [Style Director](../../services/style-engine/README.md)
+- [Render Specification Generator](../../services/render-config-compiler/README.md)
 
 ## Execution Layer
 
@@ -34,17 +39,20 @@ for the same list with paths.
 - [Asset Manager](../../services/asset-manager/README.md)
 - [Config SDK](../../packages/config-sdk/README.md)
 - [Observability](../../packages/observability/README.md)
+- [Director Memory](../../packages/director-memory/README.md)
 
 ## Contracts
 
 - [Schemas](../../packages/schemas/README.md)
 - [LLM Providers](../../packages/llm-providers/README.md)
+- [Prompt Engine](../../packages/prompt-engine/README.md)
 - [Video Engine SDK](../../packages/video-engine-sdk/README.md)
 
 ## Content
 
-- [Prompt Library](../../libraries/prompt-library/README.md)
-- [Template Library](../../libraries/template-library/README.md)
+- [Prompt Library (video-gen fragments)](../../libraries/prompt-library/README.md)
+- [Prompt Templates (LLM director prompts)](../../libraries/prompt-templates/README.md)
+- [Template Library (DirectorPlan genre templates)](../../libraries/template-library/README.md)
 
 ## Future
 

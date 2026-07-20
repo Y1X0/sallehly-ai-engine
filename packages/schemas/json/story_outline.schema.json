@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/story_outline.schema.json",
+  "title": "StoryOutline",
+  "description": "Output of the Story Planner: the narrative arc and a lightweight scene skeleton, produced from a CreativeBrief before any full Scene/Shot objects exist. The Scene Generator expands scene_skeleton into full Scene entries (scene.schema.json); the narrative_arc is not carried further as its own object; it exists to give the Story Planner's LLM call room to reason about structure before committing to a scene list.",
+  "type": "object",
+  "required": ["schema_version", "project_id", "logline", "narrative_arc", "scene_skeleton"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "project_id": { "type": "string" },
+    "logline": { "type": "string" },
+    "narrative_arc": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["beat_id", "order", "purpose", "description"],
+        "properties": {
+          "beat_id": { "type": "string" },
+          "order": { "type": "integer", "minimum": 0 },
+          "purpose": {
+            "type": "string",
+            "enum": ["hook", "setup", "build", "climax", "resolution"]
+          },
+          "description": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "scene_skeleton": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["order", "role", "summary", "estimated_duration_sec"],
+        "properties": {
+          "order": { "type": "integer", "minimum": 0 },
+          "role": {
+            "type": "string",
+            "description": "This scene's narrative function, e.g. maps to a narrative_arc beat_id or a genre-specific role like 'hero_shot'."
+          },
+          "summary": { "type": "string" },
+          "location": { "type": "string" },
+          "estimated_duration_sec": { "type": "number", "exclusiveMinimum": 0 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "continuity_anchors": {
+      "type": "object",
+      "properties": {
+        "characters": { "type": "array", "items": { "type": "string" } },
+        "locations": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "global_style_hint": {
+      "type": "string",
+      "description": "Feeds StyleSetup.visual_style when the DirectorPlan is assembled."
+    }
+  },
+  "additionalProperties": false
+}

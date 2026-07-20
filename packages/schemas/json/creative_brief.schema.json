@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/creative_brief.schema.json",
+  "title": "CreativeBrief",
+  "description": "Output of the Creative Brief Parser: a structured extraction of a raw, free-text user idea. This is the AI Director pipeline's first stage - it exists so every later stage (Story Planner, Scene Generator, ...) reasons over consistent structured fields instead of re-parsing free text independently.",
+  "type": "object",
+  "required": ["schema_version", "project_id", "raw_idea", "genre", "tone_keywords"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "project_id": { "type": "string" },
+    "raw_idea": { "type": "string", "description": "The user's original, unmodified text." },
+    "genre": {
+      "type": "string",
+      "examples": ["product commercial", "narrative short", "explainer", "social teaser", "music video"]
+    },
+    "tone_keywords": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "examples": [["warm", "premium", "minimalist"]]
+    },
+    "target_audience": { "type": "string" },
+    "key_message": {
+      "type": "string",
+      "description": "The single most important takeaway the video must communicate."
+    },
+    "must_include": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Explicit elements the brief requires (e.g. a product, a tagline, a specific scene)."
+    },
+    "must_avoid": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Explicit exclusions, feeding into the eventual negative_prompt_global."
+    },
+    "inferred_target_duration_sec": {
+      "type": ["number", "null"],
+      "description": "Only set if the parser inferred a duration the raw idea implied but ProjectBrief did not explicitly set."
+    },
+    "inferred_aspect_ratio": {
+      "type": ["string", "null"],
+      "enum": ["16:9", "9:16", "1:1", "21:9", "4:5", null]
+    },
+    "ambiguities": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Things the parser had to assume because the raw idea under-specified them - surfaced so a human can clarify before expensive stages run, or so the Story Planner knows which assumptions are soft."
+    }
+  },
+  "additionalProperties": false
+}

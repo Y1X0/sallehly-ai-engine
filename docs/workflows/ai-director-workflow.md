@@ -10,8 +10,8 @@ one project from a submitted brief to a finished export.
 sequenceDiagram
     participant API as apps/api
     participant WF as Render Orchestrator (Temporal Workflow)
-    participant DIR as AI Director
-    participant CC as Creative Compiler<br/>(Scene/Shot/Camera/Motion/Lighting/Style/RenderConfig)
+    participant DIR as CreativeDirector<br/>(Brief Parser -> Story Planner -> Scene Generator -> Shot Planner, see ADR 0007)
+    participant CC as Creative Compiler<br/>(Camera/Motion/Lighting/Style Directors + Render Spec Generator, Phase 2)
     participant SBG as Storyboard Generator
     participant ENG as IVideoEngine (Wan21Adapter)
     participant CMP as IComputeProvider (RunPod/Vast.ai)
@@ -20,8 +20,9 @@ sequenceDiagram
 
     API->>WF: StartRenderWorkflow(ProjectBrief)
     WF->>DIR: generate_director_plan(brief)
-    DIR-->>WF: DirectorPlan
-    WF->>CC: compile scenes -> shots (camera/motion/lighting/style)
+    Note over DIR: internally: CreativeBriefParser -> StoryPlanner -><br/>SceneGenerator -> ShotPlanner (implemented, Phase 1)
+    DIR-->>WF: DirectorPlan (scenes + bare shots, no camera/motion/lighting/style yet)
+    WF->>CC: camera/motion/lighting/style per shot (Phase 2)
     CC-->>WF: Shot[] fully populated
     WF->>SBG: generate storyboard (preview quality)
     SBG-->>WF: Storyboard (status=pending_review)
@@ -78,7 +79,7 @@ this is the same `RenderSpec.quality_tier` mechanism documented in
 ## Swap points touched by this workflow
 
 Per ADR 0001/0002, this workflow's activities call `ILLMProvider` (via
-`AIDirector`), `IVideoEngine`, and `IComputeProvider` purely through their
+`CreativeDirector`), `IVideoEngine`, and `IComputeProvider` purely through their
 interfaces. The workflow definition itself never imports Claude, Wan2.1,
 RunPod, or Vast.ai specifics — only `services/ai-director` and
 `services/video-engine-adapter` do.

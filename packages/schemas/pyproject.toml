@@ -5,6 +5,7 @@ description = "Canonical JSON Schema contracts, plus a thin Python loader"
 requires-python = ">=3.11"
 dependencies = [
   "jsonschema>=4.21",
+  "referencing>=0.30",
 ]
 
 [build-system]

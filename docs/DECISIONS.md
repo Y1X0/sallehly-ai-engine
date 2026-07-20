@@ -1,6 +1,6 @@
 # Decision Log
 
-Chronological record of decisions made during Phase 0 planning. Each
+Chronological record of decisions made during Phase 0/1 planning. Each
 non-trivial decision also has a full ADR in `docs/adr/`.
 
 | # | Decision | Rationale (short) | ADR |
@@ -13,6 +13,9 @@ non-trivial decision also has a full ADR in `docs/adr/`.
 | 6 | First Video Engine: Wan2.1 (Apache-2.0), wrapped in `Wan21Adapter` | Supports T2V/I2V/video-edit, runs on consumer/prosumer GPUs, permissive license | (tracked in `models/registry.yaml`) |
 | 7 | Repository: `sallehly-ai-video-engine`, fully separate from `sallehly_app` | Independent product, not a feature of the existing Flutter app | — |
 | 8 | License for this repository's own code: **not yet decided** | Needs a deliberate choice (MIT/Apache-2.0/proprietary) — flagged for user decision, not assumed | — |
+| 9 | Structured output enforcement = Claude forced tool-use + a provider-agnostic `RetryingLLMProvider` decorator | Retry/validation should not be reimplemented per provider; a decorator applies to any `ILLMProvider` uniformly | [0006](adr/0006-structured-output-retry-decorator.md) |
+| 10 | Creative Brief Parser and Story Planner are separate services from the Creative Director orchestrator, each with their own `ILLMProvider` dependency and prompt template | Keeps each LLM call and each prompt template independently focused, versioned, and retriable | (see `services/ai-director/README.md`) |
+| 11 | Storyboard Generator runs after Shot Planner, not before Scene Generator as originally listed in Phase 1 planning; "Director"/"Engine" naming reconciled | Storyboard frames reference shot ids that don't exist until shots are planned; this is also the cheapest point for the human approval gate | [0007](adr/0007-pipeline-stage-terminology-and-ordering.md) |
 
 ## Open decision: repository license
 
