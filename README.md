@@ -19,9 +19,12 @@ POST /projects  (apps/api)
    -> [approval gate 2: render plan]  (WAITING_RENDER_APPROVAL)
    -> Video Engine Adapter (Wan2.1) + Compute Provider (RunPod / local)
    -> GenerationJob (queued -> running -> completed/failed) + AssetManager
-   -> Post-Processing (Phase 5)
+   -> Post-Processing (Phase 6)
    -> Final MP4
 ```
+
+A user drives this whole flow from a real browser
+(`apps/web-dashboard`), never by calling `apps/api` directly.
 
 Driven synchronously (`SyncProjectOrchestrator`) today, or by a durable
 `ProjectGenerationWorkflow` (Temporal) in production - same
@@ -33,9 +36,10 @@ design, [`docs/DECISIONS.md`](docs/DECISIONS.md) for the decision log, and
 
 ## Status
 
-**Phase 4 — Production-grade lifecycle, API, and durable-workflow path.**
-A user can submit a creative idea over real HTTP and the system manages
-the complete lifecycle through to a generated video asset:
+**Phase 5 — User-facing platform.** A user can register, submit a
+creative idea, review and approve/reject the storyboard and render plan,
+and watch it through to a generated video asset — entirely from a real
+browser UI, which talks to `apps/api` and nothing else:
 
 - **Phase 1** (`services/ai-director`, `CreativeDirector`): Creative
   Brief Parser → Story Planner (LLM-backed) → Scene Generator → Shot
@@ -63,6 +67,22 @@ the complete lifecycle through to a generated video asset:
   `TestClient` against a fully offline default stack
   (`LocalHeuristicLLMProvider` + `Wan21Adapter` + `LocalProvider` — no
   API key, no GPU, no network).
+- **Phase 5** (`packages/auth`, `apps/api`, `apps/web-dashboard`):
+  provider-independent auth (`IAuthProvider`, PBKDF2 + bearer tokens,
+  personal workspace per user) with ownership checks on every
+  project-scoped route; new `GET /projects` (list), `GET
+  /projects/{id}/{plan,storyboard,render-plan}` (review content the
+  frontend needs — a real gap Phase 4 left, found while building the
+  frontend against the existing contract), `POST
+  /projects/{id}/retry-generation`, `POST /assets/upload`, and CORS
+  (another real gap, only visible once a real browser exercised the
+  API instead of `TestClient`). `apps/web-dashboard` (Next.js App
+  Router + TypeScript + Tailwind): login/register, project dashboard,
+  creative workspace (lifecycle timeline, story/scene/shot cards,
+  storyboard/render-plan approval panels, real-time job status with
+  retry, asset library) — tested with Vitest (unit) and Playwright
+  (real Chromium, full lifecycle e2e, against real `uvicorn`/`next dev`
+  servers).
 
 Two things remain genuinely unexecuted in this environment, both
 documented rather than glossed over: real GPU inference (`workers/gpu-worker`

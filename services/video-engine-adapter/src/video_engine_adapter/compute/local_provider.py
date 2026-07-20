@@ -34,6 +34,12 @@ class LocalProvider(IComputeProvider):
         self._output_dir.mkdir(parents=True, exist_ok=True)
 
     def submit(self, payload: EngineJobPayload) -> ComputeJobHandle:
+        # Re-create defensively: __init__'s mkdir only runs once at process
+        # startup, but this directory is ephemeral local-dev scratch space
+        # that can be cleared out from under a long-running process (e.g.
+        # a cleanup script, container volume reset) - a submit() shouldn't
+        # permanently fail just because that happened once.
+        self._output_dir.mkdir(parents=True, exist_ok=True)
         job_id = str(uuid.uuid4())
         stub_path = self._output_dir / f"{job_id}.json"
         stub_path.write_text(

@@ -32,7 +32,8 @@ for the same list with paths.
 
 ## Delivery Layer
 
-- [API (apps/api)](../../apps/api/README.md) *(implemented, Phase 4 - full project lifecycle over HTTP)*
+- [API (apps/api)](../../apps/api/README.md) *(implemented, Phase 4-5 - full project lifecycle over HTTP, auth, plan/storyboard/render-plan retrieval, retry-generation, asset upload)*
+- [Frontend (apps/web-dashboard)](../../apps/web-dashboard/README.md) *(implemented, Phase 5 - Next.js dashboard + creative workspace)*
 - [Post-Processing](../../services/post-processing/README.md)
 - [Export Service](../../services/export-service/README.md)
 
@@ -43,6 +44,7 @@ for the same list with paths.
 - [Observability](../../packages/observability/README.md)
 - [Director Memory](../../packages/director-memory/README.md)
 - [Project Persistence](../../packages/persistence/README.md) *(implemented, Phase 4)*
+- [Auth](../../packages/auth/README.md) *(implemented, Phase 5 - provider-independent, personal workspace per user)*
 
 ## Contracts
 

@@ -22,19 +22,36 @@ app makes real HTTP requests to it, never mocks the backend.
 
 ## Structure
 
-- `src/app/` - routes (App Router).
+- `src/app/` - routes (App Router): `/login`, `/` (dashboard), `/projects/[id]` (creative workspace).
 - `src/lib/apiClient.ts` - typed fetch wrapper for every `apps/api`
   endpoint (see `docs/api/openapi.yaml`).
 - `src/lib/types.ts` - TypeScript types mirroring
   `packages/schemas/json/*.schema.json`.
 - `src/lib/auth.tsx` - `AuthContext`/`useAuth`; bearer token in
   `localStorage`, attached as `Authorization: Bearer <token>`.
-- `src/components/ui/` - the design system (buttons, cards, timeline,
-  approval panels, status indicators) - reused across every page rather
-  than styled ad hoc per page.
+- `src/components/ui/` - the design system (`Button`, `Card`,
+  `StatusBadge`, `ProgressBar`, `Timeline`, `ApprovalPanel`, `ShotCard`) -
+  reused across every page rather than styled ad hoc per page.
+- `src/components/dashboard/` - project list + create-project form
+  (incl. reference-image upload).
+- `src/components/workspace/` - the creative workspace: scene timeline,
+  storyboard/render-plan review (approval panels), generation jobs
+  panel (with retry), asset library.
+
+## Testing
+
+- `npm test` - Vitest unit tests for the design system and `apiClient`.
+- `npm run test:e2e` - Playwright, full lifecycle (register → create →
+  plan → approve storyboard → approve render → generate → assets) plus
+  auth/ownership checks, driven against real `uvicorn`/`next dev`
+  servers in a real (pre-installed) Chromium.
 
 ## Status (Phase 5)
 
-Scaffolded via `create-next-app` (TypeScript, Tailwind, App Router, ESLint).
-Pages/components/API integration land in the rest of Phase 5 - see the
-root `README.md` roadmap section and `docs/adr/0011-frontend-and-auth.md`.
+Implemented: login/register, project dashboard (list + create, incl.
+reference-image upload), creative workspace (lifecycle timeline,
+story/scene/shot cards, storyboard/render-plan approval with
+reject-and-regenerate, real-time job status with retry, asset library).
+See `docs/adr/0011-frontend-and-auth.md` for the design decisions,
+including two real backend gaps (missing plan/storyboard/render-plan
+GET endpoints, missing CORS policy) found and fixed while building this.

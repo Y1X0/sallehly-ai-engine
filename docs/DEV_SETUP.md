@@ -5,6 +5,7 @@
 - Python 3.11+
 - [`uv`](https://github.com/astral-sh/uv) (workspace/package manager)
 - Docker + Docker Compose
+- Node.js 20+ and npm (only needed for `apps/web-dashboard`)
 
 ## 1. Bootstrap
 
@@ -47,26 +48,52 @@ curl http://localhost:8000/healthz
 By default (no `ANTHROPIC_API_KEY`/`RUNPOD_API_KEY` set) the API wires
 itself to `LocalHeuristicLLMProvider` + `Wan21Adapter` + `LocalProvider`
 (see `apps/api/src/api/state.py`) - fully offline, no GPU, no API key.
-Drive a project through its full lifecycle:
+Every route except `/auth/register`/`/auth/login` requires a bearer
+token (`packages/auth`) - register, log in, then drive a project through
+its full lifecycle:
 
 ```bash
-curl -sX POST localhost:8000/projects -H 'content-type: application/json' -d '{
-  "workspace_id": "ws1", "created_by": "user1",
+curl -sX POST localhost:8000/auth/register -H 'content-type: application/json' \
+  -d '{"email": "dev@example.com", "password": "hunter22"}'
+
+TOKEN=$(curl -sX POST localhost:8000/auth/login -H 'content-type: application/json' \
+  -d '{"email": "dev@example.com", "password": "hunter22"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+
+curl -sX POST localhost:8000/projects -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{
   "prompt": "A 12-second warm premium product ad for a minimalist watch",
   "target_duration_sec": 12, "aspect_ratio": "16:9"
 }'
-# -> {"project_id": "proj_...", "status": "created", ...}
+# -> {"project_id": "proj_...", "status": "created", ...}  (workspace_id/created_by come from the token)
 
-curl -sX POST localhost:8000/projects/<project_id>/generate-plan
-curl -sX POST localhost:8000/projects/<project_id>/approve-storyboard
-curl -sX POST localhost:8000/projects/<project_id>/approve-render
-curl -sX POST localhost:8000/projects/<project_id>/generate-video
-curl -s localhost:8000/projects/<project_id>/assets
+curl -sX POST -H "authorization: Bearer $TOKEN" localhost:8000/projects/<project_id>/generate-plan
+curl -s -H "authorization: Bearer $TOKEN" localhost:8000/projects/<project_id>/storyboard
+curl -sX POST -H "authorization: Bearer $TOKEN" localhost:8000/projects/<project_id>/approve-storyboard
+curl -s -H "authorization: Bearer $TOKEN" localhost:8000/projects/<project_id>/render-plan
+curl -sX POST -H "authorization: Bearer $TOKEN" localhost:8000/projects/<project_id>/approve-render
+curl -sX POST -H "authorization: Bearer $TOKEN" localhost:8000/projects/<project_id>/generate-video
+curl -s -H "authorization: Bearer $TOKEN" localhost:8000/projects/<project_id>/assets
 ```
 
 See `docs/api/openapi.yaml` for the full contract, including
 `reject-storyboard`/`reject-render` (rejects with feedback and
-regenerates just that stage) and `GET /jobs/{id}`/`GET /jobs/{id}/status`.
+regenerates just that stage), `retry-generation`, `assets/upload`, and
+`GET /jobs/{id}`/`GET /jobs/{id}/status`.
+
+## 3b. Run the frontend
+
+```bash
+cd apps/web-dashboard
+cp .env.local.example .env.local   # NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+npm install
+npm run dev
+# -> http://localhost:3000
+```
+
+Requires the API (step 3) running separately - the frontend makes real
+HTTP requests to it, never mocks the backend. `apps/api` allows
+`http://localhost:3000` via CORS by default
+(`Settings.cors_allowed_origins`); change it if you serve the frontend
+from a different origin.
 
 ## 4. Exercise the pipeline without a GPU
 
@@ -93,6 +120,14 @@ RUNPOD_ENDPOINT_ID=...
 make test    # uv run pytest
 make lint    # uv run ruff check .
 make fmt     # uv run ruff format .
+```
+
+Frontend (`apps/web-dashboard`):
+
+```bash
+npm test          # vitest run - unit tests (design system, apiClient)
+npm run lint       # eslint
+npm run test:e2e   # playwright test - full lifecycle against real uvicorn/next dev servers
 ```
 
 ## 6. Adding a new workspace member

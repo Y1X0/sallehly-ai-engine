@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     vastai_api_key: str = ""
     vastai_instance_host: str = ""
 
+    cors_allowed_origins: str = "http://localhost:3000"
+    """Comma-separated origins apps/api allows via CORS - the frontend's own
+    origin, since browsers enforce this for cross-origin fetch()/XHR."""
+
 
 def get_settings() -> Settings:
     return Settings()
