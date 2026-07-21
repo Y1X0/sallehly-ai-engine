@@ -26,6 +26,12 @@ text.
 | `generation_job.schema.json` | Render Orchestrator (`GenerationPipeline`) | Frontend / API (job status polling) |
 | `asset_record.schema.json` | Asset Manager | Render Orchestrator, Frontend/API (asset lookup) |
 | `user.schema.json` | Auth (`IAuthProvider.register`) | Frontend/API (`GET /users/me`) |
+| `transition.schema.json` | embedded in `timeline` (Timeline Builder / Transition Engine) | Render Compositor (`IRenderCompositor`) |
+| `timeline.schema.json` | Timeline Builder (`services/post-processing`) | Render Compositor |
+| `subtitle_track.schema.json` | Subtitle System (`services/post-processing`) | Render Compositor (burn-in), Asset Packager (SRT/VTT export) |
+| `branding_package.schema.json` | caller (project brief / API), embedded in `timeline` | Watermark Engine |
+| `export_spec.schema.json` | caller (API) | Export Service |
+| `render_manifest.schema.json` | Asset Packager (`services/export-service`) | Frontend/API, CDN delivery |
 
 ## Rules
 

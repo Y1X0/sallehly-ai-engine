@@ -1,6 +1,7 @@
 from .registry import (
     COMPUTE_PROVIDER_REGISTRY,
     LLM_PROVIDER_REGISTRY,
+    TRANSITION_PLUGIN_REGISTRY,
     VIDEO_ENGINE_REGISTRY,
     Registry,
 )
@@ -9,6 +10,7 @@ from .settings import Settings, get_settings
 __all__ = [
     "COMPUTE_PROVIDER_REGISTRY",
     "LLM_PROVIDER_REGISTRY",
+    "TRANSITION_PLUGIN_REGISTRY",
     "VIDEO_ENGINE_REGISTRY",
     "Registry",
     "Settings",

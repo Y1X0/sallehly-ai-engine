@@ -42,10 +42,23 @@ flowchart TD
         JOB --> ASSET
     end
 
-    subgraph L3[Delivery Layer]
-        PP[Post-Processing]
-        EXP[Export Service]
-        CDN[Storage / CDN]
+    subgraph L3["Delivery Layer (services/post-processing, services/export-service)"]
+        TL[Timeline Builder]
+        TE[Transition Engine<br/>ITransitionPlugin registry]
+        AP[Audio Pipeline]
+        SUB[Subtitle System]
+        WM[Watermark Engine]
+        COMP[FfmpegCompositor<br/>IRenderCompositor]
+        THUMB[Thumbnail Engine]
+        EXP[Export Service<br/>mp4/mov/webm x 720p-4K]
+        PKG[Asset Packager<br/>RenderManifest]
+        TL --> COMP
+        TE --> COMP
+        AP --> COMP
+        SUB --> COMP
+        WM --> COMP
+        COMP --> EXP --> PKG
+        THUMB --> PKG
     end
 
     ORCH --> BP
@@ -58,7 +71,8 @@ flowchart TD
     ORCH --> ENGINE
     ORCH --> COMPUTE
     ASSET --> ORCH
-    ORCH --> PP --> EXP --> CDN --> API
+    ASSET -.->|"not yet wired into ProjectLifecycle - see ADR 0012"| TL
+    PKG -.-> API
 ```
 
 See [ADR 0008](adr/0008-storyboard-after-technical-planning.md) for why
@@ -72,7 +86,12 @@ shot split for exceeding `max_shot_duration_sec`) - rather than one.
 See [ADR 0010](adr/0010-persistence-and-lifecycle.md) for why
 `ProjectLifecycle` is the single place that owns sequencing through both
 gates and generation, with two interchangeable drivers (synchronous vs.
-Temporal) sharing the exact same interface.
+Temporal) sharing the exact same interface. See
+[ADR 0012](adr/0012-post-production-pipeline.md) for the Delivery
+Layer: real, ffmpeg-executable post-production (Timeline Builder,
+Transition Engine, Audio Pipeline, Subtitle System, Watermark Engine,
+`FfmpegCompositor`) and export (Export Service, Asset Packager) -
+built and tested in Phase 6, not yet wired into `ProjectLifecycle`.
 
 ## 3. Data flow contracts
 
@@ -90,7 +109,8 @@ flowchart LR
     RS --> GJ["GenerationJob<br/>(generation_job.schema.json)<br/>queued/running/completed/failed"]
     GJ --> Clip["RawClip"]
     Clip --> AR["AssetRecord<br/>(asset_record.schema.json)"]
-    AR --> Final["Final MP4 (Phase 6)"]
+    AR --> TL["Timeline<br/>(timeline.schema.json)"]
+    TL --> Manifest["RenderManifest<br/>(render_manifest.schema.json)"]
 ```
 
 `CreativeBrief` and `StoryOutline` are intermediate artifacts internal to
@@ -125,12 +145,13 @@ description. Summary:
 | Execution | GPU Worker container | `workers/gpu-worker` | Structurally complete; real Wan2.1 inference call needs a GPU deployment step outside this environment |
 | Delivery | API layer | `apps/api` | **Implemented** - full project lifecycle over real HTTP (incl. auth, plan/storyboard/render-plan retrieval, retry-generation, asset upload), tested with `TestClient` |
 | Delivery | Frontend (dashboard + creative workspace) | `apps/web-dashboard` | **Implemented** (Next.js App Router + TypeScript + Tailwind) - register/login, create project, review storyboard/render plan, monitor generation, asset library |
-| Delivery | Post-Processing | `services/post-processing` | Phase 6 |
-| Delivery | Export Service | `services/export-service` | Phase 6 |
+| Delivery | Post-Processing (Timeline Builder, Transition Engine, Audio Pipeline, Subtitle System, Thumbnail Engine, Watermark Engine, `FfmpegCompositor`) | `services/post-processing` | **Implemented** - real ffmpeg execution, tested against real synthetic clips (ADR 0012); not yet wired into `ProjectLifecycle` |
+| Delivery | Export Service (format/quality-preset export, Asset Packager/RenderManifest) | `services/export-service` | **Implemented** - real ffmpeg re-encode to mp4/mov/webm x 720p/1080p/1440p/4K; not yet wired into `ProjectLifecycle` |
+| Delivery | Upscaling (video upscaling, frame interpolation) | `services/post-processing` (`upscaling.py`) | Interface prepared (`IUpscaler`), `PassthroughUpscaler` stub only - real upscaling needs a GPU deployment (ADR 0012) |
 | Cross-cutting | Asset Manager | `services/asset-manager` | **Implemented** |
 | Cross-cutting | Auth | `packages/auth` | **Implemented** (`LocalAuthProvider`: PBKDF2 + bearer tokens; personal workspace per user, no team model yet) |
 | Cross-cutting | Config SDK | `packages/config-sdk` | **Implemented** |
-| Cross-cutting | Observability | `packages/observability` | Phase 6+ |
+| Cross-cutting | Observability | `packages/observability` | Phase 7+ |
 | Cross-cutting | Director Memory | `packages/director-memory` | **Implemented** |
 | Cross-cutting | Project persistence | `packages/persistence` | **Implemented** (in-memory; Postgres-backed is a later swap) |
 | Cross-cutting | Event system | `services/render-orchestrator` (`events.py`) | **Implemented** (in-memory; external delivery e.g. webhooks/queue is a later swap) |
@@ -138,7 +159,8 @@ description. Summary:
 | Contracts | LLM Provider interface | `packages/llm-providers` | **Implemented** (Claude, local-heuristic offline default) |
 | Contracts | Prompt template engine | `packages/prompt-engine` | **Implemented** |
 | Contracts | Video Engine / Compute Provider interfaces | `packages/video-engine-sdk` | **Implemented** |
-| Contracts | Storage abstraction | `packages/storage-sdk` | **Implemented** (local filesystem; S3/R2 Phase 6+) |
+| Contracts | Render Compositor / Transition Plugin / Upscaler interfaces | `packages/video-composition-sdk` | **Implemented** |
+| Contracts | Storage abstraction | `packages/storage-sdk` | **Implemented** (local filesystem; S3/R2 Phase 7+) |
 | Content | Prompt Library (video-gen fragments) | `libraries/prompt-library` | Seeded |
 | Content | Prompt Templates (LLM director prompts) | `libraries/prompt-templates` | **Implemented** |
 | Content | Template Library (DirectorPlan genre templates) | `libraries/template-library` | Seeded |
@@ -202,6 +224,7 @@ code - this is a documented extension point, not a built feature.
 | Compute provider HTTP client | `httpx` (sync client, `httpx.MockTransport` in tests) | [0009](adr/0009-generation-pipeline.md) |
 | API framework | FastAPI + Pydantic request models, `fastapi.testclient.TestClient` in tests | [0010](adr/0010-persistence-and-lifecycle.md) |
 | Durable workflow SDK | `temporalio` (Python SDK) - real workflow/activity code, not live-executable in this environment | [0010](adr/0010-persistence-and-lifecycle.md) |
+| Post-production compositing | `ffmpeg`/`ffprobe` (system binary, invoked via `subprocess`) - real, executable, and exercised by real tests in this environment | [0012](adr/0012-post-production-pipeline.md) |
 | Package/workspace management | `uv` workspace (`pyproject.toml` at root) | — |
 | Local dev | `docker-compose.yml` (Postgres, Redis, MinIO, optional Temporal dev server) | — |
 
@@ -220,7 +243,7 @@ independent product, not a feature of it.
 | **2 — Creative Compiler** | Camera/Motion/Lighting/Style Directors, Storyboard Generator (gate 1), Render Specification Generator + `render_plan.schema.json` (gate 2), `CreativeCompiler` orchestrator, end-to-end tested from `FakeLLMProvider` through both approval gates | Done |
 | **3 — Video Engine Adapter + Wan2.1** | `Wan21Adapter` completed (i2v conditioning mapping, seed handling, generation params), production `RunPodProvider` (real HTTP client, retry-with-backoff, tested against `httpx.MockTransport`), `GenerationPipeline` + `GenerationJob` lifecycle, `AssetManager` + `packages/storage-sdk`, engine/compute registries wired in `config_sdk`. Real GPU execution still needs `workers/gpu-worker` deployed with actual Wan2.1 weights - an infra step outside this environment | Done |
 | **4 — Orchestration** | `ProjectLifecycle` (full create→plan→both gates→generate flow, with reject/regenerate on each gate), `packages/persistence` (`IProjectStore`), event system (`IEventBus`), `SyncProjectOrchestrator`, real `ProjectGenerationWorkflow`/activities (`temporalio`, structurally validated but not live-executable here), `apps/api` implementing the full project/job/asset endpoint surface, `LocalHeuristicLLMProvider` for a fully offline API. Tested end-to-end via `TestClient` including failure and regeneration paths | Done |
-| **5 — User-Facing Platform** *(this repo's current state)* | `packages/auth` (`IAuthProvider`/`IUserStore`, personal workspace per user); `apps/api` additions (auth routes, ownership checks, `GET /projects` list, plan/storyboard/render-plan retrieval, `retry-generation`, `assets/upload`, CORS); `apps/web-dashboard` (Next.js App Router + TypeScript + Tailwind: login/register, project dashboard, creative workspace with lifecycle timeline/scene-shot cards/approval panels/real-time job status/asset library). Tested via Vitest (unit) + Playwright (real Chromium, full lifecycle e2e) against real `uvicorn`/`next dev` servers | Done |
-| **6 — Post-Processing & Export** | Stitching, upscaling, color grade, audio, multi-format export | Next |
-| **7 — Scale-out** | `VastAIProvider` completion, `KubernetesProvider`, autoscaling, caching, billing | Not started |
+| **5 — User-Facing Platform** | `packages/auth` (`IAuthProvider`/`IUserStore`, personal workspace per user); `apps/api` additions (auth routes, ownership checks, `GET /projects` list, plan/storyboard/render-plan retrieval, `retry-generation`, `assets/upload`, CORS); `apps/web-dashboard` (Next.js App Router + TypeScript + Tailwind: login/register, project dashboard, creative workspace with lifecycle timeline/scene-shot cards/approval panels/real-time job status/asset library). Tested via Vitest (unit) + Playwright (real Chromium, full lifecycle e2e) against real `uvicorn`/`next dev` servers | Done |
+| **6 — Post-Processing & Export** *(this repo's current state)* | `packages/video-composition-sdk` (`IRenderCompositor`/`ITransitionPlugin`/`IUpscaler`); `services/post-processing` (Timeline Builder, Transition Engine with 7 built-in + custom plugin support, Audio Pipeline with volume automation, Subtitle System with SRT/VTT/burn-in/multilingual, Thumbnail Engine, Watermark Engine, `FfmpegCompositor`, `PassthroughUpscaler` stub); `services/export-service` (`ExportService`: mp4/mov/webm x 720p/1080p/1440p/4K, `AssetPackager` -> `RenderManifest`). Tested with **real ffmpeg execution** against real synthetic clips (ADR 0012) - not mocked. Not yet wired into `ProjectLifecycle`/`apps/api`/`apps/web-dashboard` | Done |
+| **7 — Scale-out** | `VastAIProvider` completion, `KubernetesProvider`, autoscaling, caching, billing, wiring post-production into `ProjectLifecycle`/API/frontend | Not started |
 | **8 — Custom foundation model track** | `services/training`; new `IVideoEngine` implementation replacing/augmenting Wan2.1 | Not started |

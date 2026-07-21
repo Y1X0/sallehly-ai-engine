@@ -48,3 +48,9 @@ class Registry(Generic[T]):
 LLM_PROVIDER_REGISTRY: Registry = Registry("LLM_PROVIDER")
 VIDEO_ENGINE_REGISTRY: Registry = Registry("VIDEO_ENGINE")
 COMPUTE_PROVIDER_REGISTRY: Registry = Registry("COMPUTE_PROVIDER")
+
+# Keyed by Transition.type (or Transition.plugin_id for type="custom") ->
+# an ITransitionPlugin factory. See services/post-processing/transitions
+# for the built-ins and docs/adr/0012-post-production-pipeline.md for why
+# this is a real plugin registry rather than an if/elif chain.
+TRANSITION_PLUGIN_REGISTRY: Registry = Registry("TRANSITION_PLUGIN")

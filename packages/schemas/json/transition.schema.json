@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/transition.schema.json",
+  "title": "Transition",
+  "description": "A transition applied between two adjacent clips on a Timeline. `type` selects a plugin from the Transition Engine's registry (packages/video-composition-sdk `ITransitionPlugin` + `TRANSITION_PLUGIN_REGISTRY`) - `cinematic_cut`/`fade_in`/`fade_out`/`dissolve`/`match_cut`/`wipe`/`whip_pan`/`zoom` are the built-in plugins (the first five map 1:1 onto shot.schema.json's transition_in/transition_out vocabulary - see TimelineBuilder); `custom` requires `plugin_id` naming a separately-registered plugin. See docs/adr/0012-post-production-pipeline.md.",
+  "type": "object",
+  "required": ["type"],
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": ["cinematic_cut", "fade_in", "fade_out", "dissolve", "match_cut", "wipe", "whip_pan", "zoom", "custom"]
+    },
+    "duration_sec": {
+      "type": "number",
+      "minimum": 0,
+      "default": 0,
+      "description": "0 for cinematic_cut (a hard cut, no overlap); every other type overlaps the two adjacent clips by this much."
+    },
+    "plugin_id": {
+      "type": "string",
+      "description": "Required when type=custom - the TRANSITION_PLUGIN_REGISTRY key of a custom ITransitionPlugin."
+    },
+    "params": {
+      "type": "object",
+      "description": "Plugin-specific parameters (e.g. whip_pan's direction, zoom's in/out)."
+    }
+  },
+  "additionalProperties": false
+}

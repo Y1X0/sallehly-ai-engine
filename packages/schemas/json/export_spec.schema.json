@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/export_spec.schema.json",
+  "title": "ExportSpec",
+  "description": "Input to the Export Service (services/export-service): which container format and quality preset to encode the assembled master video into. Quality presets map to concrete resolution/bitrate defaults in export_service's quality_presets module; either field may be overridden explicitly.",
+  "type": "object",
+  "required": ["format", "quality_preset"],
+  "properties": {
+    "format": { "type": "string", "enum": ["mp4", "mov", "webm"] },
+    "quality_preset": { "type": "string", "enum": ["720p", "1080p", "1440p", "4k"] },
+    "video_bitrate_kbps": { "type": "integer", "exclusiveMinimum": 0 },
+    "audio_bitrate_kbps": { "type": "integer", "exclusiveMinimum": 0 }
+  },
+  "additionalProperties": false
+}

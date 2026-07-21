@@ -34,8 +34,8 @@ for the same list with paths.
 
 - [API (apps/api)](../../apps/api/README.md) *(implemented, Phase 4-5 - full project lifecycle over HTTP, auth, plan/storyboard/render-plan retrieval, retry-generation, asset upload)*
 - [Frontend (apps/web-dashboard)](../../apps/web-dashboard/README.md) *(implemented, Phase 5 - Next.js dashboard + creative workspace)*
-- [Post-Processing](../../services/post-processing/README.md)
-- [Export Service](../../services/export-service/README.md)
+- [Post-Processing](../../services/post-processing/README.md) *(implemented, Phase 6 - Timeline Builder, Transition Engine, Audio Pipeline, Subtitle System, Thumbnail Engine, Watermark Engine, FfmpegCompositor; real ffmpeg execution)*
+- [Export Service](../../services/export-service/README.md) *(implemented, Phase 6 - format/quality-preset export, Asset Packaging/RenderManifest)*
 
 ## Cross-cutting
 
@@ -52,6 +52,7 @@ for the same list with paths.
 - [LLM Providers](../../packages/llm-providers/README.md)
 - [Prompt Engine](../../packages/prompt-engine/README.md)
 - [Video Engine SDK](../../packages/video-engine-sdk/README.md)
+- [Video Composition SDK](../../packages/video-composition-sdk/README.md) *(implemented, Phase 6 - IRenderCompositor/ITransitionPlugin/IUpscaler)*
 - [Storage SDK](../../packages/storage-sdk/README.md)
 
 ## Content

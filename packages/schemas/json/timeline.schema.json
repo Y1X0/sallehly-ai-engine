@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/timeline.schema.json",
+  "title": "Timeline",
+  "description": "Output of the Timeline Builder (services/post-processing): the fully-sequenced, engine-agnostic composition plan that a Render Compositor (IRenderCompositor, packages/video-composition-sdk) turns into one assembled master video. Shot order and transitions come from the project's Storyboard/DirectorPlan (Shot.transition_in/transition_out); audio tracks and a subtitle track are layered on top by the Audio Pipeline and Subtitle System.",
+  "type": "object",
+  "required": ["schema_version", "project_id", "fps", "resolution", "video_clips"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "project_id": { "type": "string" },
+    "fps": { "type": "integer", "minimum": 1 },
+    "resolution": { "type": "string", "pattern": "^[0-9]+x[0-9]+$" },
+    "aspect_ratio": { "type": "string" },
+    "video_clips": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["clip_id", "shot_id", "source_uri", "duration_sec"],
+        "properties": {
+          "clip_id": { "type": "string" },
+          "shot_id": { "type": "string" },
+          "source_uri": {
+            "type": "string",
+            "description": "Local path or file:// URI to this shot's RawClip - the AssetRecord's latest video version."
+          },
+          "duration_sec": { "type": "number", "exclusiveMinimum": 0 },
+          "transition_in": { "$ref": "transition.schema.json" },
+          "transition_out": { "$ref": "transition.schema.json" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "audio_tracks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["track_id", "kind", "source_uri", "start_time_sec"],
+        "properties": {
+          "track_id": { "type": "string" },
+          "kind": { "type": "string", "enum": ["music", "sfx", "voiceover"] },
+          "source_uri": { "type": "string" },
+          "start_time_sec": { "type": "number", "minimum": 0 },
+          "duration_sec": { "type": "number", "exclusiveMinimum": 0 },
+          "volume_db": { "type": "number", "default": 0 },
+          "fade_in_sec": { "type": "number", "minimum": 0, "default": 0 },
+          "fade_out_sec": { "type": "number", "minimum": 0, "default": 0 },
+          "volume_automation": {
+            "type": "array",
+            "description": "Keyframes overriding volume_db over time - {t: seconds from track start, volume_db}.",
+            "items": {
+              "type": "object",
+              "required": ["t", "volume_db"],
+              "properties": {
+                "t": { "type": "number", "minimum": 0 },
+                "volume_db": { "type": "number" }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "subtitle_track_id": { "type": ["string", "null"] },
+    "watermark": { "$ref": "branding_package.schema.json" },
+    "total_duration_sec": { "type": "number", "exclusiveMinimum": 0 }
+  },
+  "additionalProperties": false
+}

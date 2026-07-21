@@ -1,14 +1,20 @@
 [project]
 name = "post-processing"
 version = "0.1.0"
-description = "Post-Processing"
+description = "Post-Processing: Timeline Builder, Transition Engine, Audio Pipeline, Subtitle System, Thumbnail Engine, Render Compositor (ffmpeg), Watermark Engine, Upscaling interface"
 requires-python = ">=3.11"
 dependencies = [
   "schemas",
+  "config-sdk",
+  "video-composition-sdk",
+  "asset-manager",
 ]
 
 [tool.uv.sources]
 schemas = { workspace = true }
+config-sdk = { workspace = true }
+video-composition-sdk = { workspace = true }
+asset-manager = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

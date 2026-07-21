@@ -6,6 +6,14 @@
 - [`uv`](https://github.com/astral-sh/uv) (workspace/package manager)
 - Docker + Docker Compose
 - Node.js 20+ and npm (only needed for `apps/web-dashboard`)
+- `ffmpeg`/`ffprobe` on `PATH` (only needed for `services/post-processing`/
+  `services/export-service`) - e.g. `apt-get install ffmpeg` on Debian/
+  Ubuntu, `brew install ffmpeg` on macOS. Needs `libx264`/`libx265`/
+  `libvpx`/`libopus`/`libmp3lame`/`libass` support (`ffmpeg -codecs`/
+  `-filters` to check) - the standard Ubuntu/Homebrew builds have all of
+  these. Without it, `post_processing.ffmpeg_utils.FfmpegNotAvailableError`
+  is raised with a clear message, and the Phase 6 ffmpeg-execution tests
+  are skipped rather than failing (see ADR 0012).
 
 ## 1. Bootstrap
 
@@ -95,6 +103,28 @@ HTTP requests to it, never mocks the backend. `apps/api` allows
 (`Settings.cors_allowed_origins`); change it if you serve the frontend
 from a different origin.
 
+## 3c. Post-production (services/post-processing / services/export-service)
+
+Not wired into `apps/api` yet (ADR 0012) - exercised directly today:
+
+```python
+from post_processing import TimelineBuilder, register_defaults
+from post_processing.compositor import FfmpegCompositor, timeline_from_dict
+from export_service import ExportService, AssetPackager
+from asset_manager import AssetManager
+
+register_defaults()  # built-in transition plugins -> TRANSITION_PLUGIN_REGISTRY
+assets = AssetManager()
+
+# director_plan: a DirectorPlan dict (e.g. from CreativeDirector.generate_director_plan)
+# video_assets_by_shot_id: {shot_id: AssetRecord dict} for that project's generated clips
+timeline_dict = TimelineBuilder().build(director_plan, video_assets_by_shot_id)
+result = FfmpegCompositor(asset_manager=assets).compose(timeline_from_dict(timeline_dict), "master.mp4")
+
+export = ExportService(assets).export(director_plan["project_id"], result.output_uri, {"format": "mp4", "quality_preset": "1080p"})
+manifest = AssetPackager().package(director_plan["project_id"], export)
+```
+
 ## 4. Exercise the pipeline without a GPU
 
 Set `COMPUTE_PROVIDER=local` (the `.env.example` and `apps/api` default).
@@ -121,6 +151,12 @@ make test    # uv run pytest
 make lint    # uv run ruff check .
 make fmt     # uv run ruff format .
 ```
+
+Tests in `test_ffmpeg_compositor.py`/`test_thumbnail_engine.py`/
+`test_watermark_engine.py`/`test_export_service.py`/
+`test_asset_packaging.py` actually run `ffmpeg` against real synthetic
+clips (`tests/media_helpers.py`) - they `skip` (not fail) if `ffmpeg`
+isn't installed.
 
 Frontend (`apps/web-dashboard`):
 

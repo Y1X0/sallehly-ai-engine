@@ -1,0 +1,13 @@
+[project]
+name = "video-composition-sdk"
+version = "0.1.0"
+description = "Engine-agnostic contracts for post-production: IRenderCompositor (how a Timeline becomes a master video), ITransitionPlugin (the Transition Engine's plugin interface), IUpscaler"
+requires-python = ">=3.11"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/video_composition_sdk"]

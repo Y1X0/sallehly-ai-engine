@@ -1,14 +1,18 @@
 [project]
 name = "export-service"
 version = "0.1.0"
-description = "Export System"
+description = "Export System: format/quality-preset video export (ffmpeg re-encode) + Asset Packaging (RenderManifest)"
 requires-python = ">=3.11"
 dependencies = [
   "schemas",
+  "asset-manager",
+  "post-processing",
 ]
 
 [tool.uv.sources]
 schemas = { workspace = true }
+asset-manager = { workspace = true }
+post-processing = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

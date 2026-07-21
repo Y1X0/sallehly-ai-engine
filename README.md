@@ -19,8 +19,8 @@ POST /projects  (apps/api)
    -> [approval gate 2: render plan]  (WAITING_RENDER_APPROVAL)
    -> Video Engine Adapter (Wan2.1) + Compute Provider (RunPod / local)
    -> GenerationJob (queued -> running -> completed/failed) + AssetManager
-   -> Post-Processing (Phase 6)
-   -> Final MP4
+   -> Timeline Builder -> Transition Engine / Audio Pipeline / Subtitle System / Watermark Engine
+   -> FfmpegCompositor (master video) -> Export Service (mp4/mov/webm x 720p-4K) -> RenderManifest
 ```
 
 A user drives this whole flow from a real browser
@@ -36,10 +36,14 @@ design, [`docs/DECISIONS.md`](docs/DECISIONS.md) for the decision log, and
 
 ## Status
 
-**Phase 5 — User-facing platform.** A user can register, submit a
+**Phase 6 — Post-production pipeline.** A user can register, submit a
 creative idea, review and approve/reject the storyboard and render plan,
 and watch it through to a generated video asset — entirely from a real
-browser UI, which talks to `apps/api` and nothing else:
+browser UI, which talks to `apps/api` and nothing else — and every
+project's per-shot clips can be stitched, mixed, subtitled, watermarked,
+and exported to a final deliverable by a real, ffmpeg-executable
+post-production pipeline (not yet wired into the API/frontend - see
+Phase 6 below):
 
 - **Phase 1** (`services/ai-director`, `CreativeDirector`): Creative
   Brief Parser → Story Planner (LLM-backed) → Scene Generator → Shot
@@ -83,6 +87,27 @@ browser UI, which talks to `apps/api` and nothing else:
   retry, asset library) — tested with Vitest (unit) and Playwright
   (real Chromium, full lifecycle e2e, against real `uvicorn`/`next dev`
   servers).
+- **Phase 6** (`packages/video-composition-sdk`,
+  `services/post-processing`, `services/export-service`): `Timeline
+  Builder` sequences a project's shots (honoring
+  `Shot.transition_in`/`transition_out`) into a `Timeline`; the
+  `Transition Engine` resolves cinematic-cut/fade-in/fade-out/dissolve/
+  match-cut/wipe/whip-pan/zoom (plus custom plugins) via a real registry
+  (`TRANSITION_PLUGIN_REGISTRY`); the `Audio Pipeline` mixes music/sfx/
+  voiceover tracks with volume automation; the `Subtitle System`
+  generates real SRT/WebVTT (or burns captions in) with styling presets
+  and multilingual tracks; the `Thumbnail Engine` extracts real
+  keyframes; the `Watermark Engine` handles logo overlay and intro/outro;
+  `FfmpegCompositor` assembles all of it into one master video; the
+  `Export Service` re-encodes to mp4/mov/webm at 720p/1080p/1440p/4K;
+  `AssetPackager` bundles everything into a `RenderManifest`. **Every
+  one of these actually runs `ffmpeg`** against real synthetic clips in
+  its tests (`tests/media_helpers.py`) rather than being mocked - the
+  first layer in this codebase held to that bar, since (unlike GPU
+  inference or a live Temporal server) `ffmpeg` is a real, installable,
+  executable dependency here. `IUpscaler`/`PassthroughUpscaler` is the
+  one honest exception: prepared per Phase 6's explicit scope, not
+  implemented, since real upscaling needs a GPU model deployment.
 
 Two things remain genuinely unexecuted in this environment, both
 documented rather than glossed over: real GPU inference (`workers/gpu-worker`

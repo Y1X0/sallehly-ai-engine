@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/branding_package.schema.json",
+  "title": "BrandingPackage",
+  "description": "Watermark/branding configuration applied by the Watermark Engine (services/post-processing) during composition: a logo overlay and/or intro/outro clips. Every field is optional - an empty object means no branding.",
+  "type": "object",
+  "properties": {
+    "logo_asset_id": {
+      "type": "string",
+      "description": "Asset id (AssetManager, kind=image) of the logo/watermark image."
+    },
+    "logo_position": {
+      "type": "string",
+      "enum": ["top_left", "top_right", "bottom_left", "bottom_right", "center"],
+      "default": "bottom_right"
+    },
+    "logo_opacity": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.8 },
+    "logo_scale": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 1,
+      "default": 0.15,
+      "description": "Logo width as a fraction of the frame width."
+    },
+    "intro_asset_id": {
+      "type": "string",
+      "description": "Asset id (kind=video) prepended before the first clip."
+    },
+    "outro_asset_id": {
+      "type": "string",
+      "description": "Asset id (kind=video) appended after the last clip."
+    }
+  },
+  "additionalProperties": false
+}
