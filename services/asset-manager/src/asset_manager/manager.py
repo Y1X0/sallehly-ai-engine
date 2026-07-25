@@ -75,6 +75,16 @@ class AssetManager:
     def get(self, asset_id: str) -> dict[str, Any] | None:
         return next((record for record in self._assets.values() if record["asset_id"] == asset_id), None)
 
+    def list_for_project(self, project_id: str, kind: str | None = None) -> list[dict[str, Any]]:
+        """Every AssetRecord for a project, optionally filtered by kind -
+        e.g. `list_for_project(project_id, kind="video")` to gather a
+        project's per-shot clips for Post-Processing's TimelineBuilder."""
+        return [
+            record
+            for record in self._assets.values()
+            if record["project_id"] == project_id and (kind is None or record["kind"] == kind)
+        ]
+
     def latest_uri(self, project_id: str, kind: str, shot_id: str | None = None) -> str | None:
         record = self._assets.get(f"{project_id}:{shot_id or '_project'}:{kind}")
         return record["versions"][-1]["uri"] if record else None

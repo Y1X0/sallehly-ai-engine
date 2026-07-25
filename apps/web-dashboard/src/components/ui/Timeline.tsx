@@ -8,6 +8,8 @@ const STEPS: { key: ProjectStatus; label: string }[] = [
   { key: "approved", label: "Approved" },
   { key: "generating", label: "Generating" },
   { key: "completed", label: "Completed" },
+  { key: "post_processing", label: "Post-processing" },
+  { key: "exported", label: "Exported" },
 ];
 
 function stepIndex(status: ProjectStatus, rejectedStage: RejectedStage): number {

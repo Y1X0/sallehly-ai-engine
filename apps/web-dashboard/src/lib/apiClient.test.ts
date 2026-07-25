@@ -1,5 +1,22 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, createProject, getProject, listProjects, login, register, uploadAsset } from "./apiClient";
+import {
+  analyzeCinematicConsistency,
+  ApiError,
+  approveRepair,
+  createProject,
+  finalizeProject,
+  getCinematicReport,
+  getProject,
+  getRenderManifest,
+  improvePrompt,
+  listProjects,
+  listRepairs,
+  login,
+  register,
+  rejectRepair,
+  repairShot,
+  uploadAsset,
+} from "./apiClient";
 
 function mockFetchOnce(status: number, body: unknown) {
   const fetchMock = vi.fn().mockResolvedValue({
@@ -98,5 +115,106 @@ describe("apiClient", () => {
     const [, options] = fetchMock.mock.calls[0];
     expect(options.headers["Content-Type"]).toBeUndefined();
     expect(options.body).toBeInstanceOf(FormData);
+  });
+
+  it("finalizeProject posts to /finalize with a null export_spec by default", async () => {
+    const fetchMock = mockFetchOnce(200, { project_id: "proj_1", status: "post_processing" });
+
+    const project = await finalizeProject("tok", "proj_1");
+
+    expect(project.status).toBe("post_processing");
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toContain("/projects/proj_1/finalize");
+    expect(options.method).toBe("POST");
+    expect(JSON.parse(options.body)).toEqual({ export_spec: null });
+  });
+
+  it("finalizeProject forwards a custom export_spec", async () => {
+    const fetchMock = mockFetchOnce(200, { project_id: "proj_1", status: "post_processing" });
+
+    await finalizeProject("tok", "proj_1", { format: "mov", quality_preset: "4k" });
+
+    const [, options] = fetchMock.mock.calls[0];
+    expect(JSON.parse(options.body)).toEqual({ export_spec: { format: "mov", quality_preset: "4k" } });
+  });
+
+  it("getRenderManifest issues a GET request to the right path", async () => {
+    const fetchMock = mockFetchOnce(200, { manifest_id: "manifest_1", video: { uri: "file:///x.mp4" } });
+
+    const manifest = await getRenderManifest("tok", "proj_1");
+
+    expect(manifest.manifest_id).toBe("manifest_1");
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toContain("/projects/proj_1/render-manifest");
+    expect(options.method ?? "GET").toBe("GET");
+  });
+
+  it("analyzeCinematicConsistency POSTs to the analyze endpoint and returns the report", async () => {
+    const fetchMock = mockFetchOnce(200, { shots_analyzed: 3, scores: { overall: 0.9 } });
+
+    const report = await analyzeCinematicConsistency("tok", "proj_1");
+
+    expect(report.shots_analyzed).toBe(3);
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toContain("/projects/proj_1/cinematic/analyze");
+    expect(options.method).toBe("POST");
+  });
+
+  it("getCinematicReport GETs the report endpoint", async () => {
+    const fetchMock = mockFetchOnce(200, { shots_analyzed: 3, scores: { overall: 0.9 } });
+
+    await getCinematicReport("tok", "proj_1");
+
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toContain("/projects/proj_1/cinematic/report");
+    expect(options.method ?? "GET").toBe("GET");
+  });
+
+  it("improvePrompt POSTs to the shot's improve endpoint", async () => {
+    const fetchMock = mockFetchOnce(200, { version: 2, positive_prompt: "improved" });
+
+    const improved = await improvePrompt("tok", "proj_1", "shot_1");
+
+    expect(improved.version).toBe(2);
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toContain("/projects/proj_1/cinematic/prompts/shot_1/improve");
+    expect(options.method).toBe("POST");
+  });
+
+  it("repairShot POSTs to the shot's repair endpoint", async () => {
+    const fetchMock = mockFetchOnce(200, { repair_id: "repair_1", shot_id: "shot_1", review_status: "pending" });
+
+    const action = await repairShot("tok", "proj_1", "shot_1");
+
+    expect(action.repair_id).toBe("repair_1");
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toContain("/projects/proj_1/cinematic/repair/shot_1");
+    expect(options.method).toBe("POST");
+  });
+
+  it("listRepairs GETs the repairs list", async () => {
+    const fetchMock = mockFetchOnce(200, { repairs: [{ repair_id: "repair_1" }] });
+
+    const result = await listRepairs("tok", "proj_1");
+
+    expect(result.repairs).toHaveLength(1);
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toContain("/projects/proj_1/cinematic/repairs");
+  });
+
+  it("approveRepair and rejectRepair POST to their respective endpoints", async () => {
+    const approveFetch = mockFetchOnce(200, { repair_id: "repair_1", review_status: "approved" });
+    const approved = await approveRepair("tok", "proj_1", "repair_1");
+    expect(approved.review_status).toBe("approved");
+    const [approveUrl, approveOptions] = approveFetch.mock.calls[0];
+    expect(approveUrl).toContain("/projects/proj_1/cinematic/repairs/repair_1/approve");
+    expect(approveOptions.method).toBe("POST");
+
+    const rejectFetch = mockFetchOnce(200, { repair_id: "repair_1", review_status: "rejected" });
+    const rejected = await rejectRepair("tok", "proj_1", "repair_1");
+    expect(rejected.review_status).toBe("rejected");
+    const [rejectUrl, rejectOptions] = rejectFetch.mock.calls[0];
+    expect(rejectUrl).toContain("/projects/proj_1/cinematic/repairs/repair_1/reject");
+    expect(rejectOptions.method).toBe("POST");
   });
 });

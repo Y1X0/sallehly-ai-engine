@@ -38,17 +38,19 @@ design, [`docs/DECISIONS.md`](docs/DECISIONS.md) for the decision log, and
 
 ## Status
 
-**Phase 7 — Cinematic Intelligence Layer.** A user can register, submit
-a creative idea, review and approve/reject the storyboard and render
-plan, and watch it through to a generated video asset — entirely from a
-real browser UI, which talks to `apps/api` and nothing else — every
-project's per-shot clips can be stitched, mixed, subtitled, watermarked,
-and exported to a final deliverable by a real, ffmpeg-executable
-post-production pipeline, and a rule-based Cinematic Intelligence Layer
-now exists to keep a project's characters/objects/environments/style/
-camera consistent shot to shot (neither the post-production pipeline
-nor the intelligence layer is wired into the API/frontend yet - see
-Phase 6/7 below):
+**Phase 8 — Pipeline integration.** A user can register, submit a
+creative idea, review and approve/reject the storyboard and render
+plan, watch it through to a generated video asset, review a live
+Cinematic Intelligence report (consistency scores, detected problems,
+one-click repair approve/reject) and finalize the project into one
+exported deliverable — entirely from a real browser UI, which talks to
+`apps/api` and nothing else. Every project's per-shot clips can be
+stitched, mixed, subtitled, watermarked, and exported by a real,
+ffmpeg-executable post-production pipeline, and a rule-based Cinematic
+Intelligence Layer keeps a project's characters/objects/environments/
+style/camera consistent shot to shot - both are now wired directly into
+`ProjectLifecycle`/`apps/api`/`apps/web-dashboard` (see Phase 8 below;
+Phase 6/7 below describe when each was originally built):
 
 - **Phase 1** (`services/ai-director`, `CreativeDirector`): Creative
   Brief Parser → Story Planner (LLM-backed) → Scene Generator → Shot
@@ -112,7 +114,9 @@ Phase 6/7 below):
   inference or a live Temporal server) `ffmpeg` is a real, installable,
   executable dependency here. `IUpscaler`/`PassthroughUpscaler` is the
   one honest exception: prepared per Phase 6's explicit scope, not
-  implemented, since real upscaling needs a GPU model deployment.
+  implemented, since real upscaling needs a GPU model deployment. As of
+  Phase 8, wired into `ProjectLifecycle.finalize_project` /
+  `POST /projects/{id}/finalize`.
 - **Phase 7** (`packages/cinematic-intelligence-sdk`,
   `services/cinematic-intelligence`): sits between the Render
   Specification Generator and the Video Engine Adapter. The
@@ -144,14 +148,44 @@ Phase 6/7 below):
   have, and the phase explicitly forbade training one - every
   consistency/quality signal here is genuinely computed from structured
   metadata, not pixels. ≥95% test coverage on every new module.
+- **Phase 8** (`services/cinematic-intelligence` `coordinator.py` +
+  `model_adapters/`, `services/render-orchestrator`, `apps/api`,
+  `apps/web-dashboard` - see `docs/adr/0014-pipeline-integration.md`):
+  `CinematicIntelligenceCoordinator` wires all ten Phase 7 engines into
+  `ProjectLifecycle.approve_storyboard`/`reject_render_plan`, patching
+  every `RenderSpec`'s prompts and recording continuity/quality data
+  before a human ever reviews the render plan; a new
+  `ProjectLifecycle.finalize_project` (`completed` → `post_processing`
+  → `exported`) hands the project's generated clips to
+  `PostProductionRunner`, reusing the entire Phase 6 pipeline unchanged.
+  `apps/api` gains `/projects/{id}/cinematic/*` (analyze/report/improve-
+  prompt/repair/approve/reject) and `/finalize`+`/render-manifest`;
+  `apps/web-dashboard` gains a Cinematic Intelligence panel (scores,
+  problems, repair approve/reject) and a finalize/download flow.
+  `IEmbeddingProvider`/`IReferenceConditioningAdapter` (prepared, not
+  implemented, in Phase 7) now have concrete adapters
+  (`ClipEmbeddingProvider`/`DinoEmbeddingProvider`/
+  `ControlNetConditioningAdapter`/`IPAdapterConditioningAdapter`): real
+  where a technique needs no trained model (cosine similarity, Canny
+  edge detection via Pillow), a clear `ModelUnavailableError` everywhere
+  else (`torch`/`open_clip`/`torchvision`/`controlnet_aux`/
+  `transformers`, none installed here). A real gap surfaced and fixed
+  along the way: `apps/api` had imported `Wan21Adapter` directly since
+  Phase 4 and never actually read the `VIDEO_ENGINE_REGISTRY`/
+  `Settings.video_engine` config switch that already existed -
+  `SallehlyModelAdapter`, a second real `IVideoEngine` (registered as
+  `sallehly-v1`, real `capabilities()`, correctly raises
+  `SallehlyModelNotTrainedError` since Phase 9 hasn't produced weights
+  yet), proves the swap now genuinely works via config alone.
 
 Two things remain genuinely unexecuted in this environment, both
 documented rather than glossed over: real GPU inference (`workers/gpu-worker`
 needs actual Wan2.1 weights deployed to a GPU) and live Temporal
 execution (its ephemeral test server needs a binary download this
 sandbox's network policy blocks). Everything on the code side of both
-boundaries is implemented and tested against local/mocked equivalents.
-See the roadmap in `docs/ARCHITECTURE.md#8-roadmap`.
+boundaries is implemented and tested against local/mocked equivalents -
+the same honesty class Phase 8 held its own two genuinely-vision-model-
+dependent interfaces to. See the roadmap in `docs/ARCHITECTURE.md#8-roadmap`.
 
 ## Repository layout
 

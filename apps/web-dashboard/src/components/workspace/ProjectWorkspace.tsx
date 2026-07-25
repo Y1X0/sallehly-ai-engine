@@ -4,13 +4,33 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import * as api from "@/lib/apiClient";
 import { ApiError } from "@/lib/apiClient";
-import type { AssetRecord, DirectorPlan, JobStatusSummary, Project, RenderPlan, Storyboard } from "@/lib/types";
+import type {
+  AssetRecord,
+  CinematicReport,
+  DirectorPlan,
+  JobStatusSummary,
+  Project,
+  RenderPlan,
+  RepairAction,
+  Storyboard,
+} from "@/lib/types";
 import { Button, Card, Timeline } from "@/components/ui";
 import { SceneTimeline } from "./SceneTimeline";
 import { StoryboardReview } from "./StoryboardReview";
 import { RenderPlanReview } from "./RenderPlanReview";
 import { JobsPanel } from "./JobsPanel";
 import { AssetLibrary } from "./AssetLibrary";
+import { CinematicIntelligencePanel } from "./CinematicIntelligencePanel";
+
+const CINEMATIC_ANALYSIS_STATUSES = new Set([
+  "waiting_render_approval",
+  "approved",
+  "generating",
+  "completed",
+  "failed",
+  "post_processing",
+  "exported",
+]);
 
 async function fetchOptional<T>(fn: () => Promise<T>): Promise<T | null> {
   try {
@@ -32,10 +52,14 @@ export function ProjectWorkspace({ projectId }: { projectId: string }) {
   const [renderPlan, setRenderPlan] = useState<RenderPlan | null>(null);
   const [jobs, setJobs] = useState<JobStatusSummary[]>([]);
   const [assets, setAssets] = useState<AssetRecord[]>([]);
+  const [cinematicReport, setCinematicReport] = useState<CinematicReport | null>(null);
+  const [repairs, setRepairs] = useState<RepairAction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [actionPending, setActionPending] = useState<string | null>(null);
+  const [repairingShotId, setRepairingShotId] = useState<string | null>(null);
+  const [reviewingRepairId, setReviewingRepairId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!token) return;
@@ -66,6 +90,18 @@ export function ProjectWorkspace({ projectId }: { projectId: string }) {
         setAssets(fetchedAssets);
       } else {
         setAssets([]);
+      }
+
+      if (CINEMATIC_ANALYSIS_STATUSES.has(fetchedProject.status)) {
+        const [fetchedReport, fetchedRepairs] = await Promise.all([
+          fetchOptional(() => api.getCinematicReport(token, projectId)),
+          fetchOptional(() => api.listRepairs(token, projectId)),
+        ]);
+        setCinematicReport(fetchedReport);
+        setRepairs(fetchedRepairs?.repairs ?? []);
+      } else {
+        setCinematicReport(null);
+        setRepairs([]);
       }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not load project");
@@ -100,6 +136,36 @@ export function ProjectWorkspace({ projectId }: { projectId: string }) {
       setError(err instanceof ApiError ? err.message : "Action failed");
     } finally {
       setActionPending(null);
+    }
+  }
+
+  async function handleRepair(shotId: string) {
+    setRepairingShotId(shotId);
+    setError(null);
+    try {
+      await api.repairShot(token!, projectId, shotId);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Repair failed");
+    } finally {
+      setRepairingShotId(null);
+    }
+  }
+
+  async function handleReviewRepair(repairId: string, approved: boolean) {
+    setReviewingRepairId(repairId);
+    setError(null);
+    try {
+      if (approved) {
+        await api.approveRepair(token!, projectId, repairId);
+      } else {
+        await api.rejectRepair(token!, projectId, repairId);
+      }
+      await refresh();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not record repair decision");
+    } finally {
+      setReviewingRepairId(null);
     }
   }
 
@@ -169,6 +235,18 @@ export function ProjectWorkspace({ projectId }: { projectId: string }) {
         />
       )}
 
+      {cinematicReport && (
+        <CinematicIntelligencePanel
+          report={cinematicReport}
+          repairs={repairs}
+          onRepair={handleRepair}
+          repairingShotId={repairingShotId}
+          onApproveRepair={(repairId) => handleReviewRepair(repairId, true)}
+          onRejectRepair={(repairId) => handleReviewRepair(repairId, false)}
+          reviewingRepairId={reviewingRepairId}
+        />
+      )}
+
       {project.status === "rejected" && (
         <Card>
           <p className="text-sm text-zinc-500 dark:text-zinc-400">Applying feedback and regenerating...</p>
@@ -204,6 +282,42 @@ export function ProjectWorkspace({ projectId }: { projectId: string }) {
       {project.status === "failed" && project.error_message && (
         <Card>
           <p className="text-sm text-red-600 dark:text-red-400">{project.error_message}</p>
+        </Card>
+      )}
+
+      {project.status === "completed" && (
+        <Card title="Final deliverable">
+          <p className="mb-3 text-sm text-zinc-500 dark:text-zinc-400">
+            Every shot generated successfully. Assemble the final export (transitions, audio, subtitles,
+            watermark, mp4/mov/webm re-encode).
+          </p>
+          <Button
+            onClick={() => runAction("finalize", () => api.finalizeProject(token!, projectId))}
+            loading={actionPending === "finalize"}
+          >
+            Finalize &amp; export
+          </Button>
+          {project.error_message && (
+            <p className="mt-2 text-xs text-red-600 dark:text-red-400">{project.error_message}</p>
+          )}
+        </Card>
+      )}
+
+      {project.status === "post_processing" && (
+        <Card>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">Assembling the final export...</p>
+        </Card>
+      )}
+
+      {project.status === "exported" && project.render_manifest && (
+        <Card title="Final deliverable">
+          <a
+            href={project.render_manifest.video.uri}
+            className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
+          >
+            Download final video ({project.render_manifest.video.format},{" "}
+            {project.render_manifest.video.resolution})
+          </a>
         </Card>
       )}
 

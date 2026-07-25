@@ -331,7 +331,7 @@ class _AlwaysFailingComputeProvider(IComputeProvider):
 
 
 def test_generation_failure_surfaces_as_failed_status_over_http():
-    stack = build_stack(compute_provider=_AlwaysFailingComputeProvider())
+    stack = build_stack(compute_provider=_AlwaysFailingComputeProvider(), with_cinematic_intelligence=True)
     failing_state = AppState(
         project_store=stack.project_store,
         job_store=stack.job_store,
@@ -339,6 +339,7 @@ def test_generation_failure_surfaces_as_failed_status_over_http():
         orchestrator=stack.orchestrator,
         user_store=stack.user_store,
         auth_provider=stack.auth_provider,
+        cinematic_intelligence=stack.cinematic_intelligence,
         memory=stack.memory,
     )
     app.dependency_overrides[get_app_state] = lambda: failing_state

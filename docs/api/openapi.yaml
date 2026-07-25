@@ -4,11 +4,17 @@ info:
   version: "1"
   description: >
     Public/internal API for apps/api - implemented and tested end-to-end
-    (fastapi.testclient.TestClient) as of Phase 4. Every path below is a
-    real route in apps/api/src/api/routes/. Route handlers call
-    state.orchestrator (an IProjectOrchestrator), never
-    CreativeDirector/CreativeCompiler/GenerationPipeline directly - see
-    docs/adr/0010-persistence-and-lifecycle.md. Business schemas are
+    (fastapi.testclient.TestClient) since Phase 4, extended through
+    Phase 8 (auth, plan/storyboard/render-plan retrieval, retry-
+    generation, asset upload, Cinematic Intelligence, finalize/render-
+    manifest). Every path below is a real route in
+    apps/api/src/api/routes/. Route handlers call state.orchestrator (an
+    IProjectOrchestrator) or state.cinematic_intelligence (a
+    CinematicIntelligenceCoordinator), never
+    CreativeDirector/CreativeCompiler/GenerationPipeline/individual
+    Cinematic Intelligence engines directly - see
+    docs/adr/0010-persistence-and-lifecycle.md and
+    docs/adr/0014-pipeline-integration.md. Business schemas are
     referenced directly from packages/schemas/json/ so this contract
     cannot drift from the internal pipeline contracts.
 servers:
@@ -427,6 +433,206 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /projects/{project_id}/finalize:
+    post:
+      summary: Assemble every generated shot into one exported deliverable
+      description: >
+        Requires status=completed (every shot generated). Timeline
+        Builder -> FfmpegCompositor -> Export Service -> Asset Packager
+        (PostProductionRunner, services/render-orchestrator), reusing
+        the Phase 6 post-production pipeline unchanged - see
+        docs/adr/0014-pipeline-integration.md. completed ->
+        post_processing -> exported (or back to completed with
+        error_message set, on failure - safely retriable). Requires
+        ffmpeg/ffprobe on PATH.
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                export_spec:
+                  description: >
+                    export_spec.schema.json fields (format/quality_preset/...).
+                    Defaults to {"format": "mp4", "quality_preset": "1080p"}
+                    when omitted or null.
+                  type: ["object", "null"]
+      responses:
+        "200":
+          description: Project now exported (or reverted to completed on failure)
+          content:
+            application/json:
+              schema:
+                $ref: "../../packages/schemas/json/project.schema.json"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/InvalidTransition"
+
+  /projects/{project_id}/render-manifest:
+    get:
+      summary: Get the project's RenderManifest, once finalized
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: RenderManifest
+          content:
+            application/json:
+              schema:
+                $ref: "../../packages/schemas/json/render_manifest.schema.json"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Project doesn't exist, or hasn't been finalized yet
+
+  /projects/{project_id}/cinematic/analyze:
+    post:
+      summary: Compute this project's live Cinematic Intelligence report
+      description: >
+        Character/object/scene/camera/style consistency scores, detected
+        problems, and repair suggestions - aggregated live from whatever
+        CinematicIntelligenceCoordinator has recorded so far (populated
+        automatically when the storyboard is approved - see
+        ProjectLifecycle._enrich_render_plan, docs/adr/0014-pipeline-integration.md).
+        Read-only despite being POST - see GET .../report for the same
+        data under a read-only verb.
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: CinematicReport
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CinematicReport"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /projects/{project_id}/cinematic/report:
+    get:
+      summary: Read-only alias for POST .../analyze
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: CinematicReport
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CinematicReport"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /projects/{project_id}/cinematic/prompts/{shot_id}/improve:
+    post:
+      summary: Rebuild one shot's PromptPackage from its resolved context, bumping its version
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/ShotId"
+      responses:
+        "200":
+          description: The rebuilt PromptPackage
+          content:
+            application/json:
+              schema:
+                $ref: "../../packages/schemas/json/prompt_package.schema.json"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Project or shot not found
+
+  /projects/{project_id}/cinematic/repair/{shot_id}:
+    post:
+      summary: Run the Automatic Repair Engine against a shot's most recent QualityReport
+      description: >
+        Always scoped to one shot. Requires a QualityReport to already
+        exist for the shot (recorded automatically during enrichment -
+        see .../analyze). The returned RepairAction starts
+        review_status=pending; a human accepts/rejects it via the
+        endpoints below.
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/ShotId"
+      responses:
+        "200":
+          description: The proposed RepairAction
+          content:
+            application/json:
+              schema:
+                $ref: "../../packages/schemas/json/repair_action.schema.json"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Project/shot not found, or no QualityReport exists for this shot yet
+
+  /projects/{project_id}/cinematic/repairs:
+    get:
+      summary: List every RepairAction proposed for this project
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Repairs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  repairs:
+                    type: array
+                    items:
+                      $ref: "../../packages/schemas/json/repair_action.schema.json"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /projects/{project_id}/cinematic/repairs/{repair_id}/approve:
+    post:
+      summary: Approve a proposed RepairAction
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/RepairId"
+      responses:
+        "200":
+          description: The RepairAction, now review_status=approved
+          content:
+            application/json:
+              schema:
+                $ref: "../../packages/schemas/json/repair_action.schema.json"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Project or repair_id not found
+
+  /projects/{project_id}/cinematic/repairs/{repair_id}/reject:
+    post:
+      summary: Reject a proposed RepairAction
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/RepairId"
+      responses:
+        "200":
+          description: The RepairAction, now review_status=rejected
+          content:
+            application/json:
+              schema:
+                $ref: "../../packages/schemas/json/repair_action.schema.json"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Project or repair_id not found
+
   /assets/upload:
     post:
       summary: Upload a reference asset (e.g. an image)
@@ -506,6 +712,64 @@ components:
       in: path
       required: true
       schema: { type: string }
+    ShotId:
+      name: shot_id
+      in: path
+      required: true
+      schema: { type: string }
+    RepairId:
+      name: repair_id
+      in: path
+      required: true
+      schema: { type: string }
+
+  schemas:
+    CinematicReport:
+      description: >
+        CinematicIntelligenceCoordinator.get_project_report's live
+        aggregation - not a stored artifact, so it has no
+        packages/schemas/json/ file of its own (see
+        docs/adr/0014-pipeline-integration.md). scores.* values are
+        null until at least one shot analyzed that dimension;
+        scores.overall is null until at least one other score is
+        present.
+      type: object
+      properties:
+        project_id: { type: string }
+        shots_analyzed: { type: integer }
+        character_count: { type: integer }
+        object_count: { type: integer }
+        environment_count: { type: integer }
+        scores:
+          type: object
+          properties:
+            character_consistency: { type: ["number", "null"] }
+            object_consistency: { type: ["number", "null"] }
+            scene_continuity: { type: ["number", "null"] }
+            camera_consistency: { type: ["number", "null"] }
+            style: { type: ["number", "null"] }
+            overall: { type: ["number", "null"] }
+        problems:
+          type: array
+          items:
+            type: object
+            properties:
+              violation_type: { type: string }
+              category: { type: string }
+              severity: { type: string, enum: [info, warning, critical] }
+              description: { type: string }
+              shot_id: { type: string }
+              related_shot_id: { type: string }
+              source: { type: string, enum: [continuity, quality] }
+        repair_suggestions:
+          type: array
+          items:
+            type: object
+            properties:
+              shot_id: { type: string }
+              report_id: { type: string }
+              overall_score: { type: number }
+              worst_dimension: { type: string }
 
   responses:
     Unauthorized:

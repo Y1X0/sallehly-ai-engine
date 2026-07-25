@@ -22,7 +22,9 @@
         "rejected",
         "generating",
         "completed",
-        "failed"
+        "failed",
+        "post_processing",
+        "exported"
       ]
     },
     "rejected_stage": {
@@ -56,6 +58,10 @@
     "error_message": {
       "type": ["string", "null"],
       "description": "Set when status=failed - the generation failures that caused it."
+    },
+    "render_manifest": {
+      "type": ["object", "null"],
+      "description": "Set when status=exported - the RenderManifest (render_manifest.schema.json) ProjectLifecycle.finalize_project produced. Embedded directly (unlike DirectorPlan/Storyboard/RenderPlan) since it's compact and final."
     }
   },
   "additionalProperties": false

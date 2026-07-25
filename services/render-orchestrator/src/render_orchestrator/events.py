@@ -15,6 +15,9 @@ class EventType(str, Enum):
     GENERATION_STARTED = "generation_started"
     GENERATION_COMPLETED = "generation_completed"
     GENERATION_FAILED = "generation_failed"
+    POST_PROCESSING_STARTED = "post_processing_started"
+    EXPORT_COMPLETED = "export_completed"
+    EXPORT_FAILED = "export_failed"
 
 
 @dataclass(frozen=True)

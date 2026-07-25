@@ -38,16 +38,24 @@ dict-in-the-pipeline / dataclass-at-the-boundary pattern as
 | `GraphNode` | `graph_node.schema.json` |
 | `GraphEdge` | `graph_edge.schema.json` |
 
-## Why two interfaces are prepared, not implemented
+## `IEmbeddingProvider` / `IReferenceConditioningAdapter`
 
 `IEmbeddingProvider` (CLIP/DINO perceptual embeddings) and
 `IReferenceConditioningAdapter` (ControlNet/IP-Adapter generation-time
-conditioning) both need a deployed vision/generation model this sandbox
-does not have - the same class of limitation as real GPU inference in
-`workers/gpu-worker`. Every Phase 7 consistency/continuity/quality score
-is instead computed from structured metadata (profiles, continuity
-reports, style locks, project memory) that this codebase can actually
-produce and test. See `docs/adr/0013-cinematic-intelligence-layer.md`.
+conditioning) both potentially need a deployed vision/generation model
+this sandbox does not have - the same class of limitation as real GPU
+inference in `workers/gpu-worker`. Concrete adapters now exist
+(`services/cinematic-intelligence/model_adapters/`, Phase 8): real
+where a technique needs no trained model at all (cosine similarity,
+Canny edge detection via Pillow), and a clear `ModelUnavailableError`
+everywhere a real deployed model (`torch`/`open_clip`/`torchvision`/
+`controlnet_aux`/`transformers`) is genuinely required and not
+installed here. Every Phase 7 consistency/continuity/quality score is
+still computed from structured metadata (profiles, continuity reports,
+style locks, project memory) that this codebase can actually produce
+and test, not from these adapters. See
+`docs/adr/0013-cinematic-intelligence-layer.md` and
+`docs/adr/0014-pipeline-integration.md`.
 
 ## Why a separate package from video-composition-sdk / video-engine-sdk
 

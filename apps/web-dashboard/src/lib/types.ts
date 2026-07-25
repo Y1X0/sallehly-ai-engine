@@ -30,7 +30,9 @@ export type ProjectStatus =
   | "rejected"
   | "generating"
   | "completed"
-  | "failed";
+  | "failed"
+  | "post_processing"
+  | "exported";
 
 export type RejectedStage = "storyboard" | "render_plan" | null;
 
@@ -54,6 +56,28 @@ export interface Project {
   generation_job_ids: string[];
   asset_ids: string[];
   error_message: string | null;
+  render_manifest: RenderManifest | null;
+}
+
+// ---- packages/schemas/json/render_manifest.schema.json ----
+
+export interface RenderManifest {
+  schema_version: string;
+  manifest_id: string;
+  project_id: string;
+  video: {
+    asset_id: string;
+    uri: string;
+    format: string;
+    resolution: string;
+    fps: number;
+    duration_sec: number;
+    codec: string;
+  };
+  thumbnails?: { asset_id: string; uri: string; kind: string; timestamp_sec: number }[];
+  subtitles?: { language: string; format: string; uri: string; burned_in: boolean }[];
+  metadata?: Record<string, unknown>;
+  created_at: string;
 }
 
 // ---- packages/schemas/json/{camera,motion,lighting,style}.schema.json ----
@@ -269,4 +293,85 @@ export interface RejectStoryboardRequest {
 export interface RejectRenderRequest {
   feedback: string[];
   quality_tier?: string;
+}
+
+// ---- Cinematic Intelligence Layer (Phase 7/8) ----
+// Mirrors CinematicIntelligenceCoordinator.get_project_report() and
+// packages/schemas/json/repair_action.schema.json /
+// prompt_package.schema.json.
+
+export interface CinematicScores {
+  character_consistency: number | null;
+  object_consistency: number | null;
+  scene_continuity: number | null;
+  camera_consistency: number | null;
+  style: number | null;
+  overall: number | null;
+}
+
+export interface CinematicProblem {
+  violation_type?: string;
+  category?: string;
+  severity: "info" | "warning" | "critical";
+  description: string;
+  shot_id?: string;
+  related_shot_id?: string;
+  source: "continuity" | "quality";
+}
+
+export interface RepairSuggestion {
+  shot_id: string;
+  report_id: string;
+  overall_score: number;
+  worst_dimension: string;
+}
+
+export interface CinematicReport {
+  project_id: string;
+  scores: CinematicScores;
+  problems: CinematicProblem[];
+  repair_suggestions: RepairSuggestion[];
+  character_count: number;
+  object_count: number;
+  environment_count: number;
+  shots_analyzed: number;
+}
+
+export type RepairType = "prompt_repair" | "camera_repair" | "style_repair" | "identity_repair" | "lighting_repair";
+export type RepairStatus = "proposed" | "applied" | "failed";
+export type RepairReviewStatus = "pending" | "approved" | "rejected";
+
+export interface RepairAction {
+  schema_version: string;
+  repair_id: string;
+  project_id: string;
+  shot_id: string;
+  quality_report_id: string;
+  repair_type: RepairType;
+  strategy_id: string;
+  status: RepairStatus;
+  description?: string;
+  before_summary?: string;
+  after_summary?: string;
+  applied_at?: string;
+  review_status?: RepairReviewStatus;
+}
+
+export interface PromptPackage {
+  schema_version: string;
+  prompt_id: string;
+  project_id: string;
+  shot_id: string;
+  version: number;
+  positive_prompt: string;
+  negative_prompt: string;
+  engine_id?: string;
+  translated_prompt?: string;
+  compressed?: boolean;
+  score?: {
+    adherence_estimate: number;
+    length_score: number;
+    redundancy_score: number;
+    overall: number;
+  };
 }

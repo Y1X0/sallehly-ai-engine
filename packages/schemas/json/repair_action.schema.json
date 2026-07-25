@@ -23,7 +23,13 @@
     "before_summary": { "type": "string" },
     "after_summary": { "type": "string" },
     "status": { "type": "string", "enum": ["proposed", "applied", "failed"], "default": "proposed" },
-    "applied_at": { "type": "string", "format": "date-time" }
+    "applied_at": { "type": "string", "format": "date-time" },
+    "review_status": {
+      "type": "string",
+      "enum": ["pending", "approved", "rejected"],
+      "default": "pending",
+      "description": "Phase 8: a human decision on whether to accept this proposed repair - distinct from `status`, which describes whether the strategy itself succeeded in computing a fix. Set by the caller (e.g. CinematicIntelligenceCoordinator.review_repair), never by IRepairStrategy itself."
+    }
   },
   "additionalProperties": false
 }

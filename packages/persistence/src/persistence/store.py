@@ -8,13 +8,22 @@ from typing import Any
 
 
 class ProjectStatus(str, Enum):
-    """The project-level lifecycle state machine (Phase 4).
+    """The project-level lifecycle state machine (Phase 4; POST_PROCESSING/
+    EXPORTED added Phase 8).
 
     WAITING_STORYBOARD_APPROVAL, WAITING_RENDER_APPROVAL, APPROVED, and
     REJECTED are the exact approval-gate vocabulary; CREATED/PLANNING/
     GENERATING/COMPLETED/FAILED are the surrounding states a complete
     lifecycle needs. See ProjectLifecycle (services/render-orchestrator)
     for the transitions between them.
+
+    COMPLETED remains "every shot generated successfully" exactly as it
+    meant in Phase 4-7 - existing callers checking for it are unaffected.
+    POST_PROCESSING/EXPORTED are new, explicitly-triggered states past
+    COMPLETED (ProjectLifecycle.finalize_project) that assemble the
+    per-shot clips into one exported deliverable (services/post-processing
+    + services/export-service, ADR 0012) - optional, not automatic, so a
+    project can sit at COMPLETED indefinitely without ever finalizing.
     """
 
     CREATED = "created"
@@ -26,6 +35,8 @@ class ProjectStatus(str, Enum):
     GENERATING = "generating"
     COMPLETED = "completed"
     FAILED = "failed"
+    POST_PROCESSING = "post_processing"
+    EXPORTED = "exported"
 
 
 @dataclass
@@ -50,6 +61,12 @@ class ProjectRecord:
     generation_job_ids: list[str] = field(default_factory=list)
     asset_ids: list[str] = field(default_factory=list)
     error_message: str | None = None
+    render_manifest: dict[str, Any] | None = None
+    """Set by ProjectLifecycle.finalize_project once EXPORTED - the
+    RenderManifest (render_manifest.schema.json) is compact (video ref +
+    thumbnails + subtitles + metadata), unlike DirectorPlan/Storyboard/
+    RenderPlan, so it's embedded directly here rather than requiring its
+    own store."""
     created_at: str = field(default_factory=lambda: _now())
     updated_at: str = field(default_factory=lambda: _now())
 
@@ -64,6 +81,7 @@ class ProjectRecord:
             "generation_job_ids": self.generation_job_ids,
             "asset_ids": self.asset_ids,
             "error_message": self.error_message,
+            "render_manifest": self.render_manifest,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }

@@ -58,6 +58,9 @@ class IProjectOrchestrator(ABC):
     @abstractmethod
     def retry_generation(self, project_id: str) -> ProjectRecord: ...
 
+    @abstractmethod
+    def finalize_project(self, project_id: str, export_spec: dict | None = None) -> ProjectRecord: ...
+
 
 class SyncProjectOrchestrator(IProjectOrchestrator):
     """Synchronous, non-durable driver: each method call runs to
@@ -106,6 +109,9 @@ class SyncProjectOrchestrator(IProjectOrchestrator):
 
     def retry_generation(self, project_id: str) -> ProjectRecord:
         return self._lifecycle.retry_generation(project_id)
+
+    def finalize_project(self, project_id: str, export_spec: dict | None = None) -> ProjectRecord:
+        return self._lifecycle.finalize_project(project_id, export_spec)
 
     def run_to_completion(self, project_id: str) -> ProjectRecord:
         """Convenience for local dev/tests: drives a freshly-created

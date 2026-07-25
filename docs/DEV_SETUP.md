@@ -14,6 +14,14 @@
   these. Without it, `post_processing.ffmpeg_utils.FfmpegNotAvailableError`
   is raised with a clear message, and the Phase 6 ffmpeg-execution tests
   are skipped rather than failing (see ADR 0012).
+- Optional, only for real Cinematic Intelligence model adapters
+  (`torch`, `open_clip_torch`, `torchvision`, `controlnet_aux`,
+  `transformers` - none installed by default, none required to run the
+  test suite or API): without them, `ClipEmbeddingProvider`/
+  `DinoEmbeddingProvider.embed_image` and `IPAdapterConditioningAdapter.apply`
+  raise `ModelUnavailableError` with the exact `pip install` command
+  needed; `ControlNetConditioningAdapter`'s default canny preprocessing
+  needs only Pillow, already a hard dependency (see ADR 0014).
 
 ## 1. Bootstrap
 
@@ -105,7 +113,16 @@ from a different origin.
 
 ## 3c. Post-production (services/post-processing / services/export-service)
 
-Not wired into `apps/api` yet (ADR 0012) - exercised directly today:
+Wired into `ProjectLifecycle.finalize_project` / `POST /projects/{id}/finalize`
+as of ADR 0014 - once a project reaches `completed`, finalize it over
+HTTP (`curl -X POST .../finalize`, or the "Finalize & export" button in
+`apps/web-dashboard`) rather than calling the modules below directly.
+Requires `ffmpeg`/`ffprobe` on `PATH` (see Prerequisites above); against
+the default `LocalProvider` compute stack this will fail with a clean
+409 (`LocalProvider` writes placeholder JSON, not real video bytes - a
+pre-existing Phase 3 limitation, not new here) - it succeeds end-to-end
+against real generated clips (RunPod/a real `IVideoEngine`). The modules
+themselves are still directly usable for scripting/testing:
 
 ```python
 from post_processing import TimelineBuilder, register_defaults
@@ -127,8 +144,22 @@ manifest = AssetPackager().package(director_plan["project_id"], export)
 
 ## 3d. Cinematic Intelligence Layer (services/cinematic-intelligence)
 
-Not wired into `apps/api`/`ProjectLifecycle` yet (ADR 0013) - pure
-Python, no external binary or model, exercised directly today:
+Wired into `ProjectLifecycle.approve_storyboard`/`reject_render_plan`
+as of ADR 0014 - `CinematicIntelligenceCoordinator.enrich_render_plan`
+runs automatically once a storyboard is approved, patching every
+RenderSpec's `positive_prompt`/`negative_prompt` before a human reviews
+the render plan at gate 2. Its live report/repair actions are available
+over HTTP at `/projects/{id}/cinematic/*` (`analyze`, `report`,
+`prompts/{shot_id}/improve`, `repair/{shot_id}`, `repairs`,
+`repairs/{id}/approve|reject` - see `docs/api/openapi.yaml`) and in the
+dashboard's Cinematic Intelligence panel. Still pure Python, no external
+binary required - `CLIP`/`DINO`/`ControlNet`/`IP-Adapter` model adapters
+(`services/cinematic-intelligence/model_adapters/`) are real where a
+technique needs no trained model (Canny edge detection via Pillow,
+already a hard dependency) and raise a clear `ModelUnavailableError`
+everywhere else (`pip install torch open_clip_torch torchvision
+controlnet_aux transformers` - none required to run the test suite or
+API). The engines are still directly usable for scripting/testing:
 
 ```python
 import cinematic_intelligence as ci
@@ -174,6 +205,18 @@ To submit real Wan2.1 render jobs to RunPod instead, set:
 COMPUTE_PROVIDER=runpod
 RUNPOD_API_KEY=...
 RUNPOD_ENDPOINT_ID=...
+```
+
+To switch which `IVideoEngine` handles generation - no code change,
+`apps/api/state.py` reads this through `VIDEO_ENGINE_REGISTRY` (ADR 0014):
+
+```bash
+VIDEO_ENGINE=wan2.1     # default
+VIDEO_ENGINE=sallehly-v1  # SallehlyModelAdapter - real capabilities(),
+                           # but no trained weights yet (Phase 9), so
+                           # every generation job fails with a clear
+                           # SallehlyModelNotTrainedError - useful today
+                           # only to prove the swap point is real
 ```
 
 ## 5. Running tests / lint

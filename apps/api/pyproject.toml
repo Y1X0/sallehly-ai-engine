@@ -17,6 +17,7 @@ dependencies = [
   "asset-manager",
   "video-engine-adapter",
   "video-engine-sdk",
+  "cinematic-intelligence",
   "auth",
   "storage-sdk",
   "python-multipart>=0.0.9",
@@ -34,6 +35,7 @@ persistence = { workspace = true }
 asset-manager = { workspace = true }
 video-engine-adapter = { workspace = true }
 video-engine-sdk = { workspace = true }
+cinematic-intelligence = { workspace = true }
 auth = { workspace = true }
 storage-sdk = { workspace = true }
 

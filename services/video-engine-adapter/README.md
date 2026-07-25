@@ -8,7 +8,8 @@ that is allowed to know engine-specific or provider-specific details.
 
 ```
 adapters/
-  wan21_adapter.py   Wan21Adapter(IVideoEngine)  - maps RenderSpec <-> Wan2.1 native args
+  wan21_adapter.py            Wan21Adapter(IVideoEngine)  - maps RenderSpec <-> Wan2.1 native args
+  sallehly_model_adapter.py   SallehlyModelAdapter(IVideoEngine)  - real capabilities(), no trained weights yet (Phase 9); proves the swap (Phase 8)
 compute/
   runpod_provider.py  RunPodProvider(IComputeProvider)  - RunPod Serverless (production HTTP client)
   vastai_provider.py  VastAIProvider(IComputeProvider)  - rented Vast.ai instance
@@ -36,14 +37,27 @@ compute = COMPUTE_PROVIDER_REGISTRY.create(
 Adding a second engine or provider means adding one file here and one
 `register_if_absent(...)` call in `registry.py` - no changes to any
 Planner, the Compiler, or `services/render-orchestrator`'s
-`GenerationPipeline`.
+`GenerationPipeline`. `SallehlyModelAdapter` (Phase 8) is exactly that:
+a second real `IVideoEngine`, registered as `sallehly-v1`, selected via
+`VIDEO_ENGINE=sallehly-v1` - `apps/api/state.py` genuinely reads this
+through `VIDEO_ENGINE_REGISTRY` now (it used to hardcode `Wan21Adapter()`
+directly and never read the config value at all - a real gap found and
+fixed this phase, see `docs/adr/0014-pipeline-integration.md`).
 
-## Current status (Phase 3)
+## Current status (Phase 3, engine swap proven Phase 8)
 
 - **`Wan21Adapter`**: fully implemented - `capabilities()`,
   `build_job_payload()` (including image-to-video conditioning image
   mapping and seed omission when unset), `parse_result()`. See
   `docs/adapters/wan21-adapter-spec.md`.
+- **`SallehlyModelAdapter`**: real, schema-valid `capabilities()`
+  (declarative metadata for the eventual Phase 9 foundation model);
+  `build_job_payload()`/`parse_result()` correctly raise
+  `SallehlyModelNotTrainedError` since no weights exist yet - the same
+  "prepared, not implemented" class of honesty as Wan2.1 inference
+  without a deployed GPU. Its value today is proving
+  `VIDEO_ENGINE_REGISTRY`/`Settings.video_engine` are a real swap point,
+  not generating video.
 - **`LocalProvider`**: fully functional (unchanged since Phase 0) - no
   GPU, no network, writes a JSON stub and reports success immediately.
   This is what `GenerationPipeline` runs against in tests.

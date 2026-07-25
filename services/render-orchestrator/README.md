@@ -13,9 +13,10 @@ Temporal workflow).
 ```
 jobs.py               GenerationJob / GenerationJobStatus / IGenerationJobStore  (Phase 3)
 pipeline.py            GenerationPipeline - RenderSpec -> engine -> compute -> AssetManager (Phase 3)
-events.py               EventType / Event / IEventBus  (Phase 4)
-project_lifecycle.py    ProjectLifecycle - the one place the full-lifecycle business logic lives (Phase 4)
+events.py               EventType / Event / IEventBus  (Phase 4; POST_PROCESSING_STARTED/EXPORT_COMPLETED/EXPORT_FAILED added Phase 8)
+project_lifecycle.py    ProjectLifecycle - the one place the full-lifecycle business logic lives (Phase 4; finalize_project + Cinematic Intelligence enrichment added Phase 8)
 orchestrator.py         IProjectOrchestrator / SyncProjectOrchestrator - what apps/api depends on (Phase 4)
+post_production.py      PostProductionRunner - bridges GenerationPipeline's clips into the Phase 6 post-production pipeline (Phase 8)
 workflows/
   activities.py          Temporal @activity.defn wrappers around ProjectLifecycle
   render_workflow.py      Temporal @workflow.defn ProjectGenerationWorkflow
@@ -32,7 +33,14 @@ workflows/
    `CreativeDirector` + `CreativeCompiler` + `GenerationPipeline` +
    `IProjectStore`, publishing an `Event` at every transition. **This is
    the only place this logic lives** - see
-   `docs/adr/0010-persistence-and-lifecycle.md`.
+   `docs/adr/0010-persistence-and-lifecycle.md`. Two optional Phase 8
+   additions (`docs/adr/0014-pipeline-integration.md`): if a
+   `CinematicIntelligenceCoordinator` is injected, `approve_storyboard`/
+   `reject_render_plan` enrich the compiled `RenderPlan`'s prompts before
+   gate 2; if a `PostProductionRunner` is injected, a new
+   `finalize_project(project_id)` method (`completed → post_processing →
+   exported`) assembles the generated shots into one deliverable. Both
+   are `None` by default - every pre-Phase-8 caller is unaffected.
 3. **Two drivers of `ProjectLifecycle`**, same method calls either way:
    - **`SyncProjectOrchestrator`** (`orchestrator.py`): synchronous,
      in-process. What `apps/api` and every test in this repo use.
@@ -72,7 +80,7 @@ them in the call stack (`CreativeCompiler`, `CreativeDirector`) is
 coupled to Wan2.1, Claude, or Temporal specifically - every dependency is
 injected already configured. See ADR 0001, 0002, 0009, 0010.
 
-## Status (Phase 4)
+## Status (Phase 4, extended Phase 8)
 
 `GenerationPipeline` (Phase 3), `ProjectLifecycle`, `SyncProjectOrchestrator`,
 `IEventBus`, and the Temporal workflow/activity definitions are all
@@ -80,4 +88,8 @@ implemented. The full project lifecycle - including the reject/
 regenerate path on both approval gates and the generation failure path -
 is tested end-to-end through `apps/api`'s real HTTP endpoints
 (`tests/test_api.py`) and directly (`tests/test_project_lifecycle.py`,
-`tests/test_project_orchestrator.py`).
+`tests/test_project_orchestrator.py`). `PostProductionRunner` and
+Cinematic Intelligence enrichment (Phase 8) are tested the same way,
+including `finalize_project`'s failure path against `LocalProvider`'s
+placeholder output and its success path against real ffmpeg-generated
+clips - see `docs/adr/0014-pipeline-integration.md`.

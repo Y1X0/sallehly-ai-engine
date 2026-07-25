@@ -36,7 +36,9 @@ app makes real HTTP requests to it, never mocks the backend.
   (incl. reference-image upload).
 - `src/components/workspace/` - the creative workspace: scene timeline,
   storyboard/render-plan review (approval panels), generation jobs
-  panel (with retry), asset library.
+  panel (with retry), `CinematicIntelligencePanel` (consistency scores,
+  detected problems, repair approve/reject - Phase 8), finalize/download
+  the exported deliverable, asset library.
 
 ## Testing
 
@@ -46,7 +48,7 @@ app makes real HTTP requests to it, never mocks the backend.
   auth/ownership checks, driven against real `uvicorn`/`next dev`
   servers in a real (pre-installed) Chromium.
 
-## Status (Phase 5)
+## Status (Phase 5, extended Phase 8)
 
 Implemented: login/register, project dashboard (list + create, incl.
 reference-image upload), creative workspace (lifecycle timeline,
@@ -55,3 +57,7 @@ reject-and-regenerate, real-time job status with retry, asset library).
 See `docs/adr/0011-frontend-and-auth.md` for the design decisions,
 including two real backend gaps (missing plan/storyboard/render-plan
 GET endpoints, missing CORS policy) found and fixed while building this.
+Phase 8 (`docs/adr/0014-pipeline-integration.md`) added the Cinematic
+Intelligence panel (populated automatically once enrichment has run -
+no user action triggers analysis) and the finalize/download-export flow
+on a `completed` project.

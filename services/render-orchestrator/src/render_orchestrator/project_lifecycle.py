@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ai_director import CreativeDirector, ProjectBrief
 from creative_compiler import CreativeCompiler
@@ -11,6 +11,11 @@ from persistence import IProjectStore, ProjectRecord, ProjectStatus
 from .events import Event, EventType, IEventBus, InMemoryEventBus
 from .jobs import GenerationJobStatus
 from .pipeline import GenerationPipeline
+
+if TYPE_CHECKING:
+    from cinematic_intelligence import CinematicIntelligenceCoordinator
+
+    from .post_production import PostProductionRunner
 
 
 class ProjectLifecycleError(Exception):
@@ -23,8 +28,11 @@ class ProjectLifecycle:
     """The step implementations behind the full project lifecycle:
 
         Project Created -> Creative Planning -> Storyboard Approval Gate
+                         -> Cinematic Intelligence Layer (prompt/continuity
+                            enrichment of the compiled RenderSpecs)
                          -> Render Plan Approval Gate -> Generation Job
                          -> GPU Generation -> Asset Processing -> Completion
+                         -> [optional] Post-Processing -> Export -> Exported
 
     This is the ONE place this logic lives. Both the Temporal workflow
     (workflows/, durable, production) and ProjectOrchestrator
@@ -37,6 +45,11 @@ class ProjectLifecycle:
     injected already configured with whatever concrete providers are
     active (see ADR 0001, 0002, 0009) - this class only calls the
     provider-agnostic methods those three already exposed in Phases 1-3.
+    Same pattern for `cinematic_intelligence`/`post_production` (Phase 8,
+    ADR 0014): both optional, both only ever called through their
+    already-tested public methods. Neither is required - a
+    `ProjectLifecycle` built without them (as every Phase 4-7 test still
+    does) behaves exactly as it always has.
     """
 
     def __init__(
@@ -47,6 +60,8 @@ class ProjectLifecycle:
         project_store: IProjectStore,
         memory: IDirectorMemoryStore,
         event_bus: IEventBus | None = None,
+        cinematic_intelligence: "CinematicIntelligenceCoordinator | None" = None,
+        post_production: "PostProductionRunner | None" = None,
     ) -> None:
         self._director = creative_director
         self._compiler = creative_compiler
@@ -54,6 +69,8 @@ class ProjectLifecycle:
         self._projects = project_store
         self._memory = memory
         self._events = event_bus or InMemoryEventBus()
+        self._cinematic = cinematic_intelligence
+        self._post_production = post_production
 
     def create_project(
         self,
@@ -110,10 +127,23 @@ class ProjectLifecycle:
         self._compiler.approve_storyboard(project_id, storyboard)
 
         render_plan = self._compiler.compile_render_plan(project_id)
+        self._enrich_render_plan(project_id, render_plan)
         self._publish(EventType.RENDER_READY, project_id, {"shot_count": len(render_plan["render_specs"])})
 
         self._transition(record, ProjectStatus.WAITING_RENDER_APPROVAL)
         return record
+
+    def _enrich_render_plan(self, project_id: str, render_plan: dict[str, Any]) -> None:
+        """Runs the Cinematic Intelligence Layer (Phase 7/8, ADR 0014)
+        against the just-compiled RenderPlan, patching its RenderSpecs'
+        positive_prompt/negative_prompt in place with CIL-built prompts
+        before a human ever sees them for approval (gate 2). A no-op if
+        no CinematicIntelligenceCoordinator was injected - see the class
+        docstring."""
+        if self._cinematic is None:
+            return
+        director_plan = self._latest("director_plan_enriched", project_id)
+        self._cinematic.enrich_render_plan(director_plan, render_plan)
 
     def reject_storyboard(self, project_id: str, feedback: list[str]) -> ProjectRecord:
         record = self._require(project_id, expected=ProjectStatus.WAITING_STORYBOARD_APPROVAL)
@@ -164,6 +194,7 @@ class ProjectLifecycle:
 
         kwargs = {"quality_tier": quality_tier} if quality_tier else {}
         new_render_plan = self._compiler.compile_render_plan(project_id, **kwargs)
+        self._enrich_render_plan(project_id, new_render_plan)
         self._publish(
             EventType.RENDER_READY,
             project_id,
@@ -186,6 +217,37 @@ class ProjectLifecycle:
         record = self._require(project_id, expected=ProjectStatus.FAILED)
         record.error_message = None
         return self._run_generation(record)
+
+    def finalize_project(self, project_id: str, export_spec: dict[str, Any] | None = None) -> ProjectRecord:
+        """Assembles every generated shot into one exported deliverable
+        (services/post-processing -> services/export-service, ADR 0012)
+        - an explicit, separately-triggered step past COMPLETED, never
+        run automatically by generate_video. Requires a
+        PostProductionRunner to have been injected (see the class
+        docstring); requires `ffmpeg`/`ffprobe` on `PATH` (ADR 0012)."""
+        record = self._require(project_id, expected=ProjectStatus.COMPLETED)
+        if self._post_production is None:
+            raise ProjectLifecycleError("No PostProductionRunner configured for this ProjectLifecycle")
+
+        self._transition(record, ProjectStatus.POST_PROCESSING)
+        self._publish(EventType.POST_PROCESSING_STARTED, project_id)
+
+        director_plan = self._latest("director_plan_enriched", project_id)
+        render_plan = self._latest("render_plan", project_id)
+
+        try:
+            manifest = self._post_production.finalize(director_plan, render_plan, export_spec)
+        except Exception as exc:  # noqa: BLE001 - any post-production failure lands here
+            record.error_message = str(exc)
+            self._transition(record, ProjectStatus.COMPLETED)
+            self._publish(EventType.EXPORT_FAILED, project_id, {"error": str(exc)})
+            raise ProjectLifecycleError(f"Finalize failed for project {project_id}: {exc}") from exc
+
+        record.render_manifest = manifest
+        record.error_message = None
+        self._transition(record, ProjectStatus.EXPORTED)
+        self._publish(EventType.EXPORT_COMPLETED, project_id, {"manifest_id": manifest.get("manifest_id")})
+        return record
 
     def _run_generation(self, record: ProjectRecord) -> ProjectRecord:
         project_id = record.project_id

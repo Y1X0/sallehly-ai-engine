@@ -30,6 +30,10 @@ class RejectRenderRequest(BaseModel):
     quality_tier: str | None = None
 
 
+class FinalizeRequest(BaseModel):
+    export_spec: dict[str, Any] | None = None
+
+
 def _run(fn: Callable[..., Any], *args: Any) -> dict[str, Any]:
     try:
         record = fn(*args)
@@ -206,6 +210,33 @@ def get_render_plan(
     if entry is None:
         raise HTTPException(status_code=404, detail=f"No render plan generated yet for project {project_id}")
     return entry.content
+
+
+@router.post("/{project_id}/finalize")
+def finalize_project(
+    project_id: str,
+    body: FinalizeRequest,
+    state: AppState = Depends(get_app_state),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Assembles every generated shot into one exported deliverable
+    (Timeline Builder -> FfmpegCompositor -> Export Service -> Asset
+    Packager, ADR 0012/0014). Requires the project to be COMPLETED
+    (every shot generated) and `ffmpeg`/`ffprobe` on `PATH`."""
+    _get_owned_project(project_id, state, current_user)
+    return _run(state.orchestrator.finalize_project, project_id, body.export_spec)
+
+
+@router.get("/{project_id}/render-manifest")
+def get_render_manifest(
+    project_id: str,
+    state: AppState = Depends(get_app_state),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    record = _get_owned_project(project_id, state, current_user)
+    if record.render_manifest is None:
+        raise HTTPException(status_code=404, detail=f"Project {project_id} has not been finalized yet")
+    return record.render_manifest
 
 
 @router.get("/{project_id}/assets")

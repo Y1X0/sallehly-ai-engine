@@ -52,17 +52,22 @@ under its own key - no engine ever branches on which one is active.
 Call `cinematic_intelligence.register_defaults()` once at process
 startup (or freely again in tests) to register every built-in.
 
-## Status (Phase 7)
+## Status (Phase 7, wired Phase 8)
 
 Implemented and tested with real deterministic logic throughout - no
-LLM, no vision model, no trained classifier anywhere in this service.
-Two interfaces are prepared, not implemented, because they need a
-deployed model this sandbox does not have: `IEmbeddingProvider`
-(CLIP/DINO perceptual scoring) and `IReferenceConditioningAdapter`
-(ControlNet/IP-Adapter generation-time conditioning) - see
-`packages/cinematic-intelligence-sdk/README.md` and
-`docs/adr/0013-cinematic-intelligence-layer.md`. `IGraphStore`'s only
-concrete implementation is in-memory; Neo4j or similar is a later swap.
-**Not yet wired into `ProjectLifecycle`/`apps/api`** - this layer is
-built and tested standalone, the same "built, not yet integrated"
-posture Phase 6's post-production pipeline shipped with.
+LLM, no vision model, no trained classifier anywhere in the ten
+consistency/continuity/quality engines. `IGraphStore`'s only concrete
+implementation is in-memory; Neo4j or similar is a later swap.
+
+`CinematicIntelligenceCoordinator` (`coordinator.py`) is the single
+integration point wiring all ten engines together against real
+`DirectorPlan`/`RenderPlan` data, and is what `ProjectLifecycle`/
+`apps/api` actually call - see `docs/adr/0014-pipeline-integration.md`.
+`model_adapters/` now gives `IEmbeddingProvider`/
+`IReferenceConditioningAdapter` concrete implementations: real where a
+technique needs no trained model (cosine similarity,
+`ControlNetConditioningAdapter`'s default Canny edge detection via
+Pillow), and a clear `ModelUnavailableError` everywhere a real deployed
+model (`torch`/`open_clip`/`torchvision`/`controlnet_aux`/
+`transformers`) is genuinely required and not installed here - see
+`packages/cinematic-intelligence-sdk/README.md`.

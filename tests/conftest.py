@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from ai_director import CreativeDirector
 from asset_manager import AssetManager
 from auth import IAuthProvider, InMemoryUserStore, IUserStore, LocalAuthProvider
+from cinematic_intelligence import CinematicIntelligenceCoordinator
 from creative_compiler import CreativeCompiler
 from director_memory import IDirectorMemoryStore, InMemoryDirectorMemoryStore
 from llm_providers.local_heuristic_provider import LocalHeuristicLLMProvider
@@ -20,6 +21,7 @@ from render_orchestrator import (
     IGenerationJobStore,
     InMemoryEventBus,
     InMemoryGenerationJobStore,
+    PostProductionRunner,
     ProjectLifecycle,
     SyncProjectOrchestrator,
 )
@@ -39,12 +41,20 @@ class Stack:
     orchestrator: SyncProjectOrchestrator
     user_store: IUserStore
     auth_provider: IAuthProvider
+    cinematic_intelligence: CinematicIntelligenceCoordinator | None = None
+    post_production: PostProductionRunner | None = None
 
 
 def build_stack(
     compute_provider: IComputeProvider | None = None,
     engine: IVideoEngine | None = None,
+    with_cinematic_intelligence: bool = False,
+    with_post_production: bool = False,
 ) -> Stack:
+    """`with_cinematic_intelligence`/`with_post_production` default False
+    so every pre-Phase-8 test using this fixture is completely unaffected
+    - only tests that explicitly opt in exercise the full Phase 8
+    pipeline (see docs/adr/0014-pipeline-integration.md)."""
     memory = InMemoryDirectorMemoryStore()
     director = CreativeDirector(llm_provider=LocalHeuristicLLMProvider(), memory=memory)
 
@@ -62,7 +72,20 @@ def build_stack(
 
     project_store = InMemoryProjectStore()
     events = InMemoryEventBus()
-    lifecycle = ProjectLifecycle(director, compiler, pipeline, project_store, memory, events)
+
+    cinematic = CinematicIntelligenceCoordinator() if with_cinematic_intelligence else None
+    post_production = PostProductionRunner(asset_manager) if with_post_production else None
+
+    lifecycle = ProjectLifecycle(
+        director,
+        compiler,
+        pipeline,
+        project_store,
+        memory,
+        events,
+        cinematic_intelligence=cinematic,
+        post_production=post_production,
+    )
     orchestrator = SyncProjectOrchestrator(lifecycle)
 
     user_store = InMemoryUserStore()
@@ -78,6 +101,8 @@ def build_stack(
         orchestrator=orchestrator,
         user_store=user_store,
         auth_provider=auth_provider,
+        cinematic_intelligence=cinematic,
+        post_production=post_production,
     )
 
 

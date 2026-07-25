@@ -7,12 +7,15 @@ dependencies = [
   "schemas",
   "config-sdk",
   "cinematic-intelligence-sdk",
+  "asset-manager",
+  "pillow>=10.0",
 ]
 
 [tool.uv.sources]
 schemas = { workspace = true }
 config-sdk = { workspace = true }
 cinematic-intelligence-sdk = { workspace = true }
+asset-manager = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

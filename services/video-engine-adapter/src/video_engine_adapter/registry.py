@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from config_sdk import COMPUTE_PROVIDER_REGISTRY, VIDEO_ENGINE_REGISTRY
 
-from .adapters import Wan21Adapter
+from .adapters import SallehlyModelAdapter, Wan21Adapter
 from .compute import LocalProvider, RunPodProvider, VastAIProvider
 
 
@@ -16,6 +16,7 @@ def register_defaults() -> None:
     module within the same process) - uses register_if_absent.
     """
     VIDEO_ENGINE_REGISTRY.register_if_absent("wan2.1", Wan21Adapter)
+    VIDEO_ENGINE_REGISTRY.register_if_absent("sallehly-v1", SallehlyModelAdapter)
 
     COMPUTE_PROVIDER_REGISTRY.register_if_absent("local", LocalProvider)
     COMPUTE_PROVIDER_REGISTRY.register_if_absent("runpod", RunPodProvider)

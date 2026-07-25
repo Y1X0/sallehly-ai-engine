@@ -11,6 +11,9 @@ dependencies = [
   "creative-compiler",
   "director-memory",
   "persistence",
+  "post-processing",
+  "export-service",
+  "cinematic-intelligence",
   "temporalio>=1.30.0",
 ]
 
@@ -22,6 +25,9 @@ ai-director = { workspace = true }
 creative-compiler = { workspace = true }
 director-memory = { workspace = true }
 persistence = { workspace = true }
+post-processing = { workspace = true }
+export-service = { workspace = true }
+cinematic-intelligence = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

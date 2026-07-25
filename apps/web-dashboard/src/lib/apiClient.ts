@@ -1,14 +1,18 @@
 import type {
   AssetRecord,
   AuthResponse,
+  CinematicReport,
   CreateProjectRequest,
   DirectorPlan,
   GenerationJob,
   JobStatusSummary,
   Project,
+  PromptPackage,
   RejectRenderRequest,
   RejectStoryboardRequest,
+  RenderManifest,
   RenderPlan,
+  RepairAction,
   Storyboard,
   User,
 } from "./types";
@@ -148,6 +152,57 @@ export function uploadAsset(token: string, file: File, projectId?: string): Prom
     form.append("project_id", projectId);
   }
   return request<AssetRecord>("/assets/upload", { method: "POST", token, body: form });
+}
+
+export function finalizeProject(token: string, projectId: string, exportSpec?: Record<string, unknown>): Promise<Project> {
+  return request<Project>(`/projects/${projectId}/finalize`, {
+    method: "POST",
+    token,
+    json: { export_spec: exportSpec ?? null },
+  });
+}
+
+export function getRenderManifest(token: string, projectId: string): Promise<RenderManifest> {
+  return request<RenderManifest>(`/projects/${projectId}/render-manifest`, { token });
+}
+
+// ---- cinematic intelligence ----
+
+export function analyzeCinematicConsistency(token: string, projectId: string): Promise<CinematicReport> {
+  return request<CinematicReport>(`/projects/${projectId}/cinematic/analyze`, { method: "POST", token });
+}
+
+export function getCinematicReport(token: string, projectId: string): Promise<CinematicReport> {
+  return request<CinematicReport>(`/projects/${projectId}/cinematic/report`, { token });
+}
+
+export function improvePrompt(token: string, projectId: string, shotId: string): Promise<PromptPackage> {
+  return request<PromptPackage>(`/projects/${projectId}/cinematic/prompts/${shotId}/improve`, {
+    method: "POST",
+    token,
+  });
+}
+
+export function repairShot(token: string, projectId: string, shotId: string): Promise<RepairAction> {
+  return request<RepairAction>(`/projects/${projectId}/cinematic/repair/${shotId}`, { method: "POST", token });
+}
+
+export function listRepairs(token: string, projectId: string): Promise<{ repairs: RepairAction[] }> {
+  return request(`/projects/${projectId}/cinematic/repairs`, { token });
+}
+
+export function approveRepair(token: string, projectId: string, repairId: string): Promise<RepairAction> {
+  return request<RepairAction>(`/projects/${projectId}/cinematic/repairs/${repairId}/approve`, {
+    method: "POST",
+    token,
+  });
+}
+
+export function rejectRepair(token: string, projectId: string, repairId: string): Promise<RepairAction> {
+  return request<RepairAction>(`/projects/${projectId}/cinematic/repairs/${repairId}/reject`, {
+    method: "POST",
+    token,
+  });
 }
 
 // ---- jobs ----

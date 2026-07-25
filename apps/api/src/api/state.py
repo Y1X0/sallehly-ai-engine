@@ -5,7 +5,9 @@ from dataclasses import dataclass
 from ai_director import CreativeDirector
 from asset_manager import AssetManager
 from auth import IAuthProvider, IUserStore, InMemoryUserStore, LocalAuthProvider
-from config_sdk import Settings
+from cinematic_intelligence import CinematicIntelligenceCoordinator
+from cinematic_intelligence.model_adapters import register_defaults as register_model_adapters
+from config_sdk import VIDEO_ENGINE_REGISTRY, Settings
 from creative_compiler import CreativeCompiler
 from director_memory import IDirectorMemoryStore, InMemoryDirectorMemoryStore
 from llm_providers import ILLMProvider
@@ -17,13 +19,14 @@ from render_orchestrator import (
     InMemoryEventBus,
     InMemoryGenerationJobStore,
     IProjectOrchestrator,
+    PostProductionRunner,
     ProjectLifecycle,
     SyncProjectOrchestrator,
 )
 from storage_sdk import IStorageProvider, LocalFilesystemStorageProvider
-from video_engine_adapter.adapters import Wan21Adapter
+from video_engine_adapter import register_defaults as register_engine_defaults
 from video_engine_adapter.compute import LocalProvider
-from video_engine_sdk import IComputeProvider
+from video_engine_sdk import IComputeProvider, IVideoEngine
 
 
 @dataclass
@@ -35,22 +38,29 @@ class AppState:
     user_store: IUserStore
     auth_provider: IAuthProvider
     memory: IDirectorMemoryStore
+    cinematic_intelligence: CinematicIntelligenceCoordinator
 
 
 def build_app_state(settings: Settings) -> AppState:
-    """Wires every Phase 1-4 interface to a concrete default for this
-    environment: `LocalHeuristicLLMProvider` (no API key required) and
-    `Wan21Adapter` + `LocalProvider` (no GPU required) - see
-    docs/DEV_SETUP.md.
+    """Wires every interface to a concrete default for this environment:
+    `LocalHeuristicLLMProvider` (no API key required) and `Wan21Adapter`
+    + `LocalProvider` (no GPU required) - see docs/DEV_SETUP.md.
 
     Swapping to `ClaudeProvider`/`RunPodProvider` is a config change
     (`LLM_PROVIDER=claude` + `ANTHROPIC_API_KEY=...`,
     `COMPUTE_PROVIDER=runpod` + `RUNPOD_API_KEY=...`), not a code change.
+    Swapping the video engine (`VIDEO_ENGINE=wan2.1` / `sallehly-v1` /
+    any future `IVideoEngine`) goes through the same
+    `VIDEO_ENGINE_REGISTRY` config_sdk registry every other provider
+    registry uses (ADR 0014) - `register_engine_defaults()` populates it
+    with every engine `services/video-engine-adapter` ships.
     This function is the *one place* that reads those config values and
     picks a concrete implementation - every service above it
     (CreativeDirector, CreativeCompiler, GenerationPipeline,
     ProjectLifecycle) only ever sees the interfaces.
     """
+    register_engine_defaults()
+    register_model_adapters()
     memory: IDirectorMemoryStore = InMemoryDirectorMemoryStore()
 
     llm: ILLMProvider
@@ -63,7 +73,7 @@ def build_app_state(settings: Settings) -> AppState:
 
     director = CreativeDirector(llm_provider=llm, memory=memory)
 
-    engine = Wan21Adapter()
+    engine: IVideoEngine = VIDEO_ENGINE_REGISTRY.create(settings.video_engine)
     compiler = CreativeCompiler(capability_manifest=engine.capabilities(), memory=memory)
 
     compute: IComputeProvider
@@ -83,7 +93,18 @@ def build_app_state(settings: Settings) -> AppState:
 
     project_store: IProjectStore = InMemoryProjectStore()
     events = InMemoryEventBus()
-    lifecycle = ProjectLifecycle(director, compiler, pipeline, project_store, memory, events)
+    cinematic = CinematicIntelligenceCoordinator()
+    post_production = PostProductionRunner(asset_manager)
+    lifecycle = ProjectLifecycle(
+        director,
+        compiler,
+        pipeline,
+        project_store,
+        memory,
+        events,
+        cinematic_intelligence=cinematic,
+        post_production=post_production,
+    )
     orchestrator: IProjectOrchestrator = SyncProjectOrchestrator(lifecycle)
 
     user_store: IUserStore = InMemoryUserStore()
@@ -97,4 +118,5 @@ def build_app_state(settings: Settings) -> AppState:
         user_store=user_store,
         auth_provider=auth_provider,
         memory=memory,
+        cinematic_intelligence=cinematic,
     )

@@ -71,3 +71,16 @@ PROMPT_TRANSLATOR_REGISTRY: Registry = Registry("PROMPT_TRANSLATOR")
 # Keyed by QualityReport.scores field name -> an IQualityMetric factory.
 # Built-ins in services/cinematic-intelligence/quality_analyzer.py.
 QUALITY_METRIC_REGISTRY: Registry = Registry("QUALITY_METRIC")
+
+# Phase 8 model-adapter registries (docs/adr/0014-pipeline-integration.md).
+# Both stay real, replaceable swap points even though every built-in
+# adapter currently registered needs an optional ML dependency + model
+# weights this sandbox doesn't have - see
+# services/cinematic-intelligence/model_adapters/.
+
+# Keyed by provider id ('clip', 'dino', ...) -> an IEmbeddingProvider factory.
+EMBEDDING_PROVIDER_REGISTRY: Registry = Registry("EMBEDDING_PROVIDER")
+
+# Keyed by adapter id ('controlnet', 'ip_adapter', ...) -> an
+# IReferenceConditioningAdapter factory.
+CONDITIONING_ADAPTER_REGISTRY: Registry = Registry("CONDITIONING_ADAPTER")

@@ -42,5 +42,7 @@ Implemented and tested with **real ffmpeg subprocess execution**
 against real synthetic clips - every format/preset combination is
 actually encoded and verified via `ffprobe`, not mocked. See
 `docs/adr/0012-post-production-pipeline.md`. Requires `ffmpeg`/
-`ffprobe` on `PATH` (`docs/DEV_SETUP.md`); not yet wired into
-`ProjectLifecycle`/`apps/api`.
+`ffprobe` on `PATH` (`docs/DEV_SETUP.md`). Wired into
+`ProjectLifecycle.finalize_project` / `POST /projects/{id}/finalize`
+via `PostProductionRunner` (`services/render-orchestrator`) as of
+Phase 8 - see `docs/adr/0014-pipeline-integration.md`.

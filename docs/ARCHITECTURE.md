@@ -82,15 +82,17 @@ flowchart TD
     SG -.->|approval gate 1: storyboard| API
     SG --> RC
     RC -.->|approval gate 2: render plan| API
-    RC -.->|"PromptPackage would fill positive_prompt/negative_prompt - not yet wired, see ADR 0013"| PI
     RC --> ORCH
+    ORCH --> CIL
+    CIL -.->|"enrich_render_plan patches the same RenderPlan's positive_prompt/negative_prompt in place - ADR 0014"| ORCH
     ORCH --> ENGINE
     ORCH --> COMPUTE
     ASSET --> ORCH
-    ASSET -.->|"not yet wired into ProjectLifecycle - see ADR 0012"| TL
-    ASSET -.->|"QualityReport/RepairAction after each shot - not yet wired, see ADR 0013"| QA
+    ORCH -->|"finalize_project - ADR 0014"| TL
+    ASSET --> TL
+    PI -.->|"QualityReport/RepairAction scored from planned continuity metadata at enrich time, not after generation - ADR 0014"| QA
     JOB -.->|record_shot| MEM
-    PKG -.-> API
+    PKG --> API
 ```
 
 See [ADR 0008](adr/0008-storyboard-after-technical-planning.md) for why
@@ -109,17 +111,27 @@ Temporal) sharing the exact same interface. See
 Layer: real, ffmpeg-executable post-production (Timeline Builder,
 Transition Engine, Audio Pipeline, Subtitle System, Watermark Engine,
 `FfmpegCompositor`) and export (Export Service, Asset Packager) -
-built and tested in Phase 6, not yet wired into `ProjectLifecycle`.
-See [ADR 0013](adr/0013-cinematic-intelligence-layer.md) for the
-Cinematic Intelligence Layer: it sits between the Render Specification
-Generator and the Execution Layer, resolving each shot's
-CharacterIdentityProfile/ObjectProfile/EnvironmentProfile/StyleLock/
-ProjectMemory into a PromptPackage that would fill a RenderSpec's
-`positive_prompt`/`negative_prompt`, and consuming each completed
-GenerationJob to update ProjectMemory and run the Scene Quality
-Analyzer / Automatic Repair Engine - rule-based and metadata-driven
-throughout, built and tested in Phase 7, not yet wired into
-`ProjectLifecycle` either.
+built and tested in Phase 6. See
+[ADR 0013](adr/0013-cinematic-intelligence-layer.md) for the Cinematic
+Intelligence Layer's ten engines (Character/Object/Environment
+Consistency, Scene/Camera Continuity, Style Lock, Prompt Intelligence,
+Temporal Memory + Director Memory Graph, Scene Quality Analyzer,
+Automatic Repair) - rule-based and metadata-driven throughout, no
+vision model in the loop. See
+[ADR 0014](adr/0014-pipeline-integration.md) for how both are wired
+into the live flow as of this phase:
+`CinematicIntelligenceCoordinator.enrich_render_plan` runs inside
+`ProjectLifecycle.approve_storyboard`/`reject_render_plan`, right after
+the Render Spec Generator compiles a RenderPlan and before a human ever
+reviews it at gate 2 - so `QualityReport`/`RepairAction` are scored from
+*planned* continuity/style/camera metadata, not from inspecting
+rendered pixels after a `GenerationJob` completes (still no vision
+model - `QualityReport.embeddings_used: false`, ADR 0013 - just earlier
+in the flow than ADR 0013's Consequences section originally
+speculated). `ProjectLifecycle.finalize_project`, a new explicit step
+past `COMPLETED`, hands the project's generated `AssetManager` records
+to `PostProductionRunner`, which reuses the Delivery Layer unchanged to
+produce a `RenderManifest`.
 
 ## 3. Data flow contracts
 
@@ -134,7 +146,7 @@ flowchart LR
     SB -->|approved| RP["RenderPlan<br/>(render_plan.schema.json)<br/>gate 2"]
     CM["CapabilityManifest<br/>(capability_manifest.schema.json)"] -.clamps.-> RP
     RP -->|approved| RS["RenderSpec[]<br/>(render_configuration.schema.json,<br/>embedded in RenderPlan)"]
-    PP["PromptPackage<br/>(prompt_package.schema.json)<br/>not yet wired - see ADR 0013"] -.fills positive/negative_prompt.-> RS
+    PP["PromptPackage<br/>(prompt_package.schema.json)<br/>ADR 0014"] -->|fills positive/negative_prompt| RS
     RS --> GJ["GenerationJob<br/>(generation_job.schema.json)<br/>queued/running/completed/failed"]
     GJ --> Clip["RawClip"]
     Clip --> AR["AssetRecord<br/>(asset_record.schema.json)"]
@@ -170,24 +182,27 @@ description. Summary:
 | Creative Compiler | Render Spec Generator | `services/render-config-compiler` | **Implemented** (deterministic) |
 | Creative Compiler | Prompt Builder (dedicated fragment library) | `services/prompt-builder` | Not started - prompt composition is currently inline in Render Config Compiler |
 | Execution | Video Engine Adapter (Wan2.1 + RunPod) | `services/video-engine-adapter` | **Implemented** (Wan2.1, RunPod, local); Vast.ai still a stub |
+| Execution | `SallehlyModelAdapter` (second `IVideoEngine`, config-selectable via `VIDEO_ENGINE=sallehly-v1`) | `services/video-engine-adapter` | **Implemented** - real `capabilities()`; `build_job_payload`/`parse_result` raise `SallehlyModelNotTrainedError` (no weights yet - Phase 9) (ADR 0014) |
 | Execution | GenerationPipeline (job lifecycle) | `services/render-orchestrator` | **Implemented** |
-| Execution | ProjectLifecycle + SyncProjectOrchestrator | `services/render-orchestrator` | **Implemented** |
+| Execution | ProjectLifecycle + SyncProjectOrchestrator | `services/render-orchestrator` | **Implemented** - now also runs Cinematic Intelligence enrichment (gate 2) and `finalize_project` (post-processing/export) (ADR 0014) |
 | Execution | ProjectGenerationWorkflow (Temporal) | `services/render-orchestrator/workflows` | Implemented, structurally validated; not executable in this environment (ADR 0010) |
 | Execution | GPU Worker container | `workers/gpu-worker` | Structurally complete; real Wan2.1 inference call needs a GPU deployment step outside this environment |
-| Delivery | API layer | `apps/api` | **Implemented** - full project lifecycle over real HTTP (incl. auth, plan/storyboard/render-plan retrieval, retry-generation, asset upload), tested with `TestClient` |
-| Delivery | Frontend (dashboard + creative workspace) | `apps/web-dashboard` | **Implemented** (Next.js App Router + TypeScript + Tailwind) - register/login, create project, review storyboard/render plan, monitor generation, asset library |
-| Delivery | Post-Processing (Timeline Builder, Transition Engine, Audio Pipeline, Subtitle System, Thumbnail Engine, Watermark Engine, `FfmpegCompositor`) | `services/post-processing` | **Implemented** - real ffmpeg execution, tested against real synthetic clips (ADR 0012); not yet wired into `ProjectLifecycle` |
-| Delivery | Export Service (format/quality-preset export, Asset Packager/RenderManifest) | `services/export-service` | **Implemented** - real ffmpeg re-encode to mp4/mov/webm x 720p/1080p/1440p/4K; not yet wired into `ProjectLifecycle` |
+| Delivery | API layer | `apps/api` | **Implemented** - full project lifecycle over real HTTP (incl. auth, plan/storyboard/render-plan retrieval, retry-generation, asset upload, cinematic intelligence, finalize/render-manifest), tested with `TestClient` |
+| Delivery | Frontend (dashboard + creative workspace) | `apps/web-dashboard` | **Implemented** (Next.js App Router + TypeScript + Tailwind) - register/login, create project, review storyboard/render plan, Cinematic Intelligence panel, monitor generation, finalize/download export, asset library |
+| Delivery | Post-Processing (Timeline Builder, Transition Engine, Audio Pipeline, Subtitle System, Thumbnail Engine, Watermark Engine, `FfmpegCompositor`) | `services/post-processing` | **Implemented** - real ffmpeg execution, tested against real synthetic clips (ADR 0012); wired into `ProjectLifecycle.finalize_project` via `PostProductionRunner` (ADR 0014) |
+| Delivery | Export Service (format/quality-preset export, Asset Packager/RenderManifest) | `services/export-service` | **Implemented** - real ffmpeg re-encode to mp4/mov/webm x 720p/1080p/1440p/4K; wired into `ProjectLifecycle.finalize_project` (ADR 0014) |
 | Delivery | Upscaling (video upscaling, frame interpolation) | `services/post-processing` (`upscaling.py`) | Interface prepared (`IUpscaler`), `PassthroughUpscaler` stub only - real upscaling needs a GPU deployment (ADR 0012) |
-| Cinematic Intelligence | Character / Object / Environment Consistency Engines | `services/cinematic-intelligence` | **Implemented** - immutable `CharacterIdentityProfile`/mutable `ObjectProfile`/`EnvironmentProfile` (ADR 0013) |
+| Cinematic Intelligence | `CinematicIntelligenceCoordinator` (single integration point for all ten engines) | `services/cinematic-intelligence` (`coordinator.py`) | **Implemented** - `enrich_render_plan`/`get_project_report`/`improve_prompt`/`repair_shot`/`review_repair`/`list_repairs` against real `DirectorPlan`/`RenderPlan` data (ADR 0014) |
+| Cinematic Intelligence | Character / Object / Environment Consistency Engines | `services/cinematic-intelligence` | **Implemented** - immutable `CharacterIdentityProfile`/mutable `ObjectProfile`/`EnvironmentProfile` (ADR 0013); reachable live via the coordinator, `ObjectConsistencyEngine` still not auto-populated from scene data (`DirectorPlan` has no object field yet - ADR 0014) |
 | Cinematic Intelligence | Scene / Camera Continuity Engines | `services/cinematic-intelligence` | **Implemented** - rule-based `ContinuityReport`s from adjacent-shot metadata diffs |
-| Cinematic Intelligence | Style Lock Engine / Reference Image Engine | `services/cinematic-intelligence` | **Implemented** - one `StyleLock` per project; `ReferencePackage`s prepared for future ControlNet/IP-Adapter, not wired to any conditioning today |
-| Cinematic Intelligence | Prompt Intelligence Engine | `services/cinematic-intelligence` (`prompt_intelligence/`) | **Implemented** - `PromptOptimizer`/`NegativePromptBuilder`/`PromptCompressor`/`PromptScorer`/`PromptVersioning` + `IPromptTranslator` plugins (wan2.1/veo/runway/luma/kling/pika) |
+| Cinematic Intelligence | Style Lock Engine / Reference Image Engine | `services/cinematic-intelligence` | **Implemented** - one `StyleLock` per project; `ReferencePackage`s consumable by the new model adapters below |
+| Cinematic Intelligence | Prompt Intelligence Engine | `services/cinematic-intelligence` (`prompt_intelligence/`) | **Implemented** - `PromptOptimizer`/`NegativePromptBuilder`/`PromptCompressor`/`PromptScorer`/`PromptVersioning` + `IPromptTranslator` plugins (wan2.1/veo/runway/luma/kling/pika); now patches every `RenderSpec`'s `positive_prompt`/`negative_prompt` live at gate 2 (ADR 0014) |
 | Cinematic Intelligence | Temporal Memory Engine / Director Memory Graph | `services/cinematic-intelligence` | **Implemented** - `ProjectMemory` per project; `InMemoryGraphStore` (`IGraphStore`), Neo4j-shaped for later |
-| Cinematic Intelligence | Scene Quality Analyzer / Automatic Repair Engine | `services/cinematic-intelligence` | **Implemented** - rule-based `IQualityMetric`s (no vision model); `AutomaticRepairEngine` scoped to one shot at a time |
-| Cross-cutting | Asset Manager | `services/asset-manager` | **Implemented** |
+| Cinematic Intelligence | Scene Quality Analyzer / Automatic Repair Engine | `services/cinematic-intelligence` | **Implemented** - rule-based `IQualityMetric`s (no vision model); `AutomaticRepairEngine` scoped to one shot at a time; both now run automatically during enrichment, exposed live via `/cinematic/repair` + approve/reject routes (ADR 0014) |
+| Cinematic Intelligence | Model adapters: `ClipEmbeddingProvider`/`DinoEmbeddingProvider` (`IEmbeddingProvider`), `ControlNetConditioningAdapter`/`IPAdapterConditioningAdapter` (`IReferenceConditioningAdapter`) | `services/cinematic-intelligence` (`model_adapters/`) | **Implemented** - `ControlNetConditioningAdapter`'s default `preprocessor="canny"` runs real Pillow edge detection (no GPU needed); every other real-model path raises `ModelUnavailableError` (`torch`/`open_clip`/`torchvision`/`controlnet_aux`/`transformers` not installed here) (ADR 0014) |
+| Cross-cutting | Asset Manager | `services/asset-manager` | **Implemented** - gained `list_for_project(project_id, kind=None)` for post-production/reporting (ADR 0014) |
 | Cross-cutting | Auth | `packages/auth` | **Implemented** (`LocalAuthProvider`: PBKDF2 + bearer tokens; personal workspace per user, no team model yet) |
-| Cross-cutting | Config SDK | `packages/config-sdk` | **Implemented** |
+| Cross-cutting | Config SDK | `packages/config-sdk` | **Implemented** - gained `EMBEDDING_PROVIDER_REGISTRY`/`CONDITIONING_ADAPTER_REGISTRY` (ADR 0014) |
 | Cross-cutting | Observability | `packages/observability` | Phase 8+ |
 | Cross-cutting | Director Memory | `packages/director-memory` | **Implemented** |
 | Cross-cutting | Project persistence | `packages/persistence` | **Implemented** (in-memory; Postgres-backed is a later swap) |
@@ -197,7 +212,7 @@ description. Summary:
 | Contracts | Prompt template engine | `packages/prompt-engine` | **Implemented** |
 | Contracts | Video Engine / Compute Provider interfaces | `packages/video-engine-sdk` | **Implemented** |
 | Contracts | Render Compositor / Transition Plugin / Upscaler interfaces | `packages/video-composition-sdk` | **Implemented** |
-| Contracts | Cinematic Intelligence interfaces (`IRepairStrategy`/`IPromptTranslator`/`IQualityMetric`/`IGraphStore`/`IEmbeddingProvider`/`IReferenceConditioningAdapter`) | `packages/cinematic-intelligence-sdk` | **Implemented** - last two prepared, not implemented (ADR 0013) |
+| Contracts | Cinematic Intelligence interfaces (`IRepairStrategy`/`IPromptTranslator`/`IQualityMetric`/`IGraphStore`/`IEmbeddingProvider`/`IReferenceConditioningAdapter`) | `packages/cinematic-intelligence-sdk` | **Implemented** - last two now have concrete adapters (`services/cinematic-intelligence/model_adapters`), real where a technique needs no trained model (cosine similarity, Canny edge detection), `ModelUnavailableError` where it genuinely does (ADR 0014, supersedes ADR 0013's "prepared, not implemented") |
 | Contracts | Storage abstraction | `packages/storage-sdk` | **Implemented** (local filesystem; S3/R2 Phase 8+) |
 | Content | Prompt Library (video-gen fragments) | `libraries/prompt-library` | Seeded |
 | Content | Prompt Templates (LLM director prompts) | `libraries/prompt-templates` | **Implemented** |
@@ -264,6 +279,7 @@ code - this is a documented extension point, not a built feature.
 | Durable workflow SDK | `temporalio` (Python SDK) - real workflow/activity code, not live-executable in this environment | [0010](adr/0010-persistence-and-lifecycle.md) |
 | Post-production compositing | `ffmpeg`/`ffprobe` (system binary, invoked via `subprocess`) - real, executable, and exercised by real tests in this environment | [0012](adr/0012-post-production-pipeline.md) |
 | Cinematic Intelligence Layer | Pure Python, rule-based/metadata-driven - no external binary, no vision model, no training | [0013](adr/0013-cinematic-intelligence-layer.md) |
+| Cinematic Intelligence model adapters | Pillow (real Canny edge detection, always available); `torch`/`open_clip`/`torchvision`/`controlnet_aux`/`transformers` (optional, lazily imported, not installed in this environment) | [0014](adr/0014-pipeline-integration.md) |
 | Package/workspace management | `uv` workspace (`pyproject.toml` at root) | — |
 | Local dev | `docker-compose.yml` (Postgres, Redis, MinIO, optional Temporal dev server) | — |
 
@@ -284,9 +300,9 @@ independent product, not a feature of it.
 | **4 — Orchestration** | `ProjectLifecycle` (full create→plan→both gates→generate flow, with reject/regenerate on each gate), `packages/persistence` (`IProjectStore`), event system (`IEventBus`), `SyncProjectOrchestrator`, real `ProjectGenerationWorkflow`/activities (`temporalio`, structurally validated but not live-executable here), `apps/api` implementing the full project/job/asset endpoint surface, `LocalHeuristicLLMProvider` for a fully offline API. Tested end-to-end via `TestClient` including failure and regeneration paths | Done |
 | **5 — User-Facing Platform** | `packages/auth` (`IAuthProvider`/`IUserStore`, personal workspace per user); `apps/api` additions (auth routes, ownership checks, `GET /projects` list, plan/storyboard/render-plan retrieval, `retry-generation`, `assets/upload`, CORS); `apps/web-dashboard` (Next.js App Router + TypeScript + Tailwind: login/register, project dashboard, creative workspace with lifecycle timeline/scene-shot cards/approval panels/real-time job status/asset library). Tested via Vitest (unit) + Playwright (real Chromium, full lifecycle e2e) against real `uvicorn`/`next dev` servers | Done |
 | **6 — Post-Processing & Export** | `packages/video-composition-sdk` (`IRenderCompositor`/`ITransitionPlugin`/`IUpscaler`); `services/post-processing` (Timeline Builder, Transition Engine with 7 built-in + custom plugin support, Audio Pipeline with volume automation, Subtitle System with SRT/VTT/burn-in/multilingual, Thumbnail Engine, Watermark Engine, `FfmpegCompositor`, `PassthroughUpscaler` stub); `services/export-service` (`ExportService`: mp4/mov/webm x 720p/1080p/1440p/4K, `AssetPackager` -> `RenderManifest`). Tested with **real ffmpeg execution** against real synthetic clips (ADR 0012) - not mocked. Not yet wired into `ProjectLifecycle`/`apps/api`/`apps/web-dashboard` | Done |
-| **7 — Cinematic Intelligence Layer** *(this repo's current state)* | `packages/cinematic-intelligence-sdk`; `services/cinematic-intelligence` (Character/Object/Environment Consistency Engines, Scene/Camera Continuity Engines, Style Lock Engine, Reference Image Engine, Prompt Intelligence Engine, Temporal Memory Engine, Director Memory Graph, Scene Quality Analyzer, Automatic Repair Engine). Rule-based/metadata-driven throughout - no vision model in the loop; `IEmbeddingProvider`/`IReferenceConditioningAdapter` prepared, not implemented (ADR 0013). ≥95% test coverage on every new module. Not yet wired into `ProjectLifecycle`/`apps/api`/`apps/web-dashboard` | Done |
-| **8 — Scale-out** | `VastAIProvider` completion, `KubernetesProvider`, autoscaling, caching, billing, wiring post-production + cinematic intelligence into `ProjectLifecycle`/API/frontend | Not started |
-| **9 — Custom foundation model track** | `services/training`; new `IVideoEngine` implementation replacing/augmenting Wan2.1 | Not started |
+| **7 — Cinematic Intelligence Layer** | `packages/cinematic-intelligence-sdk`; `services/cinematic-intelligence` (Character/Object/Environment Consistency Engines, Scene/Camera Continuity Engines, Style Lock Engine, Reference Image Engine, Prompt Intelligence Engine, Temporal Memory Engine, Director Memory Graph, Scene Quality Analyzer, Automatic Repair Engine). Rule-based/metadata-driven throughout - no vision model in the loop; `IEmbeddingProvider`/`IReferenceConditioningAdapter` prepared, not implemented (ADR 0013). ≥95% test coverage on every new module. Not yet wired into `ProjectLifecycle`/`apps/api`/`apps/web-dashboard` | Done |
+| **8 — Scale-out** *(this repo's current state - pipeline integration done, infra scale-out not started)* | Pipeline integration (done, ADR 0014): `CinematicIntelligenceCoordinator` wiring all ten Phase 7 engines into `ProjectLifecycle.approve_storyboard`/`reject_render_plan`; `finalize_project` (`PostProductionRunner` bridging `GenerationPipeline` output into the Phase 6 pipeline); `apps/api` `/cinematic/*` + `/finalize`/`/render-manifest` routes; `apps/web-dashboard` Cinematic Intelligence panel; `IEmbeddingProvider`/`IReferenceConditioningAdapter` concrete model adapters (CLIP/DINO/ControlNet/IP-Adapter, real where GPU-free, `ModelUnavailableError` elsewhere); `apps/api/state.py`'s video-engine hardcoding fixed to genuinely read `VIDEO_ENGINE_REGISTRY`/`Settings.video_engine`, `SallehlyModelAdapter` proving the swap. Still not started: `VastAIProvider` completion, `KubernetesProvider`, autoscaling, caching, billing | In progress |
+| **9 — Custom foundation model track** | `services/training`; new `IVideoEngine` implementation replacing/augmenting Wan2.1 (`SallehlyModelAdapter`'s interface shape already exists and is registered as `sallehly-v1` - ADR 0014 - but has no trained weights) | Not started |
 
 Phases were renumbered as of Phase 7 (Cinematic Intelligence Layer);
 earlier ADRs (0002, 0005) reference "Phase 7" meaning what is now

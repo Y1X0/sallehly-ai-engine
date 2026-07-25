@@ -2,12 +2,21 @@
 SyncProjectOrchestrator and the Temporal workflow's activities. Tests
 here exercise every transition directly, including invalid transitions,
 reject/regenerate on both gates, and the generation-failure path.
+
+The Phase 8 section at the bottom covers the two things ADR 0014 added
+to this class: Cinematic Intelligence enrichment wired into
+approve_storyboard/reject_render_plan (real DirectorPlan/RenderPlan data
+flowing through a real CinematicIntelligenceCoordinator, not a mock),
+and finalize_project's post-processing/export tail - including its
+"only PostProductionRunner-shaped failures revert to COMPLETED, GPU
+compute failures still go to FAILED" boundary.
 """
 
 from __future__ import annotations
 
 import pytest
 from conftest import SAMPLE_BRIEF, build_stack
+from media_helpers import FFMPEG_AVAILABLE, make_color_clip
 from persistence import ProjectStatus
 from render_orchestrator import ProjectLifecycleError
 from video_engine_sdk import ComputeJobHandle, ComputeJobStatus, EngineJobOutput, EngineJobPayload, IComputeProvider
@@ -202,3 +211,146 @@ def test_retry_generation_recovers_after_transient_failure():
     assert record.error_message is None
     assert len(record.asset_ids) > 0
     assert stack.events.history[-1].type.value == "generation_completed"
+
+
+# --- Phase 8: Cinematic Intelligence enrichment + finalize_project (ADR 0014) ---
+#
+# RenderConfigCompiler sets negative_prompt from
+# ai_director.creative_director.DEFAULT_NEGATIVE_PROMPT (via
+# director_plan["negative_prompt_global"]) even before CIL ever runs, and
+# that list already contains "blurry"/"low quality"/etc - so those terms
+# can't tell us CIL actually ran. "inconsistent lighting" is one of CIL's
+# own PromptOptimizer._DEFAULT_NEGATIVE_TERMS (services/cinematic-
+# intelligence/.../prompt_intelligence/optimizer.py) that DEFAULT_NEGATIVE_
+# PROMPT does NOT contain, so its presence is an unambiguous signal that
+# CinematicIntelligenceCoordinator.enrich_render_plan actually ran against
+# this render plan, not a coincidental overlap between the two
+# independently-authored defaults.
+
+
+def test_approve_storyboard_enriches_render_plan_when_cinematic_intelligence_injected():
+    stack = build_stack(with_cinematic_intelligence=True)
+    record = stack.lifecycle.create_project(**SAMPLE_BRIEF)
+    stack.lifecycle.generate_creative_plan(record.project_id)
+
+    stack.lifecycle.approve_storyboard(record.project_id)
+
+    render_plan = stack.memory.latest(record.project_id, "render_plan").content
+    assert len(render_plan["render_specs"]) > 0
+    for spec in render_plan["render_specs"]:
+        assert "inconsistent lighting" in spec["negative_prompt"]
+
+
+def test_approve_storyboard_leaves_render_plan_unenriched_without_cinematic_intelligence():
+    stack = build_stack()  # with_cinematic_intelligence defaults to False
+    record = stack.lifecycle.create_project(**SAMPLE_BRIEF)
+    stack.lifecycle.generate_creative_plan(record.project_id)
+
+    stack.lifecycle.approve_storyboard(record.project_id)
+
+    render_plan = stack.memory.latest(record.project_id, "render_plan").content
+    for spec in render_plan["render_specs"]:
+        assert "inconsistent lighting" not in spec.get("negative_prompt", "")
+
+
+def test_approve_storyboard_populates_a_real_cinematic_report():
+    stack = build_stack(with_cinematic_intelligence=True)
+    record = stack.lifecycle.create_project(**SAMPLE_BRIEF)
+    stack.lifecycle.generate_creative_plan(record.project_id)
+
+    stack.lifecycle.approve_storyboard(record.project_id)
+
+    report = stack.cinematic_intelligence.get_project_report(record.project_id)
+    assert report["shots_analyzed"] > 0
+
+
+def test_reject_render_plan_reenriches_the_regenerated_render_plan():
+    stack = build_stack(with_cinematic_intelligence=True)
+    record = stack.lifecycle.create_project(**SAMPLE_BRIEF)
+    stack.lifecycle.generate_creative_plan(record.project_id)
+    stack.lifecycle.approve_storyboard(record.project_id)
+
+    record = stack.lifecycle.reject_render_plan(record.project_id, ["render looked rough"])
+
+    assert record.status == ProjectStatus.WAITING_RENDER_APPROVAL
+    render_plan = stack.memory.latest(record.project_id, "render_plan").content
+    for spec in render_plan["render_specs"]:
+        assert "inconsistent lighting" in spec["negative_prompt"]
+
+
+def test_finalize_project_requires_completed_status():
+    stack = build_stack(with_post_production=True)
+    record = stack.lifecycle.create_project(**SAMPLE_BRIEF)
+
+    with pytest.raises(ProjectLifecycleError, match="created, expected completed"):
+        stack.lifecycle.finalize_project(record.project_id)
+
+
+def test_finalize_project_requires_post_production_runner_configured():
+    stack = build_stack()  # with_post_production defaults to False
+    record = stack.lifecycle.create_project(**SAMPLE_BRIEF)
+    stack.lifecycle.generate_creative_plan(record.project_id)
+    stack.lifecycle.approve_storyboard(record.project_id)
+    stack.lifecycle.approve_render_plan(record.project_id)
+    record = stack.lifecycle.generate_video(record.project_id)
+    assert record.status == ProjectStatus.COMPLETED
+
+    with pytest.raises(ProjectLifecycleError, match="No PostProductionRunner configured"):
+        stack.lifecycle.finalize_project(record.project_id)
+
+
+def test_finalize_project_failure_reverts_to_completed_with_error_message():
+    # LocalProvider (the offline Phase 3 compute stub) writes placeholder
+    # JSON payloads as its "video" output, not real video bytes - ffmpeg
+    # correctly rejects them. This proves finalize_project's failure path
+    # is a clean, catchable ProjectLifecycleError rather than a crash, and
+    # that the project safely reverts to COMPLETED (not FAILED) so it can
+    # be retried - see ProjectLifecycle.finalize_project's docstring.
+    stack = build_stack(with_post_production=True)
+    record = stack.lifecycle.create_project(**SAMPLE_BRIEF)
+    stack.lifecycle.generate_creative_plan(record.project_id)
+    stack.lifecycle.approve_storyboard(record.project_id)
+    stack.lifecycle.approve_render_plan(record.project_id)
+    record = stack.lifecycle.generate_video(record.project_id)
+    assert record.status == ProjectStatus.COMPLETED
+
+    with pytest.raises(ProjectLifecycleError, match="Finalize failed"):
+        stack.lifecycle.finalize_project(record.project_id)
+
+    reloaded = stack.project_store.get(record.project_id)
+    assert reloaded.status == ProjectStatus.COMPLETED
+    assert reloaded.error_message is not None
+    assert stack.events.history[-1].type.value == "export_failed"
+
+
+@pytest.mark.skipif(not FFMPEG_AVAILABLE, reason="ffmpeg not installed - see docs/DEV_SETUP.md")
+def test_finalize_project_success_reaches_exported_with_a_real_render_manifest(tmp_path):
+    # Bypasses LocalProvider's placeholder bytes by registering a real
+    # ffmpeg-generated clip as a newer AssetManager version for each shot
+    # (AssetManager.list_for_project/TimelineBuilder.build both read the
+    # *latest* version - see services/post-processing/src/post_processing/
+    # timeline_builder.py) - proving the post-production/export tail
+    # itself is fully functional end-to-end once given real video bytes.
+    stack = build_stack(with_post_production=True)
+    record = stack.lifecycle.create_project(**SAMPLE_BRIEF)
+    stack.lifecycle.generate_creative_plan(record.project_id)
+    stack.lifecycle.approve_storyboard(record.project_id)
+    stack.lifecycle.approve_render_plan(record.project_id)
+    record = stack.lifecycle.generate_video(record.project_id)
+    assert record.status == ProjectStatus.COMPLETED
+
+    director_plan = stack.memory.latest(record.project_id, "director_plan_enriched").content
+    shot_ids = [shot["shot_id"] for scene in director_plan["scenes"] for shot in scene["shots"]]
+    for index, shot_id in enumerate(shot_ids):
+        clip_path = make_color_clip(
+            tmp_path / f"{shot_id}.mp4", "red" if index % 2 == 0 else "blue", duration=2.0
+        )
+        stack.asset_manager.register(record.project_id, kind="video", shot_id=shot_id, uri=clip_path)
+
+    record = stack.lifecycle.finalize_project(record.project_id)
+
+    assert record.status == ProjectStatus.EXPORTED
+    assert record.error_message is None
+    assert record.render_manifest is not None
+    assert record.render_manifest["video"]["format"] == "mp4"
+    assert stack.events.history[-1].type.value == "export_completed"
