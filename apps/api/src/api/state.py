@@ -106,7 +106,22 @@ def build_app_state(settings: Settings) -> AppState:
     else:
         compute = LocalProvider()
 
-    storage: IStorageProvider = LocalFilesystemStorageProvider()
+    storage: IStorageProvider
+    if settings.storage_provider == "s3":
+        # Lazy import: keeps `boto3` off the hot path for every
+        # environment that never selects it - same discipline as every
+        # other lazy import in this function. See
+        # docs/adr/0018-s3-storage-provider.md.
+        from storage_sdk import S3Provider
+
+        storage = S3Provider(
+            settings.storage_bucket,
+            endpoint_url=settings.storage_endpoint_url or None,
+            access_key=settings.storage_access_key or None,
+            secret_key=settings.storage_secret_key or None,
+        )
+    else:
+        storage = LocalFilesystemStorageProvider()
     job_store: IGenerationJobStore = InMemoryGenerationJobStore()
     asset_manager = AssetManager(storage=storage)
     pipeline = GenerationPipeline(

@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     cache_backend: str = "memory"
     """"memory" (default, InMemoryCache) or "redis" (RedisCache)."""
 
+    storage_provider: str = "local"
+    """"local" (default, LocalFilesystemStorageProvider - unchanged from
+    every pre-Phase-8 environment) or "s3" (S3Provider - a real
+    S3-compatible backend at storage_endpoint_url, see
+    docs/adr/0018-s3-storage-provider.md)."""
     storage_endpoint_url: str = "http://localhost:9000"
     storage_access_key: str = ""
     storage_secret_key: str = ""

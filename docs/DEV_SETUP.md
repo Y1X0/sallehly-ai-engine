@@ -132,6 +132,34 @@ see `docs/adr/0017-redis-backed-infra.md`. Combined with
 is what lets the worker and API processes share event delivery and
 bearer-token recognition too, on top of already sharing project state.
 
+S3-compatible storage is opt-in the same way, with one caveat: a live
+MinIO server is not reachable in this sandbox specifically (both
+`docker pull minio/minio` and a direct `dl.min.io` binary download are
+blocked by the egress policy here) - `make up`'s `minio` container is
+the real path on any environment where Docker Hub is reachable:
+
+```bash
+make up   # starts minio alongside postgres/redis, if your environment can reach Docker Hub
+```
+
+`apps/api`'s route handlers use `LocalFilesystemStorageProvider` by
+default - set `STORAGE_PROVIDER=s3` to select `S3Provider` instead
+(works against real AWS S3, MinIO, R2, or any other S3-compatible
+endpoint via `STORAGE_ENDPOINT_URL`):
+
+```bash
+STORAGE_PROVIDER=s3 STORAGE_ENDPOINT_URL=http://localhost:9000 \
+STORAGE_ACCESS_KEY=sallehly STORAGE_SECRET_KEY=sallehly123 \
+  uv run uvicorn api.main:app --reload
+```
+
+`tests/test_s3_provider.py` runs against `moto`'s `ThreadedMotoServer` (a
+real S3-REST-API test server, already installed via the `dev`
+dependency group - no setup needed) rather than a live MinIO server,
+since this sandbox specifically can't reach one - see
+`docs/adr/0018-s3-storage-provider.md` for why, and for the honest
+rigor-tier caveat that implies.
+
 ## 3. Run the API
 
 ```bash

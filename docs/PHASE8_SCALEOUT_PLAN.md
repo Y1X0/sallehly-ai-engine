@@ -1,9 +1,11 @@
 # Phase 8 Scale-out: Production-Readiness Engineering Plan
 
 **Status:** In progress - WP6 (Temporal activation, ADR 0015), WP2
-(Postgres-backed `IProjectStore`, ADR 0016), and WP3 (Redis-backed
-cache/event bus/token store, ADR 0017) are done. WP1, WP4-5, WP7-13
-remain not started.
+(Postgres-backed `IProjectStore`, ADR 0016), WP3 (Redis-backed
+cache/event bus/token store, ADR 0017), and WP4 (S3-compatible
+`IStorageProvider`, ADR 0018) are done - completing "databases and
+storage" per the user's explicit instruction. WP1, WP5, WP7-13 remain
+not started.
 
 ## 0. Scope
 
@@ -373,16 +375,19 @@ WP6 (durable workflow execution, `TemporalProjectOrchestrator` genuinely
 executed against a real `temporal` CLI dev server - ADR 0015), WP2
 (durable stores, `PostgresProjectStore` genuinely executed against a
 real local Postgres server with an applied Alembic migration - ADR 0016),
-and WP3 (`ICache`/`RedisEventBus`/`ITokenStore`'s Redis implementations
-genuinely executed against a real local Redis server - ADR 0017) are
-done, per your explicit instruction to do WP6 first, then databases and
-storage. WP1, WP4-5 (logging, object storage, security gate) remain the
-foundation still to land, then `VastAIProvider`/observability
-maturity/GPU worker deployment in parallel, GPU scheduling once real GPU
-workers exist, and the business layer last - gated on a pricing decision
-from you. `KubernetesProvider` stays deferred until RunPod/Vast.ai
-actually becomes a bottleneck. Every item is a new implementation behind
-an interface this codebase already has - zero planned changes to
-`IVideoEngine`, `IComputeProvider`, `GenerationPipeline`,
-`ProjectLifecycle`, or `CinematicIntelligenceCoordinator`; WP6, WP2, and
-WP3 all held to that, confirmed above.
+WP3 (`ICache`/`RedisEventBus`/`ITokenStore`'s Redis implementations
+genuinely executed against a real local Redis server - ADR 0017), and
+WP4 (`S3Provider`, tested against `moto`'s real S3-REST-API test server
+since a live MinIO/S3 endpoint is unreachable here - ADR 0018) are done,
+per your explicit instruction to do WP6 first, then databases and
+storage - "databases and storage" (WP2/WP3/WP4) is now complete. WP1,
+WP5 (logging, security gate) remain the foundation still to land, then
+`VastAIProvider`/observability maturity/GPU worker deployment in
+parallel, GPU scheduling once real GPU workers exist, and the business
+layer last - gated on a pricing decision from you. `KubernetesProvider`
+stays deferred until RunPod/Vast.ai actually becomes a bottleneck. Every
+item is a new implementation behind an interface this codebase already
+has - zero planned changes to `IVideoEngine`, `IComputeProvider`,
+`GenerationPipeline`, `ProjectLifecycle`, or
+`CinematicIntelligenceCoordinator`; WP6, WP2, WP3, and WP4 all held to
+that, confirmed above.

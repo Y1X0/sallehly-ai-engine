@@ -208,6 +208,19 @@ Phase 6/7 below describe when each was originally built):
   simulating separate API/worker processes). `CACHE_BACKEND`/
   `EVENT_BUS`/`TOKEN_STORE=redis` each independently select the Redis
   implementation alongside the default `memory` one.
+- **Phase 8 Scale-out WP4** (`packages/storage-sdk` - see
+  `docs/adr/0018-s3-storage-provider.md`): `S3Provider(IStorageProvider)`
+  via `boto3`. A live MinIO/S3 endpoint is unreachable in this sandbox
+  (both `docker pull minio/minio` and a direct `dl.min.io` binary
+  download are blocked by the egress policy, with no GitHub-Releases-style
+  unblocked alternative the way Temporal had) - tested instead against
+  `moto`'s `ThreadedMotoServer`, a real, separately-running HTTP server
+  implementing the genuine S3 REST API (`tests/test_s3_provider.py`,
+  including a read-back through an independently-constructed `boto3`
+  client to prove the round trip is real). `STORAGE_PROVIDER=s3` selects
+  it alongside the default `local` filesystem driver. Documented
+  honestly as a different rigor tier than WP2/WP3's exact-backend tests
+  - see the ADR's Consequences.
 
 One thing remains genuinely unexecuted in this environment, documented
 rather than glossed over: real GPU inference (`workers/gpu-worker` needs
