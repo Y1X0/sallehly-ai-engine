@@ -1,0 +1,62 @@
+name: Training - Phase 2 Free GPU Experiment (Kaggle/Modal, $0)
+
+# Phase 2 of docs/adr/0022-training-automation-layer.md: scheduled,
+# automatable, free-tier-only. Plans an experiment (config generation +
+# job tracking) via services/training/scripts/run_experiment.py. No
+# CostGuard/approval is needed at this tier - only PAID_GPU jobs (Phase
+# 3, training-phase3-paid-gpu-gate.yml) go through the approval gate.
+#
+# Real Kaggle/Modal dispatch (--dispatch) additionally requires a real
+# training entrypoint this repo does not ship yet (see the script's own
+# docstring) - until then this workflow exercises the real, tested
+# planning/tracking/reporting path and stops there, by design.
+
+on:
+  schedule:
+    - cron: "0 3 * * *" # nightly, 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: "Free-tier GPU provider to target"
+        required: true
+        default: "modal"
+        type: choice
+        options: ["modal", "kaggle"]
+      base_config:
+        description: "TrainingConfig YAML under services/training/configs/"
+        required: true
+        default: "services/training/configs/wan21_finetune.yaml"
+
+concurrency:
+  group: training-phase2-free-gpu
+  cancel-in-progress: false
+
+jobs:
+  plan-experiment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Sync workspace
+        run: uv sync --all-packages
+
+      - name: Plan Phase 2 experiment (free tier - no approval required, $0)
+        run: >
+          uv run python services/training/scripts/run_experiment.py
+          --base-config "${{ github.event.inputs.base_config || 'services/training/configs/wan21_finetune.yaml' }}"
+          --allowed-ranges services/training/automation/allowed_ranges.example.json
+          --tier free_gpu
+          --provider "${{ github.event.inputs.provider || 'modal' }}"
+          --job-store-dir .training-automation/jobs
+
+      - name: Upload job record
+        uses: actions/upload-artifact@v4
+        with:
+          name: training-phase2-job-records
+          path: .training-automation/jobs
+          retention-days: 30

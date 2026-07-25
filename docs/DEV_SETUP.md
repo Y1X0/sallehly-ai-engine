@@ -372,6 +372,56 @@ this repo's own `Wan21Adapter`/`LocalProvider` with zero GPU - see
 `tests/test_training_evaluation.py` for a working example, including
 what happens when it's pointed at the untrained `SallehlyModelAdapter`.
 
+## 3f. Training automation layer (services/training/automation)
+
+The zero/near-zero-cost training-factory automation (see
+`docs/adr/0022-training-automation-layer.md`). `KaggleClient` and
+`ModalJobLauncher` wrap the real `kaggle`/`modal` CLIs - install them
+(`pip install kaggle modal`) and configure credentials
+(`~/.kaggle/kaggle.json`, `modal token set`) before using either for
+real; every automated test in `tests/test_training_automation.py`
+instead injects a fake `runner` callable, so `uv run pytest
+tests/test_training_automation.py` needs neither CLI installed nor any
+credentials.
+
+Plan a free-tier experiment (no approval needed, $0):
+
+```bash
+uv run python services/training/scripts/run_experiment.py \
+  --base-config services/training/configs/wan21_finetune.yaml \
+  --allowed-ranges services/training/automation/allowed_ranges.example.json \
+  --tier free_gpu \
+  --provider modal \
+  --override learning_rate=0.00005 \
+  --job-store-dir .training-automation/jobs
+```
+
+Plan a paid-tier experiment - this fails until it's approved:
+
+```bash
+uv run python services/training/scripts/run_experiment.py \
+  --base-config services/training/configs/wan21_finetune.yaml \
+  --allowed-ranges services/training/automation/allowed_ranges.example.json \
+  --tier paid_gpu --provider runpod --estimated-cost-usd 15 \
+  --job-store-dir .training-automation/jobs --job-id job-example-1
+# -> "Could not plan experiment: job_id='job-example-1' is not approved ..."
+
+uv run python services/training/scripts/authorize_paid_job.py \
+  --job-store-dir .training-automation/jobs \
+  --job-id job-example-1 --approved-by "your-name" --max-cost-usd 20
+
+# re-run the first command - now it succeeds, and a UsageRecord is
+# written once mark_completed() reports the actual spend.
+```
+
+In production this approval step is `.github/workflows/training-
+phase3-paid-gpu-gate.yml`'s `paid-gpu-approval` GitHub Environment
+(configure "Required reviewers" under Settings -> Environments) -
+`authorize_paid_job.py` only ever runs after that gate has already
+passed. `.github/workflows/training-phase1-dataset-validation.yml` and
+`training-phase2-free-gpu-experiment.yml` are the CPU-validation and
+free-GPU-planning workflows and need no approval at all.
+
 ## 4. Exercise the pipeline without a GPU
 
 Set `COMPUTE_PROVIDER=local` (the `.env.example` and `apps/api` default).

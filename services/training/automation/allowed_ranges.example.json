@@ -1,0 +1,9 @@
+{
+  "_comment": "Human-set guardrail: the ONLY TrainingConfig fields an automated agent may vary, and the closed numeric range it may vary them within. ExperimentConfigGenerator.generate_variant() raises UnapprovedConfigOverrideError for any field not listed here, or any value outside its range. Copy this file, adjust the ranges for your own risk tolerance, and point --allowed-ranges at your copy - do not edit this example file for a real project, it is checked in as documentation of the mechanism.",
+  "learning_rate": [1e-6, 5e-4],
+  "max_train_steps": [50, 2000],
+  "batch_size": [1, 4],
+  "gradient_accumulation_steps": [1, 8],
+  "checkpoint_every_steps": [25, 500],
+  "eval_every_steps": [25, 500]
+}

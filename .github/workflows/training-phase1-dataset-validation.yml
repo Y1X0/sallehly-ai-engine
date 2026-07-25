@@ -1,0 +1,58 @@
+name: Training - Phase 1 Dataset Validation (CPU only, $0)
+
+# Phase 1 of docs/adr/0022-training-automation-layer.md: fully automated,
+# CPU-only, zero cost. Runs the real services/training/dataset pipeline
+# (DatasetManager -> DatasetValidator -> HashDuplicateDetector ->
+# assign_split -> compute_statistics -> build_dataset_version) plus the
+# automation package's own test suite. No GPU is requested anywhere in
+# this workflow.
+
+on:
+  push:
+    branches:
+      - "dataset/**"
+      - "training/**"
+  pull_request:
+    paths:
+      - "services/training/**"
+      - "tests/test_training_dataset.py"
+      - "tests/test_training_automation.py"
+      - "tests/test_training_framework.py"
+      - ".github/workflows/training-phase1-dataset-validation.yml"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ffmpeg (ffprobe is required by DatasetManager metadata extraction)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Sync workspace
+        run: uv sync --all-packages
+
+      - name: Run dataset + training-automation test suites
+        run: >
+          uv run pytest
+          tests/test_training_dataset.py
+          tests/test_training_framework.py
+          tests/test_training_automation.py
+          -q
+
+      - name: Comment result on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: "**Phase 1 dataset validation passed** - CPU only, $0 cost, no GPU used, no model downloaded."
+            });

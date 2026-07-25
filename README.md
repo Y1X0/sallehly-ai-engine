@@ -299,6 +299,29 @@ Phase 6/7 below describe when each was originally built):
   across 5 files, no GPU/model download/training anywhere; full suite:
   611 passed, 30 skipped (Redis/Temporal servers not running this
   session).
+- **Training automation layer** (`services/training/automation` - see
+  `docs/adr/0022-training-automation-layer.md`): the zero/near-zero-cost
+  autonomous training-factory infrastructure sitting under Phase 9
+  Preparation. `KaggleClient`/`ModalJobLauncher` (real `kaggle`/`modal`
+  CLI wrappers via an injectable subprocess `runner`, mirroring how
+  `dataset/metadata.py` wraps `ffprobe`) - dataset upload/download,
+  kernel push/status/output polling, GPU-typed job launch, log
+  collection, and wall-clock-ceiling shutdown enforcement (Modal's own
+  serverless billing already scales to zero on completion; this is the
+  belt-and-suspenders backstop for a hung job). `CostGuard` - the single
+  choke point every paid-GPU dispatch must pass, enforcing both a
+  per-job human-approved cost ceiling and a monthly budget, backed by
+  filesystem-persisted `ApprovalRecord`/`UsageRecord` ledgers.
+  `TrainingController`/`ExperimentConfigGenerator`/`ResultReporter` - the
+  AI training controller, which only ever varies experiments within a
+  human-authored `allowed_ranges` guardrail file. Two CLI entrypoints
+  (`run_experiment.py`, `authorize_paid_job.py`) and three GitHub Actions
+  workflows implement the reports' 3-phase workflow end to end: CPU
+  dataset validation (free, automatic) -> scheduled free-GPU experiment
+  planning on Kaggle/Modal (free, automatic) -> paid-GPU planning gated
+  by a GitHub Environment's required reviewers (the only path that can
+  ever authorize spend). 44 new tests, zero real network calls, no GPU
+  rented, no model downloaded, no training executed.
 
 One thing remains genuinely unexecuted in this environment, documented
 rather than glossed over: real GPU inference (`workers/gpu-worker` needs

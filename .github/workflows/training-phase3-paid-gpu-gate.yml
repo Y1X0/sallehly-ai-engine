@@ -1,0 +1,84 @@
+name: Training - Phase 3 Paid GPU (requires human approval)
+
+# Phase 3 of docs/adr/0022-training-automation-layer.md: the ONLY
+# workflow in this repo allowed to plan a PAID_GPU-tier job, and it can
+# only ever run after a human has approved it. The `environment:
+# paid-gpu-approval` line below is the actual gate: configure that
+# GitHub Environment (Settings -> Environments -> paid-gpu-approval)
+# with "Required reviewers" set to the people allowed to authorize
+# spend. GitHub then blocks the `request-approval` job until one of
+# those reviewers clicks Approve on this specific workflow run - no
+# code in this repository can bypass that.
+#
+# Even after the Environment gate passes, authorize_paid_job.py writes
+# an ApprovalRecord capped at --estimated-cost-usd, and
+# run_experiment.py's CostGuard.authorize_paid_job() re-checks that cap
+# AND the TRAINING_MONTHLY_BUDGET_USD ceiling before planning succeeds -
+# two independent checks, not one.
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "job_id to authorize and plan (choose a new unique id per request)"
+        required: true
+      base_config:
+        description: "TrainingConfig YAML under services/training/configs/"
+        required: true
+        default: "services/training/configs/wan21_finetune.yaml"
+      provider:
+        description: "Paid GPU provider"
+        required: true
+        default: "fal"
+        type: choice
+        options: ["fal", "runpod", "vastai"]
+      estimated_cost_usd:
+        description: "Cost ceiling this run is approved for (USD)"
+        required: true
+        default: "10"
+
+jobs:
+  request-approval:
+    runs-on: ubuntu-latest
+    # This Environment's required-reviewers rule IS the manual approval
+    # gate - GitHub will not start this job until a configured reviewer
+    # approves the pending deployment for this run.
+    environment: paid-gpu-approval
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Sync workspace
+        run: uv sync --all-packages
+
+      - name: Record the approval that was just granted via the Environment gate
+        run: >
+          uv run python services/training/scripts/authorize_paid_job.py
+          --job-store-dir .training-automation/jobs
+          --job-id "${{ github.event.inputs.job_id }}"
+          --approved-by "${{ github.actor }}"
+          --max-cost-usd "${{ github.event.inputs.estimated_cost_usd }}"
+
+      - name: Plan the paid-tier experiment (CostGuard re-checks approval + monthly budget)
+        env:
+          TRAINING_MONTHLY_BUDGET_USD: ${{ vars.TRAINING_MONTHLY_BUDGET_USD || '50' }}
+        run: >
+          uv run python services/training/scripts/run_experiment.py
+          --base-config "${{ github.event.inputs.base_config }}"
+          --allowed-ranges services/training/automation/allowed_ranges.example.json
+          --tier paid_gpu
+          --provider "${{ github.event.inputs.provider }}"
+          --estimated-cost-usd "${{ github.event.inputs.estimated_cost_usd }}"
+          --job-store-dir .training-automation/jobs
+          --job-id "${{ github.event.inputs.job_id }}"
+
+      - name: Upload job + approval + usage records
+        uses: actions/upload-artifact@v4
+        with:
+          name: training-phase3-job-records
+          path: .training-automation/jobs
+          retention-days: 90
