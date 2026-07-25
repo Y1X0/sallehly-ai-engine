@@ -1,0 +1,35 @@
+schema_version: '1.0'
+run_id: svd-lora-v1
+base_model_id: stable-video-diffusion
+base_model_revision: img2vid-xt-1-1
+strategy: lora
+dataset_version: REPLACE_WITH_REAL_DATASET_VERSION_ID
+resolution: 1024x576
+fps: 25
+max_frames: 25
+learning_rate: 0.0001
+batch_size: 1
+gradient_accumulation_steps: 4
+max_train_steps: 3000
+mixed_precision: fp16
+min_vram_gb: 20.0
+gpu_count: 1
+checkpoint_every_steps: 250
+eval_every_steps: 250
+seed: 42
+lora:
+  rank: 16
+  alpha: 32
+  target_modules:
+  - to_q
+  - to_k
+  - to_v
+  - to_out.0
+  dropout: 0.0
+notes: Stable Video Diffusion (Stability AI Community License) - free for organizations
+  under $1M annual revenue; enterprise deployments above that threshold need a separate
+  Stability AI license, and any distributed product must display 'Powered by Stability
+  AI' attribution. This project's revenue status must be checked against the $1M threshold
+  before training, not assumed. img2vid-xt is image-conditioned (not text-to-video)
+  - a materially different data pipeline (needs a conditioning frame per clip) than
+  the other three configs.

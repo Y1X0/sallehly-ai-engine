@@ -1,0 +1,33 @@
+schema_version: '1.0'
+run_id: cogvideox-lora-v1
+base_model_id: cogvideox
+base_model_revision: 5b
+strategy: lora
+dataset_version: REPLACE_WITH_REAL_DATASET_VERSION_ID
+resolution: 720x480
+fps: 8
+max_frames: 49
+learning_rate: 0.0001
+batch_size: 1
+gradient_accumulation_steps: 8
+max_train_steps: 3000
+mixed_precision: bf16
+min_vram_gb: 18.0
+gpu_count: 1
+checkpoint_every_steps: 250
+eval_every_steps: 250
+seed: 42
+lora:
+  rank: 16
+  alpha: 32
+  target_modules:
+  - to_q
+  - to_k
+  - to_v
+  - to_out.0
+  dropout: 0.0
+notes: CogVideoX (Zhipu AI/Z.ai) - only the 2B variant is Apache-2.0; this config
+  targets the higher-quality 5B variant, which ships under a separate custom 'CogVideoX
+  LICENSE' that must be independently reviewed before any commercial training run
+  - do not assume Apache-2.0 terms extend to it. Swap base_model_revision to '2b'
+  for the unambiguously commercial-friendly variant at a quality cost.
