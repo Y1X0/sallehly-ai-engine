@@ -10,10 +10,9 @@ members = [
   "services/*",
   "packages/*",
 ]
-# Not yet Python packages (docs-only placeholders for future phases):
+# Not yet a Python package (docs-only placeholder):
 exclude = [
   "apps/web-dashboard",
-  "services/training",
 ]
 
 [dependency-groups]
