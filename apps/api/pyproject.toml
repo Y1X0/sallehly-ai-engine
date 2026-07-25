@@ -20,6 +20,8 @@ dependencies = [
   "cinematic-intelligence",
   "auth",
   "storage-sdk",
+  "cache-sdk",
+  "observability",
   "python-multipart>=0.0.9",
 ]
 
@@ -38,6 +40,8 @@ video-engine-sdk = { workspace = true }
 cinematic-intelligence = { workspace = true }
 auth = { workspace = true }
 storage-sdk = { workspace = true }
+cache-sdk = { workspace = true }
+observability = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

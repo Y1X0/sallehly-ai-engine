@@ -16,6 +16,7 @@ from api.state import AppState
 from conftest import SAMPLE_PROJECT_REQUEST, build_stack
 from fastapi.testclient import TestClient
 from media_helpers import FFMPEG_AVAILABLE, make_color_clip
+from observability import LoggingErrorReporter
 import pytest
 
 _email_counter = itertools.count()
@@ -217,6 +218,7 @@ def test_finalize_and_render_manifest_succeed_over_http(tmp_path):
         user_store=stack.user_store,
         auth_provider=stack.auth_provider,
         cinematic_intelligence=stack.cinematic_intelligence,
+        error_reporter=LoggingErrorReporter(),
         memory=stack.memory,
         lifecycle=stack.lifecycle,
     )

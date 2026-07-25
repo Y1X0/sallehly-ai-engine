@@ -1,10 +1,14 @@
 [project]
 name = "observability"
 version = "0.1.0"
-description = "Observability"
+description = "Structured logging, tracing (OpenTelemetry), metrics (Prometheus), and error reporting (Phase 8 WP1)"
 requires-python = ">=3.11"
 dependencies = [
   "schemas",
+  "opentelemetry-api>=1.24",
+  "opentelemetry-sdk>=1.24",
+  "opentelemetry-exporter-otlp-proto-grpc>=1.24",
+  "prometheus-client>=0.20",
 ]
 
 [tool.uv.sources]

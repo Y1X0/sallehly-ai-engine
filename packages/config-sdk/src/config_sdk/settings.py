@@ -64,6 +64,19 @@ class Settings(BaseSettings):
     """Comma-separated origins apps/api allows via CORS - the frontend's own
     origin, since browsers enforce this for cross-origin fetch()/XHR."""
 
+    log_level: str = "INFO"
+    otel_exporter: str = "console"
+    """"console" (default, ConsoleSpanExporter - genuinely runs with no
+    external collector) / "otlp" (real OTLPSpanExporter at otel_endpoint,
+    needs a reachable collector) / "none" (tracing disabled). See
+    docs/adr/0019-observability.md."""
+    otel_endpoint: str = ""
+    error_reporter: str = "logging"
+    """"logging" (default, LoggingErrorReporter - structured JSON log
+    line, no account needed) or "sentry" (SentryErrorReporter - needs
+    sentry_dsn)."""
+    sentry_dsn: str = ""
+
 
 def get_settings() -> Settings:
     return Settings()

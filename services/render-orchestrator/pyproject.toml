@@ -16,6 +16,7 @@ dependencies = [
   "cinematic-intelligence",
   "temporalio>=1.30.0",
   "redis>=5.0",
+  "observability",
 ]
 
 [tool.uv.sources]
@@ -29,6 +30,7 @@ persistence = { workspace = true }
 post-processing = { workspace = true }
 export-service = { workspace = true }
 cinematic-intelligence = { workspace = true }
+observability = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

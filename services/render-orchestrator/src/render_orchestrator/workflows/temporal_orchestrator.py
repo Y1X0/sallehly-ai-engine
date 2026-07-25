@@ -36,6 +36,7 @@ import asyncio
 import uuid
 from typing import Any
 
+from observability import get_logger
 from persistence import ProjectRecord
 from temporalio.client import (
     Client,
@@ -50,6 +51,8 @@ from ..orchestrator import IProjectOrchestrator
 from ..project_lifecycle import ProjectLifecycleError
 from .activities import CreateProjectInput
 from .render_workflow import ProjectGenerationWorkflow, RenderRejection
+
+_logger = get_logger(__name__)
 
 
 class TemporalProjectOrchestrator(IProjectOrchestrator):
@@ -151,7 +154,14 @@ class TemporalProjectOrchestrator(IProjectOrchestrator):
         except WorkflowUpdateFailedError as exc:
             original = _unwrap_application_error(exc)
             if original is not None and original.type == "ProjectLifecycleError":
+                _logger.warning(
+                    "temporal_update_rejected", extra={"reason": original.message}
+                )
                 raise ProjectLifecycleError(original.message) from exc
+            _logger.error(
+                "temporal_update_failed_unexpectedly",
+                extra={"application_error_type": original.type if original is not None else None},
+            )
             raise
 
 

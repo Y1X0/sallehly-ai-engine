@@ -13,6 +13,7 @@ from api.main import app
 from api.state import AppState
 from conftest import SAMPLE_PROJECT_REQUEST, build_stack
 from fastapi.testclient import TestClient
+from observability import LoggingErrorReporter
 from video_engine_sdk import ComputeJobHandle, ComputeJobStatus, EngineJobOutput, EngineJobPayload, IComputeProvider
 
 _email_counter = itertools.count()
@@ -340,6 +341,7 @@ def test_generation_failure_surfaces_as_failed_status_over_http():
         user_store=stack.user_store,
         auth_provider=stack.auth_provider,
         cinematic_intelligence=stack.cinematic_intelligence,
+        error_reporter=LoggingErrorReporter(),
         memory=stack.memory,
         lifecycle=stack.lifecycle,
     )

@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Any
 from ai_director import CreativeDirector, ProjectBrief
 from creative_compiler import CreativeCompiler
 from director_memory import IDirectorMemoryStore
+from observability import get_logger, traced_span
+from observability.metrics import GENERATION_JOB_DURATION_SECONDS, GENERATION_JOBS_TOTAL, time_histogram
 from persistence import IProjectStore, ProjectRecord, ProjectStatus
 
 from .events import Event, EventType, IEventBus, InMemoryEventBus
@@ -16,6 +18,8 @@ if TYPE_CHECKING:
     from cinematic_intelligence import CinematicIntelligenceCoordinator
 
     from .post_production import PostProductionRunner
+
+_logger = get_logger(__name__)
 
 
 class ProjectLifecycleError(Exception):
@@ -262,7 +266,9 @@ class ProjectLifecycle:
         self._publish(EventType.GENERATION_STARTED, project_id)
 
         render_plan = self._latest("render_plan", project_id)
-        jobs = self._pipeline.generate_plan(render_plan)
+        with traced_span("project_lifecycle.run_generation", project_id=project_id):
+            with time_histogram(GENERATION_JOB_DURATION_SECONDS):
+                jobs = self._pipeline.generate_plan(render_plan)
 
         record.generation_job_ids = [job.job_id for job in jobs]
         record.asset_ids = [job.output_asset_id for job in jobs if job.output_asset_id]
@@ -271,11 +277,14 @@ class ProjectLifecycle:
         if failed:
             record.error_message = "; ".join(job.error_message or "unknown error" for job in failed)
             self._transition(record, ProjectStatus.FAILED)
+            GENERATION_JOBS_TOTAL.labels(status="failed").inc(len(failed))
+            GENERATION_JOBS_TOTAL.labels(status="completed").inc(len(jobs) - len(failed))
             self._publish(
                 EventType.GENERATION_FAILED, project_id, {"failed_shot_ids": [job.shot_id for job in failed]}
             )
         else:
             self._transition(record, ProjectStatus.COMPLETED)
+            GENERATION_JOBS_TOTAL.labels(status="completed").inc(len(jobs))
             self._publish(EventType.GENERATION_COMPLETED, project_id, {"asset_ids": record.asset_ids})
 
         return record
@@ -301,4 +310,12 @@ class ProjectLifecycle:
         self._projects.save(record)
 
     def _publish(self, event_type: EventType, project_id: str, data: dict[str, Any] | None = None) -> None:
-        self._events.publish(Event(type=event_type, project_id=project_id, data=data or {}))
+        """Every meaningful ProjectLifecycle transition already funnels
+        through here (see every call site above) - the single, minimal
+        integration point for structured logging (Phase 8 WP1) rather
+        than a separate log call sprinkled into each of the nine public
+        methods. Additive only: the `IEventBus.publish()` call and its
+        behavior are completely unchanged."""
+        data = data or {}
+        _logger.info(event_type.value, extra={"project_id": project_id, **data})
+        self._events.publish(Event(type=event_type, project_id=project_id, data=data))

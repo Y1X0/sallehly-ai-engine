@@ -13,6 +13,7 @@ from creative_compiler import CreativeCompiler
 from director_memory import IDirectorMemoryStore, InMemoryDirectorMemoryStore
 from llm_providers import ILLMProvider
 from llm_providers.local_heuristic_provider import LocalHeuristicLLMProvider
+from observability import IErrorReporter, LoggingErrorReporter
 from persistence import IProjectStore, InMemoryProjectStore
 from render_orchestrator import (
     GenerationPipeline,
@@ -41,6 +42,7 @@ class AppState:
     auth_provider: IAuthProvider
     memory: IDirectorMemoryStore
     cinematic_intelligence: CinematicIntelligenceCoordinator
+    error_reporter: IErrorReporter
     lifecycle: ProjectLifecycle
     """Exposed separately from `orchestrator` (Phase 8 WP6, ADR 0015) so
     `apps/api/src/api/temporal_worker.py` - a standalone process, not a
@@ -193,6 +195,18 @@ def build_app_state(settings: Settings) -> AppState:
         token_store = InMemoryTokenStore()
     auth_provider: IAuthProvider = LocalAuthProvider(user_store, token_store=token_store)
 
+    error_reporter: IErrorReporter
+    if settings.error_reporter == "sentry" and settings.sentry_dsn:
+        # Lazy import: keeps `sentry-sdk` off the hot path for every
+        # environment that never selects it - same discipline as every
+        # other lazy import in this function. See
+        # docs/adr/0019-observability.md.
+        from observability import SentryErrorReporter
+
+        error_reporter = SentryErrorReporter(settings.sentry_dsn)
+    else:
+        error_reporter = LoggingErrorReporter()
+
     return AppState(
         project_store=project_store,
         job_store=job_store,
@@ -202,6 +216,7 @@ def build_app_state(settings: Settings) -> AppState:
         auth_provider=auth_provider,
         memory=memory,
         cinematic_intelligence=cinematic,
+        error_reporter=error_reporter,
         lifecycle=lifecycle,
     )
 

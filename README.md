@@ -221,6 +221,26 @@ Phase 6/7 below describe when each was originally built):
   it alongside the default `local` filesystem driver. Documented
   honestly as a different rigor tier than WP2/WP3's exact-backend tests
   - see the ADR's Consequences.
+- **Phase 8 Scale-out WP1** (`packages/observability` (new), `apps/api`
+  - see `docs/adr/0019-observability.md`): structured JSON logging with
+  correlation ids (`observability.context`/`logging`), real
+  OpenTelemetry tracing (`ConsoleSpanExporter` default - genuinely
+  executed, spans captured via the SDK's own `InMemorySpanExporter` in
+  tests; `OTLPSpanExporter` real but unverified against a live collector),
+  Prometheus metrics (`GET /metrics`, real counters verified against
+  actual request traffic), and `IErrorReporter`
+  (`LoggingErrorReporter` real and complete; `SentryErrorReporter` real
+  SDK usage but unverified against a live Sentry project - same honesty
+  class as `RunPodProvider` before a funded account).
+  `ObservabilityMiddleware` + a global exception handler are wired into
+  `apps/api`; `ProjectLifecycle`/`GenerationPipeline`/
+  `TemporalProjectOrchestrator` gained structured log/metric/trace
+  points, additive only. Two real bugs the live test suite caught:
+  `dependency_overrides` doesn't reach exception handlers (they're
+  outside FastAPI's dependency graph), and resetting the correlation id
+  contextvar inside the middleware cleared it before the exception
+  handler - outside that middleware in Starlette's stack - could read
+  it for the error response body.
 
 One thing remains genuinely unexecuted in this environment, documented
 rather than glossed over: real GPU inference (`workers/gpu-worker` needs

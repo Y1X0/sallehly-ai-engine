@@ -6,10 +6,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 from asset_manager import AssetManager
+from observability import get_logger
 from video_engine_sdk import ComputeJobStatus, IComputeProvider, IVideoEngine
 from video_engine_sdk import RenderSpec as EngineRenderSpec
 
 from .jobs import GenerationJob, GenerationJobStatus, IGenerationJobStore, InMemoryGenerationJobStore
+
+_logger = get_logger(__name__)
 
 
 class GenerationPipelineError(Exception):
@@ -73,12 +76,30 @@ class GenerationPipeline:
                 self._run_once(job, render_spec_dict)
                 job.retry_count = attempt
                 self._save(job)
+                _logger.info(
+                    "generation_job_succeeded",
+                    extra={"project_id": project_id, "job_id": job.job_id, "shot_id": job.shot_id, "attempt": attempt},
+                )
                 return job
             except Exception as exc:  # noqa: BLE001 - any failure here means the job failed, by design
                 job.retry_count = attempt
                 job.error_message = str(exc)
                 job.status = GenerationJobStatus.FAILED
                 self._save(job)
+                _logger.warning(
+                    "generation_job_attempt_failed",
+                    extra={
+                        "project_id": project_id,
+                        "job_id": job.job_id,
+                        "shot_id": job.shot_id,
+                        "attempt": attempt,
+                        "error": str(exc),
+                    },
+                )
+        _logger.error(
+            "generation_job_failed",
+            extra={"project_id": project_id, "job_id": job.job_id, "shot_id": job.shot_id, "retry_count": job.retry_count},
+        )
         return job
 
     def generate_plan(self, render_plan: dict[str, Any]) -> list[GenerationJob]:

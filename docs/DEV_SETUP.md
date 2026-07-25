@@ -160,6 +160,22 @@ since this sandbox specifically can't reach one - see
 `docs/adr/0018-s3-storage-provider.md` for why, and for the honest
 rigor-tier caveat that implies.
 
+Observability (Phase 8 WP1, `docs/adr/0019-observability.md`) needs no
+setup at all - `configure_logging`/`configure_tracing` run automatically
+when `apps/api` starts, no external server required for the defaults:
+
+```bash
+uv run uvicorn api.main:app --reload
+curl http://localhost:8000/metrics       # real Prometheus exposition text
+curl -i http://localhost:8000/healthz | grep -i x-correlation-id
+```
+
+`LOG_LEVEL` (default `INFO`), `OTEL_EXPORTER` (`console` default -
+prints real spans to stdout; `otlp` needs a real collector reachable at
+`OTEL_ENDPOINT`; `none` disables tracing), and `ERROR_REPORTER`
+(`logging` default; `sentry` needs a real `SENTRY_DSN`) are all
+independently configurable - see `.env.example`.
+
 ## 3. Run the API
 
 ```bash
