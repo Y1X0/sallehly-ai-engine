@@ -335,6 +335,43 @@ if report["repair_recommended"]:
     ci.AutomaticRepairEngine().repair(report, context={"current_positive_prompt": package["positive_prompt"]})
 ```
 
+## 3e. Phase 9 Preparation (services/training)
+
+Everything here is CPU-only - no GPU, no model weights, no network
+access needed for the default providers (see
+`docs/adr/0021-phase9-preparation.md`). `extract_clip_metadata()` needs
+real `ffprobe` on `PATH` (the same dependency `services/post-processing`
+already requires); everything else is pure Python.
+
+```python
+from training import DatasetManager, DatasetValidator, HashDuplicateDetector, HeuristicCaptionProvider, TrainingConfig
+
+manager = DatasetManager(
+    validator=DatasetValidator(),
+    caption_provider=HeuristicCaptionProvider(),
+    duplicate_detector=HashDuplicateDetector(),
+)
+manager.ingest("path/to/clip.mp4", tags=["product-shot"], rights_cleared=True)
+manager.caption_all()
+print(manager.statistics().to_dict())
+print(manager.version().version_id)  # content-addressable - same clips always produce the same id
+
+config = TrainingConfig.from_yaml("services/training/configs/wan21_finetune.yaml")
+config.validate()  # real validation, no GPU needed
+```
+
+The four prepared training configs
+(`services/training/configs/{wan21,hunyuanvideo,cogvideox,stable_video_diffusion}_finetune.yaml`)
+each load via `TrainingConfig.from_yaml()` and reference a real entry in
+`training.BASE_MODEL_REGISTRY` - check `license_notes` there before
+using any of them for a real training run; HunyuanVideo, CogVideoX-5B,
+and Stable Video Diffusion all carry real commercial-use caveats that
+must be independently reverified, not just this registry's snapshot.
+`BenchmarkRunner` (the evaluation framework) genuinely executes against
+this repo's own `Wan21Adapter`/`LocalProvider` with zero GPU - see
+`tests/test_training_evaluation.py` for a working example, including
+what happens when it's pointed at the untrained `SallehlyModelAdapter`.
+
 ## 4. Exercise the pipeline without a GPU
 
 Set `COMPUTE_PROVIDER=local` (the `.env.example` and `apps/api` default).

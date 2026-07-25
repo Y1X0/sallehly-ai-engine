@@ -270,6 +270,35 @@ Phase 6/7 below describe when each was originally built):
   survives that boundary. 30 new tests
   (`tests/test_wp5_security_hardening.py`), full suite: 507 passed, 6
   skipped.
+- **Phase 9 Preparation** (`services/training` - see
+  `docs/adr/0021-phase9-preparation.md`): built out from an empty
+  Phase 0 placeholder into a real, CPU-only package ahead of any actual
+  model training. Training framework (`ITrainer`/`DryRunTrainer` proving
+  the step/checkpoint/eval-hook loop with no GPU, `TrainingConfig`/
+  `LoRAConfig`, `ICheckpointStore`); dataset pipeline (`DatasetManager`
+  ingesting real files via a genuine `ffprobe` subprocess + SHA-256
+  content hashing, `DatasetValidator`, `HeuristicCaptionProvider` real /
+  `VLMCaptionProvider` raising `ModelUnavailableError`,
+  `HashDuplicateDetector` real / `EmbeddingDuplicateDetector` raising
+  `ModelUnavailableError`, a deterministic hash-based train/val/test
+  split, dataset statistics, and content-addressable dataset
+  versioning); Model Registry (`IModelRegistry`/`FilesystemModelRegistry`:
+  a `STAGING -> CANARY -> PRODUCTION` promotion state machine,
+  compatibility validation against a real `video_engine_sdk.CapabilityManifest`,
+  and rollback); evaluation framework (`BenchmarkRunner` genuinely
+  executing `Wan21Adapter`+`LocalProvider`'s real generation dance with
+  zero GPU, and correctly recording - not crashing on -
+  `SallehlyModelNotTrainedError` when pointed at the untrained
+  `sallehly-v1` engine; classical metrics real, `FVDMetric`/
+  `CLIPScoreMetric` raising `ModelUnavailableError`; human eval store;
+  `RegressionDetector`); and four real training configs (Wan2.1/
+  HunyuanVideo/CogVideoX/Stable Video Diffusion) whose license facts
+  were checked via web search, not assumed - HunyuanVideo excludes the
+  EU/UK/South Korea and caps at 100M MAU, CogVideoX-5B and Stable Video
+  Diffusion both carry real commercial-use caveats. 133 new tests
+  across 5 files, no GPU/model download/training anywhere; full suite:
+  611 passed, 30 skipped (Redis/Temporal servers not running this
+  session).
 
 One thing remains genuinely unexecuted in this environment, documented
 rather than glossed over: real GPU inference (`workers/gpu-worker` needs
