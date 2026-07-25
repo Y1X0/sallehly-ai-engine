@@ -3,9 +3,11 @@
 **Status:** In progress - WP6 (Temporal activation, ADR 0015), WP2
 (Postgres-backed `IProjectStore`, ADR 0016), WP3 (Redis-backed
 cache/event bus/token store, ADR 0017), WP4 (S3-compatible
-`IStorageProvider`, ADR 0018), and WP1 (observability: structured
-logging, tracing, metrics, error reporting, ADR 0019) are done. WP5,
-WP7-13 remain not started.
+`IStorageProvider`, ADR 0018), WP1 (observability: structured
+logging, tracing, metrics, error reporting, ADR 0019), and WP5
+(security hardening: rate limiting, token expiry/refresh, authorization
+fix, upload validation, secure headers, GPU/generation quota
+enforcement, ADR 0020) are done. WP7-13 remain not started.
 
 ## 0. Scope
 
@@ -253,7 +255,7 @@ Complexity: **S** (1-3 days) · **M** (1-2 weeks) · **L** (2-4 weeks) ·
 | WP2 | Postgres-backed stores (`PostgresProjectStore` et al.) + Alembic | Production readiness | L | WP1 | Highest-priority durability item. See Risk 2. |
 | WP3 | Redis: cache + `RedisEventBus` + token store | Production readiness | M | — | Independent of WP2, but naturally pairs with it. |
 | WP4 | `S3Provider(IStorageProvider)` | Production readiness | S/M | — | Test against the already-running MinIO container first. |
-| WP5 | Rate limiting + token expiry/refresh | Security | S/M | WP3 | Hard gate before real user signups (Risk 6). |
+| WP5 | Rate limiting + token expiry/refresh | Security | S/M | WP3 | **Done (ADR 0020)** - hard gate before real user signups (Risk 6), now closed. |
 | WP6 | `TemporalProjectOrchestrator` + live Temporal deployment + worker | Infra scaling | M/L | WP2 | Highest-leverage item for "real GPU workloads" - decouples HTTP requests from render duration. |
 | WP7 | `VastAIProvider` + `infra/vastai/` job-runner | Infra scaling | M | — | Parallelizable with WP1-6; same well-understood pattern as `RunPodProvider`. |
 | WP8 | Tracing + metrics + error tracking maturity | Production readiness | M | WP1 | Incremental; deepens naturally once WP6 adds more moving parts to trace. |
@@ -378,20 +380,26 @@ real local Postgres server with an applied Alembic migration - ADR 0016),
 WP3 (`ICache`/`RedisEventBus`/`ITokenStore`'s Redis implementations
 genuinely executed against a real local Redis server - ADR 0017), WP4
 (`S3Provider`, tested against `moto`'s real S3-REST-API test server
-since a live MinIO/S3 endpoint is unreachable here - ADR 0018), and WP1
+since a live MinIO/S3 endpoint is unreachable here - ADR 0018), WP1
 (structured logging, real OpenTelemetry tracing, Prometheus metrics,
 error reporting, all genuinely wired into `apps/api` and
 `ProjectLifecycle`/`GenerationPipeline`/`TemporalProjectOrchestrator` -
-ADR 0019) are done, per your explicit instruction to do WP6 first, then
-databases and storage, then observability and security hardening.
-WP5 (the security gate) remains the last piece of that instruction
-still to land, then `VastAIProvider`/observability maturity/GPU worker
-deployment in parallel, GPU scheduling once real GPU workers exist, and
-the business layer last - gated on a pricing decision from you.
-`KubernetesProvider` stays deferred until RunPod/Vast.ai actually
-becomes a bottleneck. Every item is a new implementation behind an
-interface this codebase already has, or additive instrumentation inside
-existing methods - zero planned changes to `IVideoEngine`,
-`IComputeProvider`, `GenerationPipeline`'s public contract,
-`ProjectLifecycle`'s public contract, or `CinematicIntelligenceCoordinator`;
-WP6, WP2, WP3, WP4, and WP1 all held to that, confirmed above.
+ADR 0019), and WP5 (rate limiting, token expiry/refresh, the
+`jobs.py` authorization fix, upload validation, secure headers, and
+`IQuotaEnforcer`-based GPU/generation quota enforcement, all genuinely
+executed - `RedisRateLimiter`/`RedisQuotaEnforcer` against a real local
+Redis server, everything else via `TestClient` - ADR 0020) are done,
+per your explicit instruction to do WP6 first, then databases and
+storage, then observability and security hardening - that instruction
+is now fully delivered. Remaining work packages
+(`VastAIProvider`/observability maturity/GPU worker deployment in
+parallel, GPU scheduling once real GPU workers exist, and the business
+layer last, gated on a pricing decision from you) are outside this
+instruction's scope. `KubernetesProvider` stays deferred until
+RunPod/Vast.ai actually becomes a bottleneck. Every item is a new
+implementation behind an interface this codebase already has, or
+additive instrumentation inside existing methods - zero planned changes
+to `IVideoEngine`, `IComputeProvider`, `GenerationPipeline`'s public
+contract, `ProjectLifecycle`'s public contract, or
+`CinematicIntelligenceCoordinator`; WP6, WP2, WP3, WP4, WP1, and WP5 all
+held to that, confirmed above.

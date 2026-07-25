@@ -8,9 +8,12 @@ from pydantic import BaseModel, Field
 from render_orchestrator import ProjectLifecycleError
 
 from ..dependencies import get_app_state, get_current_user
+from ..rate_limit import rate_limit_by_user
 from ..state import AppState
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+_generation_rate_limit_dep = Depends(rate_limit_by_user("generate_video", limit_attr="generation_rate_limit_per_minute"))
 
 
 class CreateProjectRequest(BaseModel):
@@ -146,7 +149,7 @@ def reject_render(
     return _run(state.orchestrator.reject_render_plan, project_id, body.feedback, body.quality_tier)
 
 
-@router.post("/{project_id}/generate-video")
+@router.post("/{project_id}/generate-video", dependencies=[_generation_rate_limit_dep])
 def generate_video(
     project_id: str,
     state: AppState = Depends(get_app_state),
@@ -156,7 +159,7 @@ def generate_video(
     return _run(state.orchestrator.generate_video, project_id)
 
 
-@router.post("/{project_id}/retry-generation")
+@router.post("/{project_id}/retry-generation", dependencies=[_generation_rate_limit_dep])
 def retry_generation(
     project_id: str,
     state: AppState = Depends(get_app_state),

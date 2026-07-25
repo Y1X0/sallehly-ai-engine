@@ -42,6 +42,17 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
     `ContextVar.set()` that's never explicitly reset simply stops
     mattering once the request's task ends, the same way a normal local
     variable does.
+
+    Also mirrors the correlation id onto `request.state.correlation_id`,
+    not just the contextvar: `BaseHTTPMiddleware.call_next()` spawns a
+    new child task per stacked `BaseHTTPMiddleware` layer, and a
+    `ContextVar.set()` made inside that child task is invisible once
+    control returns to the parent task - which is exactly the boundary
+    `main.py`'s exception handler sits across (in `ServerErrorMiddleware`,
+    outside every user-added middleware, including `SecurityHeadersMiddleware`
+    added below). `request.state` is backed by the ASGI `scope` dict,
+    passed by reference through every nested task spawn, so it survives
+    that boundary where the contextvar does not (confirmed empirically).
     """
 
     def __init__(self, app: ASGIApp) -> None:
@@ -51,6 +62,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         incoming = request.headers.get("x-correlation-id")
         correlation_id = incoming or context.new_correlation_id()
         context.set_correlation_id(correlation_id)
+        request.state.correlation_id = correlation_id
         start = time.perf_counter()
         tracer = get_tracer("sallehly.api")
         with tracer.start_as_current_span(f"{request.method} {request.url.path}") as span:
@@ -82,6 +94,50 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 "duration_ms": round(duration * 1000, 2),
             },
         )
+
+
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Content-Security-Policy": "default-src 'none'",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+}
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Adds a fixed set of defensive response headers to every request
+    (Phase 8 WP5, `docs/PHASE8_SCALEOUT_PLAN.md` item 23 "secure
+    headers"). `apps/api` is a JSON API, never HTML/JS - `default-src
+    'none'` is safe precisely because there's no page here that ever
+    needs to load a script/style/image of its own. `Strict-Transport-Security`
+    only actually does anything once a deployment terminates TLS in
+    front of this process; sending it unconditionally is harmless over
+    plain HTTP (browsers ignore `Strict-Transport-Security` on a
+    non-HTTPS response) and one less thing to get wrong at deploy time.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        super().__init__(app)
+
+    async def dispatch(self, request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
+        response = await call_next(request)
+        apply_security_headers(response)
+        return response
+
+
+def apply_security_headers(response: Response) -> Response:
+    """Also called directly by `main.py`'s global `Exception` handler:
+    that handler builds its `JSONResponse` inside `ServerErrorMiddleware`,
+    which sits *outside* `SecurityHeadersMiddleware` in Starlette's
+    stack (same reason `ObservabilityMiddleware` can't record a
+    500-from-an-exception through its own `call_next` either) - a
+    response built there never passes back through this middleware's
+    `dispatch`, so it needs these headers applied explicitly."""
+    for header, value in _SECURITY_HEADERS.items():
+        response.headers[header] = value
+    return response
 
 
 def _route_template(request: Request) -> str:

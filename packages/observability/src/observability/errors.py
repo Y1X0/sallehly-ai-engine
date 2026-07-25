@@ -56,8 +56,14 @@ class SentryErrorReporter(IErrorReporter):
         self._sentry_sdk = sentry_sdk
 
     def capture_exception(self, exc: BaseException, *, extra: dict[str, Any] | None = None) -> None:
+        extra = extra or {}
         with self._sentry_sdk.push_scope() as scope:
-            correlation_id = context.get_correlation_id()
+            # Callers that already resolved a correlation id outside the
+            # contextvar (e.g. `apps/api`'s exception handler, reading
+            # `request.state` because a stacked `BaseHTTPMiddleware` breaks
+            # contextvar visibility there - see `middleware.py`) pass it
+            # explicitly; only fall back to the contextvar when they didn't.
+            correlation_id = extra.get("correlation_id") or context.get_correlation_id()
             if correlation_id is not None:
                 scope.set_tag("correlation_id", correlation_id)
             user_id = context.get_user_id()
@@ -66,6 +72,6 @@ class SentryErrorReporter(IErrorReporter):
             project_id = context.get_project_id()
             if project_id is not None:
                 scope.set_tag("project_id", project_id)
-            for key, value in (extra or {}).items():
+            for key, value in extra.items():
                 scope.set_extra(key, value)
             self._sentry_sdk.capture_exception(exc)

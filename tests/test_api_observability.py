@@ -9,7 +9,7 @@ from __future__ import annotations
 from api.dependencies import get_app_state
 from api.main import app
 from api.state import AppState
-from conftest import build_stack
+from conftest import build_stack, default_wp5_app_state_kwargs
 from fastapi.testclient import TestClient
 from observability import IErrorReporter, render_metrics
 
@@ -71,6 +71,7 @@ def test_unhandled_exception_returns_generic_body_with_correlation_id_and_report
         error_reporter=spy,
         memory=stack.memory,
         lifecycle=stack.lifecycle,
+        **default_wp5_app_state_kwargs(),
     )
 
     @app.get("/__test_boom")
@@ -121,6 +122,7 @@ def test_business_rule_rejection_is_not_reported_as_an_unhandled_error():
         error_reporter=spy,
         memory=stack.memory,
         lifecycle=stack.lifecycle,
+        **default_wp5_app_state_kwargs(),
     )
     app.dependency_overrides[get_app_state] = lambda: custom_state
     try:

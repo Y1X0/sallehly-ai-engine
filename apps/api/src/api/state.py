@@ -15,6 +15,8 @@ from llm_providers import ILLMProvider
 from llm_providers.local_heuristic_provider import LocalHeuristicLLMProvider
 from observability import IErrorReporter, LoggingErrorReporter
 from persistence import IProjectStore, InMemoryProjectStore
+from quota_sdk import IQuotaEnforcer, InMemoryQuotaEnforcer
+from rate_limit_sdk import IRateLimiter, InMemoryRateLimiter
 from render_orchestrator import (
     GenerationPipeline,
     IEventBus,
@@ -43,6 +45,11 @@ class AppState:
     memory: IDirectorMemoryStore
     cinematic_intelligence: CinematicIntelligenceCoordinator
     error_reporter: IErrorReporter
+    rate_limiter: IRateLimiter
+    auth_rate_limit_per_minute: int
+    generation_rate_limit_per_minute: int
+    upload_max_bytes: int
+    upload_allowed_content_types: frozenset[str]
     lifecycle: ProjectLifecycle
     """Exposed separately from `orchestrator` (Phase 8 WP6, ADR 0015) so
     `apps/api/src/api/temporal_worker.py` - a standalone process, not a
@@ -154,6 +161,18 @@ def build_app_state(settings: Settings) -> AppState:
         events = InMemoryEventBus()
     cinematic = CinematicIntelligenceCoordinator()
     post_production = PostProductionRunner(asset_manager)
+
+    quota_enforcer: IQuotaEnforcer
+    if settings.quota_enforcer == "redis":
+        # Lazy import: keeps `redis` off the hot path for every
+        # environment that never selects it. See
+        # docs/adr/0020-security-hardening.md.
+        from quota_sdk import RedisQuotaEnforcer
+
+        quota_enforcer = RedisQuotaEnforcer(settings.redis_url)
+    else:
+        quota_enforcer = InMemoryQuotaEnforcer()
+
     lifecycle = ProjectLifecycle(
         director,
         compiler,
@@ -163,6 +182,8 @@ def build_app_state(settings: Settings) -> AppState:
         events,
         cinematic_intelligence=cinematic,
         post_production=post_production,
+        quota_enforcer=quota_enforcer,
+        max_concurrent_generations_per_workspace=settings.max_concurrent_generations_per_workspace,
     )
     orchestrator: IProjectOrchestrator
     if settings.orchestrator == "temporal":
@@ -193,7 +214,9 @@ def build_app_state(settings: Settings) -> AppState:
         token_store = RedisTokenStore(settings.redis_url)
     else:
         token_store = InMemoryTokenStore()
-    auth_provider: IAuthProvider = LocalAuthProvider(user_store, token_store=token_store)
+    auth_provider: IAuthProvider = LocalAuthProvider(
+        user_store, token_store=token_store, token_ttl_seconds=settings.token_store_ttl_seconds
+    )
 
     error_reporter: IErrorReporter
     if settings.error_reporter == "sentry" and settings.sentry_dsn:
@@ -207,6 +230,21 @@ def build_app_state(settings: Settings) -> AppState:
     else:
         error_reporter = LoggingErrorReporter()
 
+    rate_limiter: IRateLimiter
+    if settings.rate_limiter == "redis":
+        # Lazy import: keeps `redis` off the hot path for every
+        # environment that never selects it. See
+        # docs/adr/0020-security-hardening.md.
+        from rate_limit_sdk import RedisRateLimiter
+
+        rate_limiter = RedisRateLimiter(settings.redis_url)
+    else:
+        rate_limiter = InMemoryRateLimiter()
+
+    upload_allowed_content_types = frozenset(
+        t.strip() for t in settings.upload_allowed_content_types.split(",") if t.strip()
+    )
+
     return AppState(
         project_store=project_store,
         job_store=job_store,
@@ -217,6 +255,11 @@ def build_app_state(settings: Settings) -> AppState:
         memory=memory,
         cinematic_intelligence=cinematic,
         error_reporter=error_reporter,
+        rate_limiter=rate_limiter,
+        auth_rate_limit_per_minute=settings.auth_rate_limit_per_minute,
+        generation_rate_limit_per_minute=settings.generation_rate_limit_per_minute,
+        upload_max_bytes=settings.upload_max_bytes,
+        upload_allowed_content_types=upload_allowed_content_types,
         lifecycle=lifecycle,
     )
 

@@ -17,6 +17,7 @@ dependencies = [
   "temporalio>=1.30.0",
   "redis>=5.0",
   "observability",
+  "quota-sdk",
 ]
 
 [tool.uv.sources]
@@ -31,6 +32,7 @@ post-processing = { workspace = true }
 export-service = { workspace = true }
 cinematic-intelligence = { workspace = true }
 observability = { workspace = true }
+quota-sdk = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

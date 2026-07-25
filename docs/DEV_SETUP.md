@@ -176,6 +176,31 @@ prints real spans to stdout; `otlp` needs a real collector reachable at
 (`logging` default; `sentry` needs a real `SENTRY_DSN`) are all
 independently configurable - see `.env.example`.
 
+Security hardening (Phase 8 WP5, `docs/adr/0020-security-hardening.md`)
+also needs no setup by default - every limit ships with a real, safe
+default (`AUTH_RATE_LIMIT_PER_MINUTE=20`,
+`GENERATION_RATE_LIMIT_PER_MINUTE=10`, `UPLOAD_MAX_BYTES=25MiB`,
+`TOKEN_STORE_TTL_SECONDS=0` = never expires,
+`MAX_CONCURRENT_GENERATIONS_PER_WORKSPACE=0` = unlimited):
+
+```bash
+# hit the login rate limit locally (default 20/min by IP)
+for i in $(seq 1 21); do curl -s -o /dev/null -w "%{http_code}\n" \
+  -X POST http://localhost:8000/auth/login \
+  -H 'Content-Type: application/json' -d '{"email":"x@example.com","password":"wrong"}'; done
+
+# rotate a bearer token
+curl -X POST http://localhost:8000/auth/refresh -H "Authorization: Bearer <token>"
+
+curl -i http://localhost:8000/healthz | grep -i x-content-type-options
+```
+
+`RATE_LIMITER`/`QUOTA_ENFORCER` (`memory` default / `redis`, same
+opt-in pattern as `CACHE_BACKEND`/`EVENT_BUS`/`TOKEN_STORE` - see
+section 2 above) select the cross-process-correct backend once a real
+Redis server is available; every other WP5 field is a plain limit, no
+extra service required either way.
+
 ## 3. Run the API
 
 ```bash

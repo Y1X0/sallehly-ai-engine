@@ -12,10 +12,12 @@ from ai_director import CreativeDirector
 from asset_manager import AssetManager
 from auth import IAuthProvider, InMemoryUserStore, IUserStore, LocalAuthProvider
 from cinematic_intelligence import CinematicIntelligenceCoordinator
+from config_sdk import Settings
 from creative_compiler import CreativeCompiler
 from director_memory import IDirectorMemoryStore, InMemoryDirectorMemoryStore
 from llm_providers.local_heuristic_provider import LocalHeuristicLLMProvider
 from persistence import InMemoryProjectStore, IProjectStore
+from rate_limit_sdk import InMemoryRateLimiter
 from render_orchestrator import (
     GenerationPipeline,
     IGenerationJobStore,
@@ -50,11 +52,15 @@ def build_stack(
     engine: IVideoEngine | None = None,
     with_cinematic_intelligence: bool = False,
     with_post_production: bool = False,
+    quota_enforcer=None,
+    max_concurrent_generations_per_workspace: int = 0,
 ) -> Stack:
     """`with_cinematic_intelligence`/`with_post_production` default False
     so every pre-Phase-8 test using this fixture is completely unaffected
     - only tests that explicitly opt in exercise the full Phase 8
-    pipeline (see docs/adr/0014-pipeline-integration.md)."""
+    pipeline (see docs/adr/0014-pipeline-integration.md). `quota_enforcer`/
+    `max_concurrent_generations_per_workspace` (Phase 8 WP5) default to
+    the same no-op-quota behavior every pre-WP5 test relies on."""
     memory = InMemoryDirectorMemoryStore()
     director = CreativeDirector(llm_provider=LocalHeuristicLLMProvider(), memory=memory)
 
@@ -85,6 +91,8 @@ def build_stack(
         events,
         cinematic_intelligence=cinematic,
         post_production=post_production,
+        quota_enforcer=quota_enforcer,
+        max_concurrent_generations_per_workspace=max_concurrent_generations_per_workspace,
     )
     orchestrator = SyncProjectOrchestrator(lifecycle)
 
@@ -122,3 +130,24 @@ SAMPLE_PROJECT_REQUEST = dict(
     target_duration_sec=12,
     aspect_ratio="16:9",
 )
+
+
+def default_wp5_app_state_kwargs() -> dict:
+    """The Phase 8 WP5 `AppState` fields (`rate_limiter`,
+    `auth_rate_limit_per_minute`, `generation_rate_limit_per_minute`,
+    `upload_max_bytes`, `upload_allowed_content_types`) every test that
+    constructs an `AppState` directly (bypassing `build_app_state()`,
+    e.g. via `app.dependency_overrides`) also needs to supply. Derives
+    values from `Settings()`'s own defaults rather than duplicating
+    magic numbers, so this never silently drifts from what
+    `build_app_state()` actually wires."""
+    settings = Settings()
+    return {
+        "rate_limiter": InMemoryRateLimiter(),
+        "auth_rate_limit_per_minute": settings.auth_rate_limit_per_minute,
+        "generation_rate_limit_per_minute": settings.generation_rate_limit_per_minute,
+        "upload_max_bytes": settings.upload_max_bytes,
+        "upload_allowed_content_types": frozenset(
+            t.strip() for t in settings.upload_allowed_content_types.split(",") if t.strip()
+        ),
+    }

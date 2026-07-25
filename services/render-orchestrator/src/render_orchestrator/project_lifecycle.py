@@ -9,6 +9,7 @@ from director_memory import IDirectorMemoryStore
 from observability import get_logger, traced_span
 from observability.metrics import GENERATION_JOB_DURATION_SECONDS, GENERATION_JOBS_TOTAL, time_histogram
 from persistence import IProjectStore, ProjectRecord, ProjectStatus
+from quota_sdk import QuotaExceededError
 
 from .events import Event, EventType, IEventBus, InMemoryEventBus
 from .jobs import GenerationJobStatus
@@ -16,6 +17,7 @@ from .pipeline import GenerationPipeline
 
 if TYPE_CHECKING:
     from cinematic_intelligence import CinematicIntelligenceCoordinator
+    from quota_sdk import IQuotaEnforcer
 
     from .post_production import PostProductionRunner
 
@@ -66,6 +68,8 @@ class ProjectLifecycle:
         event_bus: IEventBus | None = None,
         cinematic_intelligence: "CinematicIntelligenceCoordinator | None" = None,
         post_production: "PostProductionRunner | None" = None,
+        quota_enforcer: "IQuotaEnforcer | None" = None,
+        max_concurrent_generations_per_workspace: int = 0,
     ) -> None:
         self._director = creative_director
         self._compiler = creative_compiler
@@ -73,6 +77,8 @@ class ProjectLifecycle:
         self._projects = project_store
         self._memory = memory
         self._events = event_bus or InMemoryEventBus()
+        self._quota = quota_enforcer
+        self._max_concurrent_generations = max_concurrent_generations_per_workspace
         self._cinematic = cinematic_intelligence
         self._post_production = post_production
 
@@ -262,32 +268,47 @@ class ProjectLifecycle:
 
     def _run_generation(self, record: ProjectRecord) -> ProjectRecord:
         project_id = record.project_id
-        self._transition(record, ProjectStatus.GENERATING)
-        self._publish(EventType.GENERATION_STARTED, project_id)
+        quota_enforced = self._quota is not None and self._max_concurrent_generations > 0
+        if quota_enforced:
+            try:
+                self._quota.acquire(record.workspace_id, max_concurrent=self._max_concurrent_generations)
+            except QuotaExceededError as exc:
+                # Rejected before any state transition - the project
+                # stays exactly where it was (APPROVED or FAILED), safe
+                # to retry once capacity frees up, matching every other
+                # ProjectLifecycleError's "nothing happened" semantics.
+                raise ProjectLifecycleError(str(exc)) from exc
 
-        render_plan = self._latest("render_plan", project_id)
-        with traced_span("project_lifecycle.run_generation", project_id=project_id):
-            with time_histogram(GENERATION_JOB_DURATION_SECONDS):
-                jobs = self._pipeline.generate_plan(render_plan)
+        try:
+            self._transition(record, ProjectStatus.GENERATING)
+            self._publish(EventType.GENERATION_STARTED, project_id)
 
-        record.generation_job_ids = [job.job_id for job in jobs]
-        record.asset_ids = [job.output_asset_id for job in jobs if job.output_asset_id]
+            render_plan = self._latest("render_plan", project_id)
+            with traced_span("project_lifecycle.run_generation", project_id=project_id):
+                with time_histogram(GENERATION_JOB_DURATION_SECONDS):
+                    jobs = self._pipeline.generate_plan(render_plan)
 
-        failed = [job for job in jobs if job.status == GenerationJobStatus.FAILED]
-        if failed:
-            record.error_message = "; ".join(job.error_message or "unknown error" for job in failed)
-            self._transition(record, ProjectStatus.FAILED)
-            GENERATION_JOBS_TOTAL.labels(status="failed").inc(len(failed))
-            GENERATION_JOBS_TOTAL.labels(status="completed").inc(len(jobs) - len(failed))
-            self._publish(
-                EventType.GENERATION_FAILED, project_id, {"failed_shot_ids": [job.shot_id for job in failed]}
-            )
-        else:
-            self._transition(record, ProjectStatus.COMPLETED)
-            GENERATION_JOBS_TOTAL.labels(status="completed").inc(len(jobs))
-            self._publish(EventType.GENERATION_COMPLETED, project_id, {"asset_ids": record.asset_ids})
+            record.generation_job_ids = [job.job_id for job in jobs]
+            record.asset_ids = [job.output_asset_id for job in jobs if job.output_asset_id]
 
-        return record
+            failed = [job for job in jobs if job.status == GenerationJobStatus.FAILED]
+            if failed:
+                record.error_message = "; ".join(job.error_message or "unknown error" for job in failed)
+                self._transition(record, ProjectStatus.FAILED)
+                GENERATION_JOBS_TOTAL.labels(status="failed").inc(len(failed))
+                GENERATION_JOBS_TOTAL.labels(status="completed").inc(len(jobs) - len(failed))
+                self._publish(
+                    EventType.GENERATION_FAILED, project_id, {"failed_shot_ids": [job.shot_id for job in failed]}
+                )
+            else:
+                self._transition(record, ProjectStatus.COMPLETED)
+                GENERATION_JOBS_TOTAL.labels(status="completed").inc(len(jobs))
+                self._publish(EventType.GENERATION_COMPLETED, project_id, {"asset_ids": record.asset_ids})
+
+            return record
+        finally:
+            if quota_enforced:
+                self._quota.release(record.workspace_id)
 
     def _require(self, project_id: str, expected: ProjectStatus | None = None) -> ProjectRecord:
         record = self._projects.get(project_id)

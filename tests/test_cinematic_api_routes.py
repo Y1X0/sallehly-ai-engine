@@ -13,7 +13,7 @@ import itertools
 from api.dependencies import get_app_state
 from api.main import app
 from api.state import AppState
-from conftest import SAMPLE_PROJECT_REQUEST, build_stack
+from conftest import SAMPLE_PROJECT_REQUEST, build_stack, default_wp5_app_state_kwargs
 from fastapi.testclient import TestClient
 from media_helpers import FFMPEG_AVAILABLE, make_color_clip
 from observability import LoggingErrorReporter
@@ -221,6 +221,7 @@ def test_finalize_and_render_manifest_succeed_over_http(tmp_path):
         error_reporter=LoggingErrorReporter(),
         memory=stack.memory,
         lifecycle=stack.lifecycle,
+        **default_wp5_app_state_kwargs(),
     )
     app.dependency_overrides[get_app_state] = lambda: custom_state
     try:

@@ -30,6 +30,8 @@ members = [
     "post-processing",
     "prompt-builder",
     "prompt-engine",
+    "quota-sdk",
+    "rate-limit-sdk",
     "render-config-compiler",
     "render-orchestrator",
     "sallehly-ai-video-engine",
@@ -163,6 +165,8 @@ dependencies = [
     { name = "observability" },
     { name = "persistence" },
     { name = "python-multipart" },
+    { name = "quota-sdk" },
+    { name = "rate-limit-sdk" },
     { name = "render-orchestrator" },
     { name = "schemas" },
     { name = "storage-sdk" },
@@ -186,6 +190,8 @@ requires-dist = [
     { name = "observability", editable = "packages/observability" },
     { name = "persistence", editable = "packages/persistence" },
     { name = "python-multipart", specifier = ">=0.0.9" },
+    { name = "quota-sdk", editable = "packages/quota-sdk" },
+    { name = "rate-limit-sdk", editable = "packages/rate-limit-sdk" },
     { name = "render-orchestrator", editable = "services/render-orchestrator" },
     { name = "schemas", editable = "packages/schemas" },
     { name = "storage-sdk", editable = "packages/storage-sdk" },
@@ -2262,6 +2268,28 @@ wheels = [
 ]
 
 [[package]]
+name = "quota-sdk"
+version = "0.1.0"
+source = { editable = "packages/quota-sdk" }
+dependencies = [
+    { name = "redis" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "redis", specifier = ">=5.0" }]
+
+[[package]]
+name = "rate-limit-sdk"
+version = "0.1.0"
+source = { editable = "packages/rate-limit-sdk" }
+dependencies = [
+    { name = "redis" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "redis", specifier = ">=5.0" }]
+
+[[package]]
 name = "redis"
 version = "8.0.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2420,6 +2448,7 @@ dependencies = [
     { name = "observability" },
     { name = "persistence" },
     { name = "post-processing" },
+    { name = "quota-sdk" },
     { name = "redis" },
     { name = "schemas" },
     { name = "temporalio" },
@@ -2437,6 +2466,7 @@ requires-dist = [
     { name = "observability", editable = "packages/observability" },
     { name = "persistence", editable = "packages/persistence" },
     { name = "post-processing", editable = "services/post-processing" },
+    { name = "quota-sdk", editable = "packages/quota-sdk" },
     { name = "redis", specifier = ">=5.0" },
     { name = "schemas", editable = "packages/schemas" },
     { name = "temporalio", specifier = ">=1.30.0" },

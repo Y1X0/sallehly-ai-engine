@@ -40,6 +40,13 @@ class IAuthProvider(ABC):
     @abstractmethod
     def verify_token(self, token: str) -> User | None: ...
 
+    @abstractmethod
+    def refresh_token(self, token: str) -> AuthToken:
+        """Issues a new token for the same user and invalidates `token`
+        (rotation, not just extension) - raises `AuthError` if `token`
+        is unknown or already expired. Phase 8 WP5,
+        docs/adr/0020-security-hardening.md."""
+
 
 class LocalAuthProvider(IAuthProvider):
     """Dev/local `IAuthProvider`: PBKDF2-HMAC-SHA256 password hashing
@@ -47,15 +54,24 @@ class LocalAuthProvider(IAuthProvider):
     tokens held in an injected `ITokenStore` (`InMemoryTokenStore` by
     default - identical behavior to every pre-WP3 environment; a real
     `RedisTokenStore` fixes the multi-replica token-recognition gap,
-    Phase 8 WP3). Every new user gets a personal default workspace
-    (`ws_<user_id>`) - see docs/adr/0011-frontend-and-auth.md for why a
-    full team/workspace-membership model is intentionally out of scope
-    for this pass.
+    Phase 8 WP3). `token_ttl_seconds` (Phase 8 WP5, default `0` =
+    never expires, unchanged from every pre-WP5 environment) is passed
+    to every `ITokenStore.set()` call. Every new user gets a personal
+    default workspace (`ws_<user_id>`) - see
+    docs/adr/0011-frontend-and-auth.md for why a full team/workspace-
+    membership model is intentionally out of scope for this pass.
     """
 
-    def __init__(self, user_store: IUserStore, token_store: ITokenStore | None = None) -> None:
+    def __init__(
+        self,
+        user_store: IUserStore,
+        token_store: ITokenStore | None = None,
+        *,
+        token_ttl_seconds: int = 0,
+    ) -> None:
         self._users = user_store
         self._tokens: ITokenStore = token_store if token_store is not None else InMemoryTokenStore()
+        self._token_ttl_seconds = token_ttl_seconds or None
 
     def register(self, email: str, password: str) -> User:
         if self._users.get_by_email(email) is not None:
@@ -78,15 +94,25 @@ class LocalAuthProvider(IAuthProvider):
         if user is None or self._hash(password, user.password_salt) != user.password_hash:
             raise AuthError("Invalid email or password")
 
-        token = secrets.token_urlsafe(32)
-        self._tokens.set(token, user.user_id)
-        return AuthToken(token=token, user_id=user.user_id)
+        return self._issue_token(user.user_id)
 
     def verify_token(self, token: str) -> User | None:
         user_id = self._tokens.get(token)
         if user_id is None:
             return None
         return self._users.get_by_id(user_id)
+
+    def refresh_token(self, token: str) -> AuthToken:
+        user_id = self._tokens.get(token)
+        if user_id is None:
+            raise AuthError("Invalid or expired token")
+        self._tokens.delete(token)
+        return self._issue_token(user_id)
+
+    def _issue_token(self, user_id: str) -> AuthToken:
+        token = secrets.token_urlsafe(32)
+        self._tokens.set(token, user_id, ttl_seconds=self._token_ttl_seconds)
+        return AuthToken(token=token, user_id=user_id)
 
     @staticmethod
     def _hash(password: str, salt: str) -> str:

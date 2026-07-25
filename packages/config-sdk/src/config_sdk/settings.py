@@ -77,6 +77,36 @@ class Settings(BaseSettings):
     sentry_dsn)."""
     sentry_dsn: str = ""
 
+    rate_limiter: str = "memory"
+    """"memory" (default, InMemoryRateLimiter) or "redis" (RedisRateLimiter -
+    correct across multiple apps/api processes). See
+    docs/adr/0020-security-hardening.md."""
+    auth_rate_limit_per_minute: int = 20
+    """Applies to POST /auth/register and /auth/login, keyed by client
+    IP (no authenticated user exists yet at that point)."""
+    generation_rate_limit_per_minute: int = 10
+    """Applies to POST .../generate-video and .../retry-generation,
+    keyed by user id."""
+
+    token_store_ttl_seconds: int = 0
+    """0 (default) = tokens never expire, unchanged from every pre-WP5
+    environment. A positive value makes LocalAuthProvider-issued tokens
+    expire after that many seconds - InMemoryTokenStore/RedisTokenStore
+    both honor it (see docs/adr/0020-security-hardening.md)."""
+
+    upload_max_bytes: int = 25 * 1024 * 1024
+    upload_allowed_content_types: str = "image/png,image/jpeg,image/webp,image/gif"
+    """Comma-separated allowlist for POST /assets/upload's Content-Type."""
+
+    quota_enforcer: str = "memory"
+    """"memory" (default, InMemoryQuotaEnforcer) or "redis"
+    (RedisQuotaEnforcer - correct across multiple apps/api processes)."""
+    max_concurrent_generations_per_workspace: int = 0
+    """0 (default) = unlimited, unchanged from every pre-WP5
+    environment. A positive value caps how many generate_video calls one
+    workspace may have in flight at once (docs/PHASE8_SCALEOUT_PLAN.md
+    items 7/25)."""
+
 
 def get_settings() -> Settings:
     return Settings()

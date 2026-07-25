@@ -24,9 +24,12 @@ class _ContextFilter(logging.Filter):
     pass them explicitly."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        record.correlation_id = context.get_correlation_id()
-        record.user_id = context.get_user_id()
-        record.project_id = context.get_project_id()
+        if not hasattr(record, "correlation_id"):
+            record.correlation_id = context.get_correlation_id()
+        if not hasattr(record, "user_id"):
+            record.user_id = context.get_user_id()
+        if not hasattr(record, "project_id"):
+            record.project_id = context.get_project_id()
         return True
 
 

@@ -241,6 +241,35 @@ Phase 6/7 below describe when each was originally built):
   contextvar inside the middleware cleared it before the exception
   handler - outside that middleware in Starlette's stack - could read
   it for the error response body.
+- **Phase 8 Scale-out WP5** (`packages/rate-limit-sdk` (new),
+  `packages/quota-sdk` (new), `apps/api` - see
+  `docs/adr/0020-security-hardening.md`): `IRateLimiter`
+  (`InMemoryRateLimiter`/`RedisRateLimiter`, `RATE_LIMITER=redis`) rate
+  limits `/auth/register`/`/auth/login` by IP and
+  `generate-video`/`retry-generation` by user id, both returning a 429
+  with `Retry-After`; `ITokenStore.set()` gained `ttl_seconds` and
+  `IAuthProvider` gained `refresh_token()` (real rotation - issues a new
+  token, invalidates the old one - `POST /auth/refresh`);
+  `GET`/`POST /jobs/{job_id}` fixed to require auth + ownership
+  (previously had neither); `IQuotaEnforcer`
+  (`InMemoryQuotaEnforcer`/`RedisQuotaEnforcer`, `QUOTA_ENFORCER=redis`,
+  `RedisQuotaEnforcer` using an atomic Lua `EVAL` to avoid a
+  check-then-increment race) caps in-flight generations per workspace
+  via `ProjectLifecycle._run_generation`; `POST /assets/upload` now
+  validates `Content-Type` against an allowlist and streams the body in
+  bounded chunks instead of one unbounded `.read()`;
+  `SecurityHeadersMiddleware` adds `X-Content-Type-Options`/
+  `X-Frame-Options`/CSP/HSTS/`Permissions-Policy` to every response. A
+  real regression the live suite caught: stacking this second
+  `BaseHTTPMiddleware` alongside WP1's `ObservabilityMiddleware` broke
+  the correlation id's path to the global exception handler
+  (`BaseHTTPMiddleware.call_next()` spawns a new task per layer, and a
+  `ContextVar.set()` inside it is invisible once control returns to the
+  parent task) - fixed by also carrying the correlation id on
+  `request.state`, which is backed by the shared ASGI `scope` and
+  survives that boundary. 30 new tests
+  (`tests/test_wp5_security_hardening.py`), full suite: 507 passed, 6
+  skipped.
 
 One thing remains genuinely unexecuted in this environment, documented
 rather than glossed over: real GPU inference (`workers/gpu-worker` needs

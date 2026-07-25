@@ -11,7 +11,7 @@ import itertools
 from api.dependencies import get_app_state
 from api.main import app
 from api.state import AppState
-from conftest import SAMPLE_PROJECT_REQUEST, build_stack
+from conftest import SAMPLE_PROJECT_REQUEST, build_stack, default_wp5_app_state_kwargs
 from fastapi.testclient import TestClient
 from observability import LoggingErrorReporter
 from video_engine_sdk import ComputeJobHandle, ComputeJobStatus, EngineJobOutput, EngineJobPayload, IComputeProvider
@@ -111,11 +111,11 @@ def test_full_lifecycle_over_http_reaches_completed_with_assets_and_jobs():
         assert len(job_ids) > 0
         assert len(asset_ids) == len(job_ids)
 
-        response = client.get(f"/jobs/{job_ids[0]}")
+        response = client.get(f"/jobs/{job_ids[0]}", headers=headers)
         assert response.status_code == 200
         assert response.json()["status"] == "completed"
 
-        response = client.get(f"/jobs/{job_ids[0]}/status")
+        response = client.get(f"/jobs/{job_ids[0]}/status", headers=headers)
         assert response.status_code == 200
         assert response.json() == {
             "job_id": job_ids[0],
@@ -180,10 +180,33 @@ def test_plan_storyboard_render_plan_require_ownership():
 
 def test_get_missing_job_returns_404():
     with _client() as client:
+        headers = _auth_headers(client)
+        response = client.get("/jobs/does-not-exist", headers=headers)
+        assert response.status_code == 404
+        response = client.get("/jobs/does-not-exist/status", headers=headers)
+        assert response.status_code == 404
+
+
+def test_get_job_without_auth_returns_401():
+    with _client() as client:
         response = client.get("/jobs/does-not-exist")
-        assert response.status_code == 404
-        response = client.get("/jobs/does-not-exist/status")
-        assert response.status_code == 404
+        assert response.status_code == 401
+
+
+def test_get_someone_elses_job_returns_403():
+    with _client() as client:
+        owner_headers = _auth_headers(client)
+        project = _create_project(client, owner_headers)
+        project_id = project["project_id"]
+        client.post(f"/projects/{project_id}/generate-plan", headers=owner_headers)
+        client.post(f"/projects/{project_id}/approve-storyboard", headers=owner_headers)
+        client.post(f"/projects/{project_id}/approve-render", headers=owner_headers)
+        response = client.post(f"/projects/{project_id}/generate-video", headers=owner_headers)
+        job_id = response.json()["generation_job_ids"][0]
+
+        other_headers = _auth_headers(client)
+        response = client.get(f"/jobs/{job_id}", headers=other_headers)
+        assert response.status_code == 403
 
 
 def test_register_login_and_get_me():
@@ -344,6 +367,7 @@ def test_generation_failure_surfaces_as_failed_status_over_http():
         error_reporter=LoggingErrorReporter(),
         memory=stack.memory,
         lifecycle=stack.lifecycle,
+        **default_wp5_app_state_kwargs(),
     )
     app.dependency_overrides[get_app_state] = lambda: failing_state
     try:

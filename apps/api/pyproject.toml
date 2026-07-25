@@ -22,6 +22,8 @@ dependencies = [
   "storage-sdk",
   "cache-sdk",
   "observability",
+  "rate-limit-sdk",
+  "quota-sdk",
   "python-multipart>=0.0.9",
 ]
 
@@ -42,6 +44,8 @@ auth = { workspace = true }
 storage-sdk = { workspace = true }
 cache-sdk = { workspace = true }
 observability = { workspace = true }
+rate-limit-sdk = { workspace = true }
+quota-sdk = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
