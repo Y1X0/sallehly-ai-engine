@@ -32,6 +32,21 @@ flowchart TD
         RC[Render Spec Generator]
     end
 
+    subgraph CIL["Cinematic Intelligence Layer (services/cinematic-intelligence)"]
+        CHAR[Character/Object/Environment<br/>Consistency Engines]
+        CONT[Scene/Camera<br/>Continuity Engines]
+        SL[Style Lock Engine]
+        PI[Prompt Intelligence Engine<br/>IPromptTranslator registry]
+        MEM[Temporal Memory Engine<br/>Director Memory Graph]
+        QA[Scene Quality Analyzer]
+        REP[Automatic Repair Engine<br/>IRepairStrategy registry]
+        CHAR --> PI
+        CONT --> PI
+        SL --> PI
+        MEM --> PI
+        QA --> REP
+    end
+
     subgraph L2["Execution Layer (GenerationPipeline)"]
         ENGINE[IVideoEngine<br/>Wan21Adapter]
         COMPUTE[IComputeProvider<br/>RunPod / local / Vast.ai]
@@ -67,11 +82,14 @@ flowchart TD
     SG -.->|approval gate 1: storyboard| API
     SG --> RC
     RC -.->|approval gate 2: render plan| API
+    RC -.->|"PromptPackage would fill positive_prompt/negative_prompt - not yet wired, see ADR 0013"| PI
     RC --> ORCH
     ORCH --> ENGINE
     ORCH --> COMPUTE
     ASSET --> ORCH
     ASSET -.->|"not yet wired into ProjectLifecycle - see ADR 0012"| TL
+    ASSET -.->|"QualityReport/RepairAction after each shot - not yet wired, see ADR 0013"| QA
+    JOB -.->|record_shot| MEM
     PKG -.-> API
 ```
 
@@ -92,6 +110,16 @@ Layer: real, ffmpeg-executable post-production (Timeline Builder,
 Transition Engine, Audio Pipeline, Subtitle System, Watermark Engine,
 `FfmpegCompositor`) and export (Export Service, Asset Packager) -
 built and tested in Phase 6, not yet wired into `ProjectLifecycle`.
+See [ADR 0013](adr/0013-cinematic-intelligence-layer.md) for the
+Cinematic Intelligence Layer: it sits between the Render Specification
+Generator and the Execution Layer, resolving each shot's
+CharacterIdentityProfile/ObjectProfile/EnvironmentProfile/StyleLock/
+ProjectMemory into a PromptPackage that would fill a RenderSpec's
+`positive_prompt`/`negative_prompt`, and consuming each completed
+GenerationJob to update ProjectMemory and run the Scene Quality
+Analyzer / Automatic Repair Engine - rule-based and metadata-driven
+throughout, built and tested in Phase 7, not yet wired into
+`ProjectLifecycle` either.
 
 ## 3. Data flow contracts
 
@@ -106,11 +134,14 @@ flowchart LR
     SB -->|approved| RP["RenderPlan<br/>(render_plan.schema.json)<br/>gate 2"]
     CM["CapabilityManifest<br/>(capability_manifest.schema.json)"] -.clamps.-> RP
     RP -->|approved| RS["RenderSpec[]<br/>(render_configuration.schema.json,<br/>embedded in RenderPlan)"]
+    PP["PromptPackage<br/>(prompt_package.schema.json)<br/>not yet wired - see ADR 0013"] -.fills positive/negative_prompt.-> RS
     RS --> GJ["GenerationJob<br/>(generation_job.schema.json)<br/>queued/running/completed/failed"]
     GJ --> Clip["RawClip"]
     Clip --> AR["AssetRecord<br/>(asset_record.schema.json)"]
     AR --> TL["Timeline<br/>(timeline.schema.json)"]
     TL --> Manifest["RenderManifest<br/>(render_manifest.schema.json)"]
+    GJ -.updates.-> PM["ProjectMemory<br/>(project_memory.schema.json)"]
+    PM -.feeds.-> PP
 ```
 
 `CreativeBrief` and `StoryOutline` are intermediate artifacts internal to
@@ -148,10 +179,16 @@ description. Summary:
 | Delivery | Post-Processing (Timeline Builder, Transition Engine, Audio Pipeline, Subtitle System, Thumbnail Engine, Watermark Engine, `FfmpegCompositor`) | `services/post-processing` | **Implemented** - real ffmpeg execution, tested against real synthetic clips (ADR 0012); not yet wired into `ProjectLifecycle` |
 | Delivery | Export Service (format/quality-preset export, Asset Packager/RenderManifest) | `services/export-service` | **Implemented** - real ffmpeg re-encode to mp4/mov/webm x 720p/1080p/1440p/4K; not yet wired into `ProjectLifecycle` |
 | Delivery | Upscaling (video upscaling, frame interpolation) | `services/post-processing` (`upscaling.py`) | Interface prepared (`IUpscaler`), `PassthroughUpscaler` stub only - real upscaling needs a GPU deployment (ADR 0012) |
+| Cinematic Intelligence | Character / Object / Environment Consistency Engines | `services/cinematic-intelligence` | **Implemented** - immutable `CharacterIdentityProfile`/mutable `ObjectProfile`/`EnvironmentProfile` (ADR 0013) |
+| Cinematic Intelligence | Scene / Camera Continuity Engines | `services/cinematic-intelligence` | **Implemented** - rule-based `ContinuityReport`s from adjacent-shot metadata diffs |
+| Cinematic Intelligence | Style Lock Engine / Reference Image Engine | `services/cinematic-intelligence` | **Implemented** - one `StyleLock` per project; `ReferencePackage`s prepared for future ControlNet/IP-Adapter, not wired to any conditioning today |
+| Cinematic Intelligence | Prompt Intelligence Engine | `services/cinematic-intelligence` (`prompt_intelligence/`) | **Implemented** - `PromptOptimizer`/`NegativePromptBuilder`/`PromptCompressor`/`PromptScorer`/`PromptVersioning` + `IPromptTranslator` plugins (wan2.1/veo/runway/luma/kling/pika) |
+| Cinematic Intelligence | Temporal Memory Engine / Director Memory Graph | `services/cinematic-intelligence` | **Implemented** - `ProjectMemory` per project; `InMemoryGraphStore` (`IGraphStore`), Neo4j-shaped for later |
+| Cinematic Intelligence | Scene Quality Analyzer / Automatic Repair Engine | `services/cinematic-intelligence` | **Implemented** - rule-based `IQualityMetric`s (no vision model); `AutomaticRepairEngine` scoped to one shot at a time |
 | Cross-cutting | Asset Manager | `services/asset-manager` | **Implemented** |
 | Cross-cutting | Auth | `packages/auth` | **Implemented** (`LocalAuthProvider`: PBKDF2 + bearer tokens; personal workspace per user, no team model yet) |
 | Cross-cutting | Config SDK | `packages/config-sdk` | **Implemented** |
-| Cross-cutting | Observability | `packages/observability` | Phase 7+ |
+| Cross-cutting | Observability | `packages/observability` | Phase 8+ |
 | Cross-cutting | Director Memory | `packages/director-memory` | **Implemented** |
 | Cross-cutting | Project persistence | `packages/persistence` | **Implemented** (in-memory; Postgres-backed is a later swap) |
 | Cross-cutting | Event system | `services/render-orchestrator` (`events.py`) | **Implemented** (in-memory; external delivery e.g. webhooks/queue is a later swap) |
@@ -160,11 +197,12 @@ description. Summary:
 | Contracts | Prompt template engine | `packages/prompt-engine` | **Implemented** |
 | Contracts | Video Engine / Compute Provider interfaces | `packages/video-engine-sdk` | **Implemented** |
 | Contracts | Render Compositor / Transition Plugin / Upscaler interfaces | `packages/video-composition-sdk` | **Implemented** |
-| Contracts | Storage abstraction | `packages/storage-sdk` | **Implemented** (local filesystem; S3/R2 Phase 7+) |
+| Contracts | Cinematic Intelligence interfaces (`IRepairStrategy`/`IPromptTranslator`/`IQualityMetric`/`IGraphStore`/`IEmbeddingProvider`/`IReferenceConditioningAdapter`) | `packages/cinematic-intelligence-sdk` | **Implemented** - last two prepared, not implemented (ADR 0013) |
+| Contracts | Storage abstraction | `packages/storage-sdk` | **Implemented** (local filesystem; S3/R2 Phase 8+) |
 | Content | Prompt Library (video-gen fragments) | `libraries/prompt-library` | Seeded |
 | Content | Prompt Templates (LLM director prompts) | `libraries/prompt-templates` | **Implemented** |
 | Content | Template Library (DirectorPlan genre templates) | `libraries/template-library` | Seeded |
-| Future | Training (custom foundation model) | `services/training` | Phase 8 |
+| Future | Training (custom foundation model) | `services/training` | Phase 9 |
 
 "Creative Director" here is the same layer the rest of this document
 calls the **AI Director** / **Creative Intelligence Layer** — see
@@ -213,7 +251,7 @@ code - this is a documented extension point, not a built feature.
 | Backend language | Python everywhere (FastAPI services) | [0003](adr/0003-language-python.md) |
 | Workflow orchestration | Temporal.io, isolated behind the Render Orchestrator | [0004](adr/0004-workflow-engine-temporal.md) |
 | GPU compute (Phase 0-3) | RunPod Serverless + rented Vast.ai instances | [0005](adr/0005-gpu-provider-runpod-vastai-first.md) |
-| GPU compute (Phase 7+) | Kubernetes GPU node pool, via a new `IComputeProvider` | [0005](adr/0005-gpu-provider-runpod-vastai-first.md) |
+| GPU compute (Phase 8+) | Kubernetes GPU node pool, via a new `IComputeProvider` | [0005](adr/0005-gpu-provider-runpod-vastai-first.md) |
 | Database | PostgreSQL | — |
 | Cache / queue backing | Redis | — |
 | Object storage | MinIO locally, S3/R2 in production | — |
@@ -225,6 +263,7 @@ code - this is a documented extension point, not a built feature.
 | API framework | FastAPI + Pydantic request models, `fastapi.testclient.TestClient` in tests | [0010](adr/0010-persistence-and-lifecycle.md) |
 | Durable workflow SDK | `temporalio` (Python SDK) - real workflow/activity code, not live-executable in this environment | [0010](adr/0010-persistence-and-lifecycle.md) |
 | Post-production compositing | `ffmpeg`/`ffprobe` (system binary, invoked via `subprocess`) - real, executable, and exercised by real tests in this environment | [0012](adr/0012-post-production-pipeline.md) |
+| Cinematic Intelligence Layer | Pure Python, rule-based/metadata-driven - no external binary, no vision model, no training | [0013](adr/0013-cinematic-intelligence-layer.md) |
 | Package/workspace management | `uv` workspace (`pyproject.toml` at root) | — |
 | Local dev | `docker-compose.yml` (Postgres, Redis, MinIO, optional Temporal dev server) | — |
 
@@ -244,6 +283,12 @@ independent product, not a feature of it.
 | **3 — Video Engine Adapter + Wan2.1** | `Wan21Adapter` completed (i2v conditioning mapping, seed handling, generation params), production `RunPodProvider` (real HTTP client, retry-with-backoff, tested against `httpx.MockTransport`), `GenerationPipeline` + `GenerationJob` lifecycle, `AssetManager` + `packages/storage-sdk`, engine/compute registries wired in `config_sdk`. Real GPU execution still needs `workers/gpu-worker` deployed with actual Wan2.1 weights - an infra step outside this environment | Done |
 | **4 — Orchestration** | `ProjectLifecycle` (full create→plan→both gates→generate flow, with reject/regenerate on each gate), `packages/persistence` (`IProjectStore`), event system (`IEventBus`), `SyncProjectOrchestrator`, real `ProjectGenerationWorkflow`/activities (`temporalio`, structurally validated but not live-executable here), `apps/api` implementing the full project/job/asset endpoint surface, `LocalHeuristicLLMProvider` for a fully offline API. Tested end-to-end via `TestClient` including failure and regeneration paths | Done |
 | **5 — User-Facing Platform** | `packages/auth` (`IAuthProvider`/`IUserStore`, personal workspace per user); `apps/api` additions (auth routes, ownership checks, `GET /projects` list, plan/storyboard/render-plan retrieval, `retry-generation`, `assets/upload`, CORS); `apps/web-dashboard` (Next.js App Router + TypeScript + Tailwind: login/register, project dashboard, creative workspace with lifecycle timeline/scene-shot cards/approval panels/real-time job status/asset library). Tested via Vitest (unit) + Playwright (real Chromium, full lifecycle e2e) against real `uvicorn`/`next dev` servers | Done |
-| **6 — Post-Processing & Export** *(this repo's current state)* | `packages/video-composition-sdk` (`IRenderCompositor`/`ITransitionPlugin`/`IUpscaler`); `services/post-processing` (Timeline Builder, Transition Engine with 7 built-in + custom plugin support, Audio Pipeline with volume automation, Subtitle System with SRT/VTT/burn-in/multilingual, Thumbnail Engine, Watermark Engine, `FfmpegCompositor`, `PassthroughUpscaler` stub); `services/export-service` (`ExportService`: mp4/mov/webm x 720p/1080p/1440p/4K, `AssetPackager` -> `RenderManifest`). Tested with **real ffmpeg execution** against real synthetic clips (ADR 0012) - not mocked. Not yet wired into `ProjectLifecycle`/`apps/api`/`apps/web-dashboard` | Done |
-| **7 — Scale-out** | `VastAIProvider` completion, `KubernetesProvider`, autoscaling, caching, billing, wiring post-production into `ProjectLifecycle`/API/frontend | Not started |
-| **8 — Custom foundation model track** | `services/training`; new `IVideoEngine` implementation replacing/augmenting Wan2.1 | Not started |
+| **6 — Post-Processing & Export** | `packages/video-composition-sdk` (`IRenderCompositor`/`ITransitionPlugin`/`IUpscaler`); `services/post-processing` (Timeline Builder, Transition Engine with 7 built-in + custom plugin support, Audio Pipeline with volume automation, Subtitle System with SRT/VTT/burn-in/multilingual, Thumbnail Engine, Watermark Engine, `FfmpegCompositor`, `PassthroughUpscaler` stub); `services/export-service` (`ExportService`: mp4/mov/webm x 720p/1080p/1440p/4K, `AssetPackager` -> `RenderManifest`). Tested with **real ffmpeg execution** against real synthetic clips (ADR 0012) - not mocked. Not yet wired into `ProjectLifecycle`/`apps/api`/`apps/web-dashboard` | Done |
+| **7 — Cinematic Intelligence Layer** *(this repo's current state)* | `packages/cinematic-intelligence-sdk`; `services/cinematic-intelligence` (Character/Object/Environment Consistency Engines, Scene/Camera Continuity Engines, Style Lock Engine, Reference Image Engine, Prompt Intelligence Engine, Temporal Memory Engine, Director Memory Graph, Scene Quality Analyzer, Automatic Repair Engine). Rule-based/metadata-driven throughout - no vision model in the loop; `IEmbeddingProvider`/`IReferenceConditioningAdapter` prepared, not implemented (ADR 0013). ≥95% test coverage on every new module. Not yet wired into `ProjectLifecycle`/`apps/api`/`apps/web-dashboard` | Done |
+| **8 — Scale-out** | `VastAIProvider` completion, `KubernetesProvider`, autoscaling, caching, billing, wiring post-production + cinematic intelligence into `ProjectLifecycle`/API/frontend | Not started |
+| **9 — Custom foundation model track** | `services/training`; new `IVideoEngine` implementation replacing/augmenting Wan2.1 | Not started |
+
+Phases were renumbered as of Phase 7 (Cinematic Intelligence Layer);
+earlier ADRs (0002, 0005) reference "Phase 7" meaning what is now
+**Phase 8 - Scale-out** above - the Kubernetes/`IComputeProvider`
+migration those ADRs describe, not this layer.

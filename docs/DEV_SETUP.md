@@ -125,6 +125,38 @@ export = ExportService(assets).export(director_plan["project_id"], result.output
 manifest = AssetPackager().package(director_plan["project_id"], export)
 ```
 
+## 3d. Cinematic Intelligence Layer (services/cinematic-intelligence)
+
+Not wired into `apps/api`/`ProjectLifecycle` yet (ADR 0013) - pure
+Python, no external binary or model, exercised directly today:
+
+```python
+import cinematic_intelligence as ci
+
+ci.register_defaults()  # prompt translators, quality metrics, repair strategies -> their registries
+
+characters = ci.CharacterConsistencyEngine()
+alice = characters.establish(
+    "proj_1", "Alice",
+    {"face_description": "oval face, freckles", "age_range": "adult", "skin_tone": "tan"},
+)  # created once; every later shot calls characters.get("char_...") to reuse it, never re-establishes it
+
+style_lock = ci.StyleLockEngine()
+lock = style_lock.lock("proj_1", {"visual_style": "cinematic photorealistic"})
+
+prompts = ci.PromptIntelligenceEngine()
+package = prompts.build("proj_1", "shot_1", "Alice walks into the room", characters=[alice], style_lock=lock)
+translated = prompts.translate(package, "wan2.1")  # -> RenderSpec.positive_prompt/negative_prompt
+
+memory = ci.TemporalMemoryEngine()
+memory.record_shot("proj_1", "shot_1", "scene_1", "Alice enters", character_ids=["char_alice"])
+
+quality = ci.SceneQualityAnalyzer()
+report = quality.analyze("proj_1", "shot_1", prompt_score=package["score"])
+if report["repair_recommended"]:
+    ci.AutomaticRepairEngine().repair(report, context={"current_positive_prompt": package["positive_prompt"]})
+```
+
 ## 4. Exercise the pipeline without a GPU
 
 Set `COMPUTE_PROVIDER=local` (the `.env.example` and `apps/api` default).
@@ -157,6 +189,22 @@ Tests in `test_ffmpeg_compositor.py`/`test_thumbnail_engine.py`/
 `test_asset_packaging.py` actually run `ffmpeg` against real synthetic
 clips (`tests/media_helpers.py`) - they `skip` (not fail) if `ffmpeg`
 isn't installed.
+
+Cinematic Intelligence Layer tests (`test_character_consistency.py`,
+`test_object_consistency.py`, `test_environment_consistency.py`,
+`test_scene_continuity.py`, `test_camera_continuity.py`,
+`test_style_lock.py`, `test_reference_images.py`,
+`test_prompt_intelligence.py`, `test_temporal_memory.py`,
+`test_memory_graph.py`, `test_quality_analyzer.py`,
+`test_repair_engine.py`) are pure Python - no `ffmpeg`, no network, no
+model download - and always run. Check coverage on just this layer with:
+
+```bash
+uv run pytest tests/ -k "cinematic or consistency or continuity or style_lock or reference_images or prompt_intelligence or temporal_memory or memory_graph or quality_analyzer or repair_engine" \
+  --cov=services/cinematic-intelligence/src/cinematic_intelligence \
+  --cov=packages/cinematic-intelligence-sdk/src/cinematic_intelligence_sdk \
+  --cov-report=term-missing
+```
 
 Frontend (`apps/web-dashboard`):
 

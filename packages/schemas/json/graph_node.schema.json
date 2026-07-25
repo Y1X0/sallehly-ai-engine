@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/graph_node.schema.json",
+  "title": "GraphNode",
+  "description": "One node in the Director Memory Graph (Cinematic Intelligence Layer, Phase 7) - the memory backbone future AI Directors query instead of re-reading raw project history. Embedded, no schema_version of its own (like camera.schema.json/motion.schema.json) - it only ever exists inside an IGraphStore.",
+  "type": "object",
+  "required": ["node_id", "project_id", "type", "label"],
+  "properties": {
+    "node_id": { "type": "string" },
+    "project_id": { "type": "string" },
+    "type": { "type": "string", "enum": ["character", "object", "location", "event", "style"] },
+    "label": { "type": "string" },
+    "ref_id": {
+      "type": "string",
+      "description": "The character_id/object_id/environment_id/style_lock_id/event_id this node represents, for lookup in its owning profile store."
+    },
+    "properties": {
+      "type": "object",
+      "description": "Free-form key/value attributes copied onto the node for cheap graph queries without a join back to the profile store.",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

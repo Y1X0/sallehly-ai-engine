@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/quality_report.schema.json",
+  "title": "QualityReport",
+  "description": "Output of the Scene Quality Analyzer (Cinematic Intelligence Layer, Phase 7) for a single generated shot. Scores are heuristic - derived from ContinuityReport violations, StyleLock/CameraContinuity comparisons, and PromptPackage.score - not from a trained perceptual model. `embeddings_used` is always false in Phase 7; see IEmbeddingProvider in packages/cinematic-intelligence-sdk for why real CLIP/DINO scoring is prepared, not implemented.",
+  "type": "object",
+  "required": ["schema_version", "report_id", "project_id", "shot_id", "scores", "embeddings_used"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "report_id": { "type": "string" },
+    "project_id": { "type": "string" },
+    "shot_id": { "type": "string" },
+    "scores": {
+      "type": "object",
+      "required": ["identity_consistency", "camera_consistency", "lighting_consistency", "style_consistency", "composition_quality", "prompt_adherence", "motion_quality", "overall"],
+      "properties": {
+        "identity_consistency": { "type": "number", "minimum": 0, "maximum": 1 },
+        "camera_consistency": { "type": "number", "minimum": 0, "maximum": 1 },
+        "lighting_consistency": { "type": "number", "minimum": 0, "maximum": 1 },
+        "style_consistency": { "type": "number", "minimum": 0, "maximum": 1 },
+        "composition_quality": { "type": "number", "minimum": 0, "maximum": 1 },
+        "prompt_adherence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "motion_quality": { "type": "number", "minimum": 0, "maximum": 1 },
+        "overall": { "type": "number", "minimum": 0, "maximum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["category", "severity", "description"],
+        "properties": {
+          "category": { "type": "string", "enum": ["identity", "camera", "lighting", "style", "composition", "prompt", "motion"] },
+          "severity": { "type": "string", "enum": ["info", "warning", "critical"] },
+          "description": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "repair_recommended": { "type": "boolean", "default": false },
+    "embeddings_used": {
+      "type": "boolean",
+      "const": false,
+      "description": "Always false in Phase 7 - scores are rule-based, not from CLIP/DINO embeddings."
+    },
+    "generated_at": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

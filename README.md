@@ -17,8 +17,10 @@ POST /projects  (apps/api)
    -> [approval gate 1: storyboard]  (WAITING_STORYBOARD_APPROVAL)
         -> Render Specification Generator (engine-agnostic RenderPlan)
    -> [approval gate 2: render plan]  (WAITING_RENDER_APPROVAL)
+   -> Cinematic Intelligence Layer (Character/Object/Environment/Style memory -> PromptPackage)
    -> Video Engine Adapter (Wan2.1) + Compute Provider (RunPod / local)
    -> GenerationJob (queued -> running -> completed/failed) + AssetManager
+        -> Scene Quality Analyzer -> Automatic Repair Engine (per-shot, as needed)
    -> Timeline Builder -> Transition Engine / Audio Pipeline / Subtitle System / Watermark Engine
    -> FfmpegCompositor (master video) -> Export Service (mp4/mov/webm x 720p-4K) -> RenderManifest
 ```
@@ -36,14 +38,17 @@ design, [`docs/DECISIONS.md`](docs/DECISIONS.md) for the decision log, and
 
 ## Status
 
-**Phase 6 — Post-production pipeline.** A user can register, submit a
-creative idea, review and approve/reject the storyboard and render plan,
-and watch it through to a generated video asset — entirely from a real
-browser UI, which talks to `apps/api` and nothing else — and every
+**Phase 7 — Cinematic Intelligence Layer.** A user can register, submit
+a creative idea, review and approve/reject the storyboard and render
+plan, and watch it through to a generated video asset — entirely from a
+real browser UI, which talks to `apps/api` and nothing else — every
 project's per-shot clips can be stitched, mixed, subtitled, watermarked,
 and exported to a final deliverable by a real, ffmpeg-executable
-post-production pipeline (not yet wired into the API/frontend - see
-Phase 6 below):
+post-production pipeline, and a rule-based Cinematic Intelligence Layer
+now exists to keep a project's characters/objects/environments/style/
+camera consistent shot to shot (neither the post-production pipeline
+nor the intelligence layer is wired into the API/frontend yet - see
+Phase 6/7 below):
 
 - **Phase 1** (`services/ai-director`, `CreativeDirector`): Creative
   Brief Parser → Story Planner (LLM-backed) → Scene Generator → Shot
@@ -108,6 +113,37 @@ Phase 6 below):
   executable dependency here. `IUpscaler`/`PassthroughUpscaler` is the
   one honest exception: prepared per Phase 6's explicit scope, not
   implemented, since real upscaling needs a GPU model deployment.
+- **Phase 7** (`packages/cinematic-intelligence-sdk`,
+  `services/cinematic-intelligence`): sits between the Render
+  Specification Generator and the Video Engine Adapter. The
+  `Character`/`Object`/`Environment Consistency Engines` create
+  immutable `CharacterIdentityProfile`s (reused, never regenerated) and
+  track evolving object/environment state; the `Scene`/`Camera
+  Continuity Engines` diff adjacent shots' entry/exit points, eye
+  lines, actor positions, motion direction, timing, lens, height, and
+  movement into a `ContinuityReport`; the `Style Lock Engine` locks one
+  global look per project and flags drift; the `Reference Image
+  Engine` builds reusable reference packages; the `Prompt Intelligence
+  Engine` builds every shot's prompt from that memory (never a raw
+  prompt) with a real `PromptOptimizer`/`NegativePromptBuilder`/
+  `PromptCompressor`/`PromptScorer`/`PromptVersioning` and
+  `IPromptTranslator` plugins for wan2.1/veo/runway/luma/kling/pika;
+  the `Temporal Memory Engine` maintains one `ProjectMemory` per
+  project, updated after every shot; the `Director Memory Graph`
+  builds a real (in-memory today, Neo4j-shaped) node/edge graph; the
+  `Scene Quality Analyzer` scores each shot from that same continuity/
+  style/prompt data via pluggable `IQualityMetric`s; the `Automatic
+  Repair Engine` routes a shot's worst-scoring dimension to a matching
+  `IRepairStrategy`, always scoped to that one shot. Every extension
+  point (`IPromptTranslator`, `IQualityMetric`, `IRepairStrategy`) is a
+  real `config_sdk.Registry`, the same plugin mechanism Phase 6
+  established. **Two interfaces are prepared, not implemented:**
+  `IEmbeddingProvider` (CLIP/DINO perceptual scoring) and
+  `IReferenceConditioningAdapter` (ControlNet/IP-Adapter generation-time
+  conditioning) both need a deployed vision model this sandbox doesn't
+  have, and the phase explicitly forbade training one - every
+  consistency/quality signal here is genuinely computed from structured
+  metadata, not pixels. ≥95% test coverage on every new module.
 
 Two things remain genuinely unexecuted in this environment, both
 documented rather than glossed over: real GPU inference (`workers/gpu-worker`

@@ -1,0 +1,13 @@
+[project]
+name = "cinematic-intelligence-sdk"
+version = "0.1.0"
+description = "Engine-agnostic contracts for the Cinematic Intelligence Layer (Phase 7): consistency/continuity profile types, and the plugin interfaces (IRepairStrategy, IPromptTranslator, IQualityMetric, IGraphStore, IEmbeddingProvider, IReferenceConditioningAdapter) every intelligence module is built against."
+requires-python = ">=3.11"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cinematic_intelligence_sdk"]

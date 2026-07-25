@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/continuity_report.schema.json",
+  "title": "ContinuityReport",
+  "description": "Shared output shape for the Scene Continuity Engine and the Camera Continuity Engine (Cinematic Intelligence Layer, Phase 7) - a single 'is this cut still one film' verdict plus a machine-readable list of any violations detected, scoped either to a single shot-to-shot cut or to a whole scene.",
+  "type": "object",
+  "required": ["schema_version", "report_id", "project_id", "scope", "subject_id", "passed", "violations"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "report_id": { "type": "string" },
+    "project_id": { "type": "string" },
+    "scope": { "type": "string", "enum": ["scene", "camera", "shot_transition"] },
+    "subject_id": {
+      "type": "string",
+      "description": "scene_id when scope=scene, or '<shot_id>->' + the next shot_id when scope=camera/shot_transition."
+    },
+    "passed": { "type": "boolean" },
+    "violations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["violation_type", "severity", "description"],
+        "properties": {
+          "violation_type": {
+            "type": "string",
+            "enum": [
+              "eye_line_mismatch",
+              "actor_position_jump",
+              "motion_direction_flip",
+              "camera_direction_flip",
+              "impossible_camera_jump",
+              "focal_length_jump",
+              "camera_height_jump",
+              "shot_rhythm_break",
+              "entry_exit_mismatch",
+              "timing_gap",
+              "lighting_discontinuity",
+              "environment_jump",
+              "object_location_conflict",
+              "character_identity_drift",
+              "style_drift"
+            ]
+          },
+          "severity": { "type": "string", "enum": ["info", "warning", "critical"] },
+          "shot_id": { "type": "string" },
+          "related_shot_id": { "type": "string" },
+          "description": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "generated_at": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

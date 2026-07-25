@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/environment_profile.schema.json",
+  "title": "EnvironmentProfile",
+  "description": "Output of the Environment Consistency Engine (Cinematic Intelligence Layer, Phase 7). Tracks one persistent location/environment (a room, a street, a landscape) so weather, time of day, layout, and season stay coherent across every scene set there - avoiding impossible jumps like a sunny street becoming rainy at night one shot later with no narrative reason.",
+  "type": "object",
+  "required": ["schema_version", "environment_id", "project_id", "name"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "environment_id": { "type": "string" },
+    "project_id": { "type": "string" },
+    "name": { "type": "string" },
+    "weather": { "type": "string", "examples": ["clear", "overcast", "rain", "snow", "fog"] },
+    "time_of_day": {
+      "type": "string",
+      "enum": ["dawn", "morning", "midday", "golden_hour", "dusk", "night", "interior_artificial"]
+    },
+    "season": { "type": "string", "examples": ["spring", "summer", "autumn", "winter"] },
+    "architecture": { "type": "string" },
+    "layout": {
+      "type": "string",
+      "description": "Free-text room/street/geography layout description carried forward so later shots don't contradict established spatial relationships (e.g. 'door is stage-left of the window')."
+    },
+    "sky": { "type": "string" },
+    "fog": { "type": "boolean", "default": false },
+    "camera_geography_notes": {
+      "type": "string",
+      "description": "Which direction is which within this environment (e.g. 'north wall faces the street'), so the Camera Continuity Engine can validate movement/angle changes stay geographically possible."
+    },
+    "reference_image_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "first_established_scene_id": { "type": "string" },
+    "created_at": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

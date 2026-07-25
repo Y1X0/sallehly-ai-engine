@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/style_lock.schema.json",
+  "title": "StyleLock",
+  "description": "Output of the Style Lock Engine (Cinematic Intelligence Layer, Phase 7). One StyleLock per project, derived from DirectorPlan.global_style (style.schema.json) plus the Phase 7 cinematic attributes that schema doesn't carry (film stock, grain, bloom, lens effects, a global depth-of-field target). Every shot's prompt is required to reference this lock rather than restate style, so no scene can drift stylistically from the rest of the film.",
+  "type": "object",
+  "required": ["schema_version", "style_lock_id", "project_id", "base_style", "locked"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "style_lock_id": { "type": "string" },
+    "project_id": { "type": "string" },
+    "base_style": {
+      "$ref": "style.schema.json",
+      "description": "The DirectorPlan.global_style this lock was derived from."
+    },
+    "film_stock": { "type": "string", "examples": ["digital clean", "35mm film emulation", "16mm grainy"] },
+    "grain": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "intensity": { "type": "string", "enum": ["subtle", "medium", "heavy"], "default": "subtle" }
+      },
+      "additionalProperties": false
+    },
+    "depth_of_field_target": { "type": "string", "enum": ["shallow", "medium", "deep"], "default": "medium" },
+    "bloom": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "intensity": { "type": "string", "enum": ["subtle", "medium", "heavy"], "default": "subtle" }
+      },
+      "additionalProperties": false
+    },
+    "lens_effects": {
+      "type": "array",
+      "items": { "type": "string" },
+      "examples": [["subtle vignette"], ["anamorphic flares"]]
+    },
+    "lighting_language": {
+      "type": "string",
+      "description": "A short prose description of the film's overall lighting philosophy, carried into every shot's prompt (e.g. 'motivated practical lights, warm highlights, deep but detailed shadows')."
+    },
+    "locked": {
+      "type": "boolean",
+      "const": true,
+      "description": "Always true once created - fields are read-only for the lifetime of the project; a deliberate style change requires a new style_lock_id, never an in-place edit."
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

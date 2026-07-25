@@ -37,6 +37,10 @@ for the same list with paths.
 - [Post-Processing](../../services/post-processing/README.md) *(implemented, Phase 6 - Timeline Builder, Transition Engine, Audio Pipeline, Subtitle System, Thumbnail Engine, Watermark Engine, FfmpegCompositor; real ffmpeg execution)*
 - [Export Service](../../services/export-service/README.md) *(implemented, Phase 6 - format/quality-preset export, Asset Packaging/RenderManifest)*
 
+## Cinematic Intelligence Layer (implemented, Phase 7)
+
+- [Cinematic Intelligence orchestrating engines](../../services/cinematic-intelligence/README.md) *(Character/Object/Environment Consistency Engines, Scene/Camera Continuity Engines, Style Lock Engine, Reference Image Engine, Prompt Intelligence Engine, Temporal Memory Engine, Director Memory Graph, Scene Quality Analyzer, Automatic Repair Engine - rule-based/metadata-driven, ≥95% test coverage, not yet wired into `ProjectLifecycle`)*
+
 ## Cross-cutting
 
 - [Asset Manager](../../services/asset-manager/README.md)
@@ -53,6 +57,7 @@ for the same list with paths.
 - [Prompt Engine](../../packages/prompt-engine/README.md)
 - [Video Engine SDK](../../packages/video-engine-sdk/README.md)
 - [Video Composition SDK](../../packages/video-composition-sdk/README.md) *(implemented, Phase 6 - IRenderCompositor/ITransitionPlugin/IUpscaler)*
+- [Cinematic Intelligence SDK](../../packages/cinematic-intelligence-sdk/README.md) *(implemented, Phase 7 - IRepairStrategy/IPromptTranslator/IQualityMetric/IGraphStore/IEmbeddingProvider/IReferenceConditioningAdapter)*
 - [Storage SDK](../../packages/storage-sdk/README.md)
 
 ## Content

@@ -54,3 +54,20 @@ COMPUTE_PROVIDER_REGISTRY: Registry = Registry("COMPUTE_PROVIDER")
 # for the built-ins and docs/adr/0012-post-production-pipeline.md for why
 # this is a real plugin registry rather than an if/elif chain.
 TRANSITION_PLUGIN_REGISTRY: Registry = Registry("TRANSITION_PLUGIN")
+
+# Cinematic Intelligence Layer (Phase 7) plugin registries - see
+# packages/cinematic-intelligence-sdk and
+# docs/adr/0013-cinematic-intelligence-layer.md.
+
+# Keyed by RepairAction.repair_type -> an IRepairStrategy factory. Built-ins
+# in services/cinematic-intelligence/repair/.
+REPAIR_STRATEGY_REGISTRY: Registry = Registry("REPAIR_STRATEGY")
+
+# Keyed by engine_id ('wan2.1', 'veo', 'runway', 'luma', 'kling', 'pika', ...)
+# -> an IPromptTranslator factory. Built-ins in
+# services/cinematic-intelligence/prompt_intelligence/translators.py.
+PROMPT_TRANSLATOR_REGISTRY: Registry = Registry("PROMPT_TRANSLATOR")
+
+# Keyed by QualityReport.scores field name -> an IQualityMetric factory.
+# Built-ins in services/cinematic-intelligence/quality_analyzer.py.
+QUALITY_METRIC_REGISTRY: Registry = Registry("QUALITY_METRIC")

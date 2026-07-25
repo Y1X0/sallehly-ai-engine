@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/repair_action.schema.json",
+  "title": "RepairAction",
+  "description": "Output of the Automatic Repair Engine (Cinematic Intelligence Layer, Phase 7). Produced when a QualityReport recommends a repair; scoped to exactly one shot_id - the Automatic Repair Engine never regenerates a whole project. Applying a RepairAction is what bumps a shot's PromptPackage.version.",
+  "type": "object",
+  "required": ["schema_version", "repair_id", "project_id", "shot_id", "quality_report_id", "repair_type", "strategy_id", "status"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "repair_id": { "type": "string" },
+    "project_id": { "type": "string" },
+    "shot_id": { "type": "string" },
+    "quality_report_id": { "type": "string" },
+    "repair_type": {
+      "type": "string",
+      "enum": ["prompt_repair", "camera_repair", "style_repair", "identity_repair", "lighting_repair"]
+    },
+    "strategy_id": {
+      "type": "string",
+      "description": "Which IRepairStrategy plugin (REPAIR_STRATEGY_REGISTRY key) produced this action."
+    },
+    "description": { "type": "string" },
+    "before_summary": { "type": "string" },
+    "after_summary": { "type": "string" },
+    "status": { "type": "string", "enum": ["proposed", "applied", "failed"], "default": "proposed" },
+    "applied_at": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

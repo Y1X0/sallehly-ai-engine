@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/project_memory.schema.json",
+  "title": "ProjectMemory",
+  "description": "Output of the Temporal Memory Engine (Cinematic Intelligence Layer, Phase 7). One ProjectMemory per project, updated after every generated shot, and consumed by the Prompt Intelligence Engine so no shot is planned from the current prompt alone - it always has the whole project's established characters/objects/events/locations/camera/style/timeline available. This is a summary/index (ids and short entries), not the full profiles themselves - CharacterIdentityProfile/ObjectProfile/EnvironmentProfile/StyleLock remain the source of truth, looked up by the ids listed here.",
+  "type": "object",
+  "required": ["schema_version", "project_id", "character_ids", "object_ids", "environment_ids", "events", "timeline"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "project_id": { "type": "string" },
+    "character_ids": { "type": "array", "items": { "type": "string" } },
+    "object_ids": { "type": "array", "items": { "type": "string" } },
+    "environment_ids": { "type": "array", "items": { "type": "string" } },
+    "style_lock_id": { "type": "string" },
+    "events": {
+      "type": "array",
+      "description": "One entry per generated shot - what happened, who/what was involved, when.",
+      "items": {
+        "type": "object",
+        "required": ["event_id", "shot_id", "scene_id", "summary"],
+        "properties": {
+          "event_id": { "type": "string" },
+          "shot_id": { "type": "string" },
+          "scene_id": { "type": "string" },
+          "summary": { "type": "string" },
+          "character_ids": { "type": "array", "items": { "type": "string" } },
+          "object_ids": { "type": "array", "items": { "type": "string" } },
+          "environment_id": { "type": "string" },
+          "order": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "last_camera_state": {
+      "type": "object",
+      "description": "The most recently generated shot's camera setup, so the Camera Continuity Engine has a comparison point for the next one.",
+      "properties": {
+        "shot_id": { "type": "string" },
+        "camera": { "$ref": "camera.schema.json" }
+      },
+      "additionalProperties": false
+    },
+    "timeline": {
+      "type": "array",
+      "description": "Ordered index of every shot processed so far.",
+      "items": {
+        "type": "object",
+        "required": ["shot_id", "scene_id", "order"],
+        "properties": {
+          "shot_id": { "type": "string" },
+          "scene_id": { "type": "string" },
+          "order": { "type": "integer", "minimum": 0 },
+          "summary": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "updated_at": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

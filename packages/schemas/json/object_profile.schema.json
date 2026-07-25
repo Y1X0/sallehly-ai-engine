@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/object_profile.schema.json",
+  "title": "ObjectProfile",
+  "description": "Output of the Object Consistency Engine (Cinematic Intelligence Layer, Phase 7). Tracks one persistent, narratively significant object (a car, a phone, a hammer, a door...) across every scene it appears in, so its material/color/damage state never contradicts itself between shots.",
+  "type": "object",
+  "required": ["schema_version", "object_id", "project_id", "name", "attributes"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "object_id": { "type": "string" },
+    "project_id": { "type": "string" },
+    "name": { "type": "string", "examples": ["car", "phone", "hammer", "chair", "door", "pet", "tree"] },
+    "attributes": {
+      "type": "object",
+      "properties": {
+        "materials": { "type": "array", "items": { "type": "string" } },
+        "colors": { "type": "array", "items": { "type": "string" } },
+        "damage_state": { "type": "string", "default": "pristine", "examples": ["pristine", "worn", "scratched", "broken"] },
+        "size_notes": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "location_history": {
+      "type": "array",
+      "description": "Ordered record of where this object was last established, so a later shot can't place it somewhere it never moved to.",
+      "items": {
+        "type": "object",
+        "required": ["scene_id", "shot_id", "location"],
+        "properties": {
+          "scene_id": { "type": "string" },
+          "shot_id": { "type": "string" },
+          "location": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "reference_image_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

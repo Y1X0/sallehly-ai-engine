@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/character_identity_profile.schema.json",
+  "title": "CharacterIdentityProfile",
+  "description": "Output of the Character Consistency Engine (Cinematic Intelligence Layer, Phase 7). Created once per character and never regenerated - every shot referencing this character_id reuses this profile instead of re-describing the character from scratch, which is what keeps a character looking like the same person across every shot and scene in a project.",
+  "type": "object",
+  "required": ["schema_version", "character_id", "project_id", "display_name", "identity", "locked"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "character_id": { "type": "string" },
+    "project_id": { "type": "string" },
+    "display_name": { "type": "string" },
+    "identity": {
+      "type": "object",
+      "description": "The attributes that must not drift between shots.",
+      "required": ["face_description", "age_range", "skin_tone"],
+      "properties": {
+        "face_description": { "type": "string" },
+        "hair": {
+          "type": "object",
+          "properties": {
+            "color": { "type": "string" },
+            "style": { "type": "string" },
+            "length": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "clothing_default": { "type": "string", "description": "The default/signature outfit, reused unless a shot explicitly calls for a wardrobe change." },
+        "accessories": { "type": "array", "items": { "type": "string" } },
+        "proportions": { "type": "string", "examples": ["average build", "tall and lean"] },
+        "age_range": { "type": "string", "examples": ["child", "teen", "young_adult", "adult", "middle_aged", "elderly"] },
+        "skin_tone": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "expression_bank": {
+      "type": "array",
+      "description": "Reusable named expressions this character can be directed into, each optionally backed by a reference image.",
+      "items": {
+        "type": "object",
+        "required": ["expression"],
+        "properties": {
+          "expression": { "type": "string", "examples": ["neutral", "smiling", "concerned", "determined"] },
+          "reference_asset_id": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "reference_image_ids": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Asset ids of the Reference Image Engine's character reference package for this character."
+    },
+    "consistency_seed": {
+      "type": "integer",
+      "description": "Shared seed reused across every shot featuring this character, for engines that support seeding."
+    },
+    "lora_binding": {
+      "type": "object",
+      "description": "Prepared, not implemented (Phase 7 scope) - a future per-character LoRA weight, applied by an engine adapter that supports LoRA loading. Absent means no LoRA is bound.",
+      "properties": {
+        "lora_id": { "type": "string" },
+        "weight": { "type": "number", "minimum": 0, "maximum": 2 }
+      },
+      "required": ["lora_id"],
+      "additionalProperties": false
+    },
+    "locked": {
+      "type": "boolean",
+      "const": true,
+      "description": "Always true - a CharacterIdentityProfile is immutable once created. Corrections create a new version via a repair action, never an in-place mutation of identity fields."
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

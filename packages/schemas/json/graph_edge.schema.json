@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/graph_edge.schema.json",
+  "title": "GraphEdge",
+  "description": "One directed edge in the Director Memory Graph (Cinematic Intelligence Layer, Phase 7), connecting two GraphNodes. Embedded, no schema_version of its own - see graph_node.schema.json.",
+  "type": "object",
+  "required": ["edge_id", "project_id", "type", "from_node_id", "to_node_id"],
+  "properties": {
+    "edge_id": { "type": "string" },
+    "project_id": { "type": "string" },
+    "type": { "type": "string", "enum": ["appears_in", "uses", "wears", "located_at", "moves_to", "speaks_to"] },
+    "from_node_id": { "type": "string" },
+    "to_node_id": { "type": "string" },
+    "properties": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

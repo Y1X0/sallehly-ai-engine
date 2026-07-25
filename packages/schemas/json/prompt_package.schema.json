@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sallehly.ai/prompt_package.schema.json",
+  "title": "PromptPackage",
+  "description": "Output of the Prompt Intelligence Engine (Cinematic Intelligence Layer, Phase 7) for a single shot. Built entirely from continuity/memory context, never from a raw hand-written prompt - see PromptOptimizer. Consumed by the Render Configuration Compiler to fill RenderSpec.positive_prompt/negative_prompt (render_configuration.schema.json), keeping the engine-agnostic RenderSpec contract itself unchanged.",
+  "type": "object",
+  "required": ["schema_version", "prompt_id", "project_id", "shot_id", "version", "positive_prompt", "negative_prompt", "source_context"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "prompt_id": { "type": "string" },
+    "project_id": { "type": "string" },
+    "shot_id": { "type": "string" },
+    "version": { "type": "integer", "minimum": 1, "description": "Incremented every time PromptVersioning regenerates this shot's prompt (e.g. after a repair)." },
+    "positive_prompt": { "type": "string" },
+    "negative_prompt": { "type": "string" },
+    "source_context": {
+      "type": "object",
+      "description": "What memory/continuity state this prompt was built from - the audit trail PromptOptimizer used instead of a raw text prompt.",
+      "properties": {
+        "character_ids": { "type": "array", "items": { "type": "string" } },
+        "object_ids": { "type": "array", "items": { "type": "string" } },
+        "environment_id": { "type": "string" },
+        "style_lock_id": { "type": "string" },
+        "camera_notes": { "type": "string" },
+        "continuity_notes": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "engine_id": {
+      "type": "string",
+      "description": "Set once a PromptTranslator plugin has translated this package for a specific engine (wan2.1, veo, runway, luma, kling, pika, ...)."
+    },
+    "translated_prompt": {
+      "type": "string",
+      "description": "The engine-specific rendering of positive_prompt after translation, if engine_id is set."
+    },
+    "compressed": { "type": "boolean", "default": false },
+    "score": {
+      "type": "object",
+      "description": "Set by PromptScorer. Heuristic, not model-based - see docs/adr/0013 for why.",
+      "properties": {
+        "adherence_estimate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "length_score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "redundancy_score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "overall": { "type": "number", "minimum": 0, "maximum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

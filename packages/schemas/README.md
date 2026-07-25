@@ -32,6 +32,21 @@ text.
 | `branding_package.schema.json` | caller (project brief / API), embedded in `timeline` | Watermark Engine |
 | `export_spec.schema.json` | caller (API) | Export Service |
 | `render_manifest.schema.json` | Asset Packager (`services/export-service`) | Frontend/API, CDN delivery |
+| `character_identity_profile.schema.json` | Character Consistency Engine (`services/cinematic-intelligence`) | Prompt Intelligence Engine, Scene/Camera Continuity Engines, Director Memory Graph |
+| `object_profile.schema.json` | Object Consistency Engine | Prompt Intelligence Engine, Continuity Engines |
+| `environment_profile.schema.json` | Environment Consistency Engine | Prompt Intelligence Engine, Continuity Engines |
+| `continuity_report.schema.json` | Scene Continuity Engine, Camera Continuity Engine | Scene Quality Analyzer, Automatic Repair Engine |
+| `style_lock.schema.json` | Style Lock Engine | Prompt Intelligence Engine, Render Configuration Compiler (via Prompt Package) |
+| `reference_package.schema.json` | Reference Image Engine | Prompt Intelligence Engine, future ControlNet/IP-Adapter conditioning |
+| `prompt_package.schema.json` | Prompt Intelligence Engine | Render Configuration Compiler (fills `render_configuration.positive_prompt`/`negative_prompt`) |
+| `project_memory.schema.json` | Temporal Memory Engine | Prompt Intelligence Engine, all Consistency/Continuity Engines |
+| `quality_report.schema.json` | Scene Quality Analyzer | Automatic Repair Engine |
+| `repair_action.schema.json` | Automatic Repair Engine | Prompt Intelligence Engine (bumps `prompt_package.version`) |
+| `graph_node.schema.json` / `graph_edge.schema.json` | Director Memory Graph | future AI Director iterations |
+
+See `docs/adr/0013-cinematic-intelligence-layer.md` for how these fit
+together as the Cinematic Intelligence Layer, sitting between the
+Creative Compiler and the Video Engine Adapter.
 
 ## Rules
 
