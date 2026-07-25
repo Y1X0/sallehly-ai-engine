@@ -62,6 +62,11 @@ workflows/
      (`apps/api/src/api/temporal_worker.py`) - see that ADR's
      Consequences for the one real limitation today's in-memory stores
      put on running the worker as a genuinely separate OS process.
+     **That limitation is fixed as of Phase 8 WP2**
+     (`docs/adr/0016-postgres-persistence.md`): `PostgresProjectStore`
+     (`packages/persistence`, `PROJECT_STORE=postgres`) gives the API
+     and worker processes a real shared backing store, so they no
+     longer need to share one in-process `InMemoryProjectStore`.
 
 ## Interface
 

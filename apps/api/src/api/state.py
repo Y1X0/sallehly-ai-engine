@@ -98,7 +98,17 @@ def build_app_state(settings: Settings) -> AppState:
         engine=engine, compute_provider=compute, asset_manager=asset_manager, job_store=job_store
     )
 
-    project_store: IProjectStore = InMemoryProjectStore()
+    project_store: IProjectStore
+    if settings.project_store == "postgres":
+        # Lazy import: keeps `sqlalchemy`/`psycopg` off the hot path for
+        # every environment that never selects it - same discipline as
+        # the temporal client import below. See
+        # docs/adr/0016-postgres-persistence.md.
+        from persistence import PostgresProjectStore
+
+        project_store = PostgresProjectStore(settings.database_url)
+    else:
+        project_store = InMemoryProjectStore()
     events = InMemoryEventBus()
     cinematic = CinematicIntelligenceCoordinator()
     post_production = PostProductionRunner(asset_manager)

@@ -6,7 +6,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    database_url: str = "postgresql://sallehly:sallehly@localhost:5432/video_engine"
+    database_url: str = "postgresql+psycopg://sallehly:sallehly@localhost:5432/video_engine"
+    """Uses the "+psycopg" (psycopg3) dialect explicitly - SQLAlchemy's
+    bare "postgresql://" defaults to psycopg2, which packages/persistence
+    does not depend on (see PostgresProjectStore, Phase 8 WP2)."""
+    project_store: str = "memory"
+    """"memory" (default, InMemoryProjectStore - unchanged from every
+    pre-Phase-8 environment) or "postgres" (PostgresProjectStore - real
+    Postgres persistence, see docs/adr/0016-postgres-persistence.md)."""
     redis_url: str = "redis://localhost:6379/0"
 
     storage_endpoint_url: str = "http://localhost:9000"

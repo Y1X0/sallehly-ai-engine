@@ -187,6 +187,15 @@ Phase 6/7 below describe when each was originally built):
   worker-restart durability test). `ORCHESTRATOR=temporal` selects it
   alongside the default `sync` driver, zero route-handler changes in
   `apps/api`.
+- **Phase 8 Scale-out WP2** (`packages/persistence` - see
+  `docs/adr/0016-postgres-persistence.md`): `PostgresProjectStore`, a
+  second real `IProjectStore` implementation (SQLAlchemy Core,
+  `SELECT ... FOR UPDATE` row locking against concurrent writers), is
+  genuinely executed - not just structurally validated - against a real
+  local Postgres 16 server (`tests/test_postgres_project_store.py`), with
+  a real, applied Alembic migration (`packages/persistence/alembic`).
+  `PROJECT_STORE=postgres` selects it alongside the default `memory`
+  driver, zero call-site changes anywhere above `IProjectStore`.
 
 One thing remains genuinely unexecuted in this environment, documented
 rather than glossed over: real GPU inference (`workers/gpu-worker` needs

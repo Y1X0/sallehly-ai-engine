@@ -3,7 +3,11 @@ name = "persistence"
 version = "0.1.0"
 description = "Project persistence abstraction (IProjectStore) - the top-level aggregate the API reads/writes"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.1",
+    "alembic>=1.13",
+]
 
 [build-system]
 requires = ["hatchling"]

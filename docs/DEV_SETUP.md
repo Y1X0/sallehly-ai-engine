@@ -69,12 +69,42 @@ against the SDK's decorators as it was through Phase 4-7 - see
 `docs/adr/0015-temporal-activation.md` for the workflow redesign this
 required and `docs/adr/0010-persistence-and-lifecycle.md` for why both
 `SyncProjectOrchestrator`/`TemporalProjectOrchestrator` exist and call
-the same `ProjectLifecycle` methods underneath. One real limitation
-today: every store `apps/api/state.py` wires is still in-memory (Phase
-8 WP2 hasn't landed - see `docs/PHASE8_SCALEOUT_PLAN.md`), so the
-worker and the API process only see the same project state if they
-share one process - genuinely separate worker/API processes need WP2's
-Postgres-backed stores first.
+the same `ProjectLifecycle` methods underneath.
+
+Postgres-backed project persistence is opt-in the same way - two ways to
+get a real Postgres server:
+
+```bash
+# Option A: docker compose (`make up`, above) already starts postgres
+# with credentials matching Settings.database_url's default.
+
+# Option B: a natively-installed Postgres (no Docker required, and
+# genuinely what tests/test_postgres_project_store.py runs against)
+sudo service postgresql start
+sudo -u postgres psql -c "CREATE ROLE sallehly LOGIN PASSWORD 'sallehly';"
+sudo -u postgres psql -c "CREATE DATABASE video_engine OWNER sallehly;"
+```
+
+Apply the schema (real Alembic migration, not `create_all` alone):
+
+```bash
+cd packages/persistence && uv run alembic upgrade head && cd ../..
+```
+
+`apps/api`'s route handlers use `InMemoryProjectStore` by default
+(`PROJECT_STORE=memory`) - set `PROJECT_STORE=postgres` to select
+`PostgresProjectStore` instead:
+
+```bash
+PROJECT_STORE=postgres uv run uvicorn api.main:app --reload
+```
+
+Genuinely executed as of Phase 8 WP2 against a real local Postgres
+server - see `docs/adr/0016-postgres-persistence.md`. Combined with
+`ORCHESTRATOR=temporal` (WP6) above, this is what actually lets the
+worker and API run as separate OS processes sharing state only through
+Postgres and the Temporal server, rather than needing to share one
+in-process store.
 
 ## 3. Run the API
 
