@@ -54,6 +54,18 @@ interface, so route handlers never change when that swap happens.
 
 ### 3. Temporal: real code, not executable in this environment
 
+**Update (Phase 8 WP6, [ADR 0015](0015-temporal-activation.md)):** this
+section's conclusion turned out to be narrower than stated - genuinely
+true of `temporalio.testing.WorkflowEnvironment`'s ephemeral test
+server specifically (see below), not of running Temporal in this
+environment at all. A real `temporal` CLI dev server, downloaded
+directly from GitHub Releases rather than through the SDK's own
+`temporal.download` auto-downloader, runs here without issue, and
+`ProjectGenerationWorkflow`/`ProjectActivities`/`TemporalProjectOrchestrator`
+are now genuinely executed against it (`tests/test_temporal_orchestrator.py`).
+The rest of this section is preserved as an accurate record of what was
+true and knowable at Phase 4.
+
 `temporalio` installs and imports cleanly, and
 `workflow._Definition.from_class(ProjectGenerationWorkflow)` /
 `ProjectActivities.*.__temporal_activity_definition` confirm every

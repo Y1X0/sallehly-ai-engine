@@ -218,6 +218,7 @@ def test_finalize_and_render_manifest_succeed_over_http(tmp_path):
         auth_provider=stack.auth_provider,
         cinematic_intelligence=stack.cinematic_intelligence,
         memory=stack.memory,
+        lifecycle=stack.lifecycle,
     )
     app.dependency_overrides[get_app_state] = lambda: custom_state
     try:

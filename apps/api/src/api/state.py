@@ -39,6 +39,13 @@ class AppState:
     auth_provider: IAuthProvider
     memory: IDirectorMemoryStore
     cinematic_intelligence: CinematicIntelligenceCoordinator
+    lifecycle: ProjectLifecycle
+    """Exposed separately from `orchestrator` (Phase 8 WP6, ADR 0015) so
+    `apps/api/src/api/temporal_worker.py` - a standalone process, not a
+    route handler - can host the exact same `ProjectLifecycle` a
+    Temporal worker's `ProjectActivities` needs, reusing this one
+    function as the single source of truth for how every concrete
+    provider is wired, whether the API or the worker process reads it."""
 
 
 def build_app_state(settings: Settings) -> AppState:
@@ -105,7 +112,23 @@ def build_app_state(settings: Settings) -> AppState:
         cinematic_intelligence=cinematic,
         post_production=post_production,
     )
-    orchestrator: IProjectOrchestrator = SyncProjectOrchestrator(lifecycle)
+    orchestrator: IProjectOrchestrator
+    if settings.orchestrator == "temporal":
+        # Lazy import: keeps `temporalio` off the hot path for every
+        # environment that never selects it (the "sync" default every
+        # pre-Phase-8 deployment and this environment's own tests still
+        # use) - same discipline as ClaudeProvider/RunPodProvider's own
+        # lazy imports above. See docs/adr/0015-temporal-activation.md.
+        import asyncio
+
+        from temporalio.client import Client
+
+        from render_orchestrator.workflows import TemporalProjectOrchestrator
+
+        client = asyncio.run(Client.connect(settings.temporal_address, namespace=settings.temporal_namespace))
+        orchestrator = TemporalProjectOrchestrator(client, settings.temporal_task_queue)
+    else:
+        orchestrator = SyncProjectOrchestrator(lifecycle)
 
     user_store: IUserStore = InMemoryUserStore()
     auth_provider: IAuthProvider = LocalAuthProvider(user_store)
@@ -119,4 +142,5 @@ def build_app_state(settings: Settings) -> AppState:
         auth_provider=auth_provider,
         memory=memory,
         cinematic_intelligence=cinematic,
+        lifecycle=lifecycle,
     )

@@ -19,7 +19,9 @@ orchestrator.py         IProjectOrchestrator / SyncProjectOrchestrator - what ap
 post_production.py      PostProductionRunner - bridges GenerationPipeline's clips into the Phase 6 post-production pipeline (Phase 8)
 workflows/
   activities.py          Temporal @activity.defn wrappers around ProjectLifecycle
-  render_workflow.py      Temporal @workflow.defn ProjectGenerationWorkflow
+  render_workflow.py      Temporal @workflow.defn ProjectGenerationWorkflow (one @workflow.update per IProjectOrchestrator method - Phase 8 WP6)
+  temporal_orchestrator.py TemporalProjectOrchestrator(IProjectOrchestrator) - the durable driver (Phase 8 WP6)
+  worker.py               build_worker() - Worker hosting the workflow/activities (Phase 8 WP6)
 ```
 
 ## Three layers
@@ -41,23 +43,25 @@ workflows/
    `finalize_project(project_id)` method (`completed → post_processing →
    exported`) assembles the generated shots into one deliverable. Both
    are `None` by default - every pre-Phase-8 caller is unaffected.
-3. **Two drivers of `ProjectLifecycle`**, same method calls either way:
+3. **Two drivers of `ProjectLifecycle`**, same method calls either way -
+   selected via `Settings.orchestrator` (`"sync"` default / `"temporal"`,
+   `apps/api/state.py`):
    - **`SyncProjectOrchestrator`** (`orchestrator.py`): synchronous,
-     in-process. What `apps/api` and every test in this repo use.
-   - **`ProjectGenerationWorkflow`** (`workflows/`): a real Temporal
-     workflow whose activities (`workflows/activities.py`) each call one
-     `ProjectLifecycle` method. Durable - survives a worker crash,
+     in-process. The default for `apps/api` and every test in this repo.
+   - **`TemporalProjectOrchestrator`** (`workflows/temporal_orchestrator.py`):
+     starts/updates a real `ProjectGenerationWorkflow` via a
+     `temporalio.client.Client`. Durable - survives a worker crash,
      resumes from Temporal's replayed event history - which
-     `SyncProjectOrchestrator` cannot do. **Not executable in this
-     environment**: `temporalio.testing.WorkflowEnvironment`'s ephemeral
-     test server downloads a native binary from `temporal.download` on
-     first use, which this sandbox's network policy blocks (the same
-     class of limitation as Phase 3's live GPU inference). The workflow/
-     activity definitions are verified to register correctly with the
-     `temporalio` SDK (decorators, signal/query names) but have not been
-     executed end-to-end against a live or ephemeral Temporal server -
-     see `docs/adr/0010-persistence-and-lifecycle.md` for exactly what
-     was and wasn't verifiable here.
+     `SyncProjectOrchestrator` cannot do. **Genuinely executed as of
+     Phase 8 WP6** (`docs/adr/0015-temporal-activation.md`): a real
+     `temporal` CLI dev server (downloaded from GitHub Releases, not
+     through the SDK's own blocked auto-downloader) plus a real worker
+     (`workflows/worker.py`) are driven end-to-end in
+     `tests/test_temporal_orchestrator.py`, including a worker-restart
+     durability test. Requires a running worker process
+     (`apps/api/src/api/temporal_worker.py`) - see that ADR's
+     Consequences for the one real limitation today's in-memory stores
+     put on running the worker as a genuinely separate OS process.
 
 ## Interface
 
@@ -92,4 +96,7 @@ is tested end-to-end through `apps/api`'s real HTTP endpoints
 Cinematic Intelligence enrichment (Phase 8) are tested the same way,
 including `finalize_project`'s failure path against `LocalProvider`'s
 placeholder output and its success path against real ffmpeg-generated
-clips - see `docs/adr/0014-pipeline-integration.md`.
+clips - see `docs/adr/0014-pipeline-integration.md`. `TemporalProjectOrchestrator`
+(Phase 8 WP6) is tested the same rigorous way: real, live execution
+against an actual `temporal` CLI dev server and worker, not mocked - see
+`docs/adr/0015-temporal-activation.md`.

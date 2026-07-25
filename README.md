@@ -177,15 +177,31 @@ Phase 6/7 below describe when each was originally built):
   `sallehly-v1`, real `capabilities()`, correctly raises
   `SallehlyModelNotTrainedError` since Phase 9 hasn't produced weights
   yet), proves the swap now genuinely works via config alone.
+- **Phase 8 Scale-out WP6** (`services/render-orchestrator/workflows`,
+  `apps/api` - see `docs/adr/0015-temporal-activation.md`):
+  `ProjectGenerationWorkflow` redesigned from auto-chained signals to
+  one real `@workflow.update` per `IProjectOrchestrator` method; the new
+  `TemporalProjectOrchestrator` and `build_worker()` are genuinely
+  executed - not just structurally validated - against a real `temporal`
+  CLI dev server (`tests/test_temporal_orchestrator.py`, including a
+  worker-restart durability test). `ORCHESTRATOR=temporal` selects it
+  alongside the default `sync` driver, zero route-handler changes in
+  `apps/api`.
 
-Two things remain genuinely unexecuted in this environment, both
-documented rather than glossed over: real GPU inference (`workers/gpu-worker`
-needs actual Wan2.1 weights deployed to a GPU) and live Temporal
-execution (its ephemeral test server needs a binary download this
-sandbox's network policy blocks). Everything on the code side of both
-boundaries is implemented and tested against local/mocked equivalents -
-the same honesty class Phase 8 held its own two genuinely-vision-model-
-dependent interfaces to. See the roadmap in `docs/ARCHITECTURE.md#8-roadmap`.
+One thing remains genuinely unexecuted in this environment, documented
+rather than glossed over: real GPU inference (`workers/gpu-worker` needs
+actual Wan2.1 weights deployed to a GPU). Everything on the code side of
+that boundary is implemented and tested against local/mocked
+equivalents - the same honesty class Phase 8 held its own two
+genuinely-vision-model-dependent interfaces to. Live Temporal execution
+- long documented as the other side of this same boundary (ADR 0010) -
+turned out to be narrower than that: a real `temporal` CLI dev server
+(downloaded directly from GitHub Releases, not through the SDK's own
+blocked auto-downloader) runs here, and `ProjectGenerationWorkflow`/
+`TemporalProjectOrchestrator` are genuinely executed against it as of
+Phase 8 WP6 (`docs/adr/0015-temporal-activation.md`) - `ORCHESTRATOR=temporal`
+is a real, tested `IProjectOrchestrator` alongside the default `sync`
+driver. See the roadmap in `docs/ARCHITECTURE.md#8-roadmap`.
 
 ## Repository layout
 

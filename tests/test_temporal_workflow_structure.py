@@ -1,10 +1,12 @@
 """Structural validation of the Temporal workflow/activities: confirms
-the temporalio SDK accepts the decorators and definitions (signal/query/
-activity names register correctly). Does NOT execute the workflow - see
-docs/adr/0010-persistence-and-lifecycle.md for why a live/ephemeral
-Temporal server isn't available in this environment, and
-services/render-orchestrator/README.md for what "not executed" means
-here in practice.
+the temporalio SDK accepts the decorators and definitions (update/query/
+activity names register correctly). This is the *cheap* check that runs
+on every test invocation without needing a live server; real end-to-end
+execution against a live Temporal dev server is covered separately in
+tests/test_temporal_orchestrator.py (skipped when no server is
+reachable) - see docs/adr/0015-temporal-activation.md for how that
+became possible in this environment as of Phase 8 WP6 (a real `temporal`
+CLI binary, not the SDK's own blocked ephemeral-test-server download).
 """
 
 from __future__ import annotations
@@ -23,17 +25,23 @@ _ACTIVITY_NAMES = [
     "reject_render_plan",
     "generate_video",
     "retry_generation",
+    "finalize_project",
 ]
 
 
-def test_workflow_registers_with_expected_signals_and_queries():
+def test_workflow_registers_with_expected_updates_and_queries():
     defn = workflow._Definition.from_class(ProjectGenerationWorkflow)
     assert defn.name == "ProjectGenerationWorkflow"
-    assert set(defn.signals.keys()) == {
+    assert set(defn.updates.keys()) == {
+        "create_project",
+        "generate_creative_plan",
         "approve_storyboard",
         "reject_storyboard",
         "approve_render_plan",
         "reject_render_plan",
+        "generate_video",
+        "retry_generation",
+        "finalize_project",
     }
     assert set(defn.queries.keys()) == {"status", "project_id"}
 

@@ -16,6 +16,15 @@ class Settings(BaseSettings):
 
     temporal_address: str = "localhost:7233"
     temporal_namespace: str = "default"
+    temporal_task_queue: str = "sallehly-project-lifecycle"
+
+    orchestrator: str = "sync"
+    """"sync" (default, SyncProjectOrchestrator - unchanged from every
+    pre-Phase-8 environment) or "temporal" (TemporalProjectOrchestrator -
+    durable, crash-resumable; requires a real Temporal server at
+    temporal_address/temporal_namespace plus a worker process running
+    render_orchestrator.workflows.build_worker - see
+    docs/adr/0015-temporal-activation.md)."""
 
     llm_provider: str = "claude"
     anthropic_api_key: str = ""

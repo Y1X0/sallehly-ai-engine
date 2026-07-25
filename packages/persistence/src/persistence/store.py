@@ -86,6 +86,29 @@ class ProjectRecord:
             "updated_at": self.updated_at,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ProjectRecord":
+        """Inverse of `to_dict()` - needed anywhere a `ProjectRecord` has
+        to cross a serialization boundary and come back as a real
+        dataclass instance rather than a plain dict (e.g.
+        `TemporalProjectOrchestrator`, whose Temporal activities return
+        `.to_dict()` since activity/workflow payloads must be
+        JSON-serializable)."""
+        return cls(
+            project_id=data["project_id"],
+            workspace_id=data["workspace_id"],
+            created_by=data["created_by"],
+            brief=data["brief"],
+            status=ProjectStatus(data["status"]),
+            rejected_stage=data.get("rejected_stage"),
+            generation_job_ids=list(data.get("generation_job_ids") or []),
+            asset_ids=list(data.get("asset_ids") or []),
+            error_message=data.get("error_message"),
+            render_manifest=data.get("render_manifest"),
+            created_at=data["created_at"],
+            updated_at=data["updated_at"],
+        )
+
 
 class IProjectStore(ABC):
     @abstractmethod

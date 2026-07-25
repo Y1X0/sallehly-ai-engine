@@ -341,6 +341,7 @@ def test_generation_failure_surfaces_as_failed_status_over_http():
         auth_provider=stack.auth_provider,
         cinematic_intelligence=stack.cinematic_intelligence,
         memory=stack.memory,
+        lifecycle=stack.lifecycle,
     )
     app.dependency_overrides[get_app_state] = lambda: failing_state
     try:

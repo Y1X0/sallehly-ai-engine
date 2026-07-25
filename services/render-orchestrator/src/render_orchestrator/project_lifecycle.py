@@ -81,9 +81,16 @@ class ProjectLifecycle:
         aspect_ratio: str,
         reference_asset_ids: list[str] | None = None,
         style_preset_id: str | None = None,
+        project_id: str | None = None,
     ) -> ProjectRecord:
+        """`project_id` is normally left unset (generated here) - every
+        Phase 4-7 caller does this. `TemporalProjectOrchestrator`
+        (Phase 8 WP6) is the one caller that supplies its own: it must
+        know the id *before* calling Temporal, since it uses it as the
+        workflow id (natural create-project idempotency via Temporal's
+        own duplicate-workflow-id rejection)."""
         record = ProjectRecord(
-            project_id=f"proj_{uuid.uuid4().hex[:12]}",
+            project_id=project_id or f"proj_{uuid.uuid4().hex[:12]}",
             workspace_id=workspace_id,
             created_by=created_by,
             brief={

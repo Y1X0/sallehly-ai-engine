@@ -1,5 +1,25 @@
 # AI Director / Render Workflow
 
+**Superseded by what was actually built - kept for the cost-control/
+swap-point rationale below, not as an accurate sequence diagram.** This
+was written in Phase 2 as a forward-looking sketch, before the Render
+Orchestrator existed. What Phase 4 actually built (ADR 0010) is
+`ProjectLifecycle` as the one place the full business logic lives, with
+`ProjectActivities` (`services/render-orchestrator/src/render_orchestrator/workflows/activities.py`)
+as thin wrappers around its methods - the workflow below never talks to
+`CreativeDirector`/`CreativeCompiler`/`IVideoEngine`/`IComputeProvider`
+directly the way this diagram shows. Phase 8 WP6 (ADR 0015) further
+replaced the two-signal design below with one `@workflow.update` per
+`IProjectOrchestrator` method (`generate_creative_plan`,
+`approve_storyboard`, `reject_storyboard`, `approve_render_plan`,
+`reject_render_plan`, `generate_video`, `retry_generation`,
+`finalize_project`), since `apps/api` calls each of those as an
+independent request rather than the auto-chained flow sketched here.
+See `docs/adr/0010-persistence-and-lifecycle.md` and
+`docs/adr/0015-temporal-activation.md` for the real design and
+`services/render-orchestrator/src/render_orchestrator/workflows/render_workflow.py`
+for the actual (genuinely executed) workflow.
+
 Owned by `services/render-orchestrator`, implemented as a Temporal
 workflow (see ADR 0004). This is the single durable process that carries
 one project from a submitted brief to a finished export. As of Phase 2,

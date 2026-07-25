@@ -38,21 +38,43 @@ uv sync   # installs the whole workspace (apps/*, services/*, packages/*)
 make up      # postgres, redis, minio (docker compose up -d)
 ```
 
-Temporal's dev server is opt-in:
+Temporal's dev server is opt-in - two ways to run one:
 
 ```bash
+# Option A: docker compose (needs the Docker daemon + network access to
+# Docker Hub's registry, which some sandboxes/CI runners restrict)
 docker compose --profile temporal up -d temporal
+
+# Option B: the real temporal CLI directly - no Docker required, and
+# genuinely what tests/test_temporal_orchestrator.py runs against
+curl -sSL -o temporal-cli.tar.gz \
+  "https://github.com/temporalio/cli/releases/download/v1.5.0/temporal_cli_1.5.0_linux_amd64.tar.gz"
+tar xzf temporal-cli.tar.gz && sudo mv temporal /usr/local/bin/
+temporal server start-dev --ip 127.0.0.1 --port 7233 --ui-port 8233
 ```
 
 This runs a real Temporal server for `ProjectGenerationWorkflow`
-(`services/render-orchestrator/src/render_orchestrator/workflows/`) - a
-worker process (not included yet; run `temporalio`'s `Worker` with
-`ProjectGenerationWorkflow` and `ProjectActivities(lifecycle).all_activities()`)
-would connect to it via `temporalio.client.Client.connect("localhost:7233")`.
-The API's route handlers use `SyncProjectOrchestrator` directly by
-default (no Temporal dependency) - see
-`docs/adr/0010-persistence-and-lifecycle.md` for why both paths exist and
-call the same `ProjectLifecycle` methods underneath.
+(`services/render-orchestrator/src/render_orchestrator/workflows/`).
+`apps/api`'s route handlers use `SyncProjectOrchestrator` by default (no
+Temporal dependency, `ORCHESTRATOR=sync`) - set `ORCHESTRATOR=temporal`
+to select `TemporalProjectOrchestrator` instead, then run a worker
+process alongside the API:
+
+```bash
+ORCHESTRATOR=temporal uv run python -m api.temporal_worker
+```
+
+Genuinely executed as of Phase 8 WP6 - not just structurally validated
+against the SDK's decorators as it was through Phase 4-7 - see
+`docs/adr/0015-temporal-activation.md` for the workflow redesign this
+required and `docs/adr/0010-persistence-and-lifecycle.md` for why both
+`SyncProjectOrchestrator`/`TemporalProjectOrchestrator` exist and call
+the same `ProjectLifecycle` methods underneath. One real limitation
+today: every store `apps/api/state.py` wires is still in-memory (Phase
+8 WP2 hasn't landed - see `docs/PHASE8_SCALEOUT_PLAN.md`), so the
+worker and the API process only see the same project state if they
+share one process - genuinely separate worker/API processes need WP2's
+Postgres-backed stores first.
 
 ## 3. Run the API
 

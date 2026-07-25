@@ -23,6 +23,7 @@ from ..project_lifecycle import ProjectLifecycle
 
 @dataclass
 class CreateProjectInput:
+    project_id: str
     workspace_id: str
     created_by: str
     prompt: str
@@ -45,6 +46,12 @@ class RejectRenderPlanInput:
     quality_tier: str | None = None
 
 
+@dataclass
+class FinalizeProjectInput:
+    project_id: str
+    export_spec: dict[str, Any] | None = None
+
+
 class ProjectActivities:
     def __init__(self, lifecycle: ProjectLifecycle) -> None:
         self._lifecycle = lifecycle
@@ -59,6 +66,7 @@ class ProjectActivities:
             aspect_ratio=input.aspect_ratio,
             reference_asset_ids=input.reference_asset_ids,
             style_preset_id=input.style_preset_id,
+            project_id=input.project_id,
         )
         return record.to_dict()
 
@@ -92,6 +100,10 @@ class ProjectActivities:
     def retry_generation(self, project_id: str) -> dict[str, Any]:
         return self._lifecycle.retry_generation(project_id).to_dict()
 
+    @activity.defn
+    def finalize_project(self, input: FinalizeProjectInput) -> dict[str, Any]:
+        return self._lifecycle.finalize_project(input.project_id, input.export_spec).to_dict()
+
     def all_activities(self) -> list[Any]:
         """The bound-method list a Worker registers:
         Worker(..., activities=activities.all_activities())."""
@@ -104,4 +116,5 @@ class ProjectActivities:
             self.reject_render_plan,
             self.generate_video,
             self.retry_generation,
+            self.finalize_project,
         ]
