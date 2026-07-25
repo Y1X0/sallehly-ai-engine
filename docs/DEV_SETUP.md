@@ -106,6 +106,32 @@ worker and API run as separate OS processes sharing state only through
 Postgres and the Temporal server, rather than needing to share one
 in-process store.
 
+Redis-backed cache/event-bus/token-store are opt-in the same way - `make
+up` already starts a `redis` container matching `Settings.redis_url`'s
+default, or natively (no Docker required, genuinely what
+`tests/test_cache_sdk.py`/`tests/test_redis_event_bus.py`/
+`tests/test_redis_token_store.py` run against):
+
+```bash
+sudo service redis-server start
+redis-cli ping   # PONG
+```
+
+`apps/api`'s route handlers use `InMemoryCache`/`InMemoryEventBus`/
+`InMemoryTokenStore` by default - set any of `CACHE_BACKEND`/
+`EVENT_BUS`/`TOKEN_STORE=redis` independently to select the Redis
+implementation instead:
+
+```bash
+CACHE_BACKEND=redis EVENT_BUS=redis TOKEN_STORE=redis uv run uvicorn api.main:app --reload
+```
+
+Genuinely executed as of Phase 8 WP3 against a real local Redis server -
+see `docs/adr/0017-redis-backed-infra.md`. Combined with
+`ORCHESTRATOR=temporal` (WP6) and `PROJECT_STORE=postgres` (WP2), this
+is what lets the worker and API processes share event delivery and
+bearer-token recognition too, on top of already sharing project state.
+
 ## 3. Run the API
 
 ```bash

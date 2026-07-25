@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from .store import IUserStore, User
+from .token_store import InMemoryTokenStore, ITokenStore
 
 _PBKDF2_ITERATIONS = 200_000
 
@@ -43,15 +44,18 @@ class IAuthProvider(ABC):
 class LocalAuthProvider(IAuthProvider):
     """Dev/local `IAuthProvider`: PBKDF2-HMAC-SHA256 password hashing
     (stdlib only - no bcrypt/argon2 build dependency), opaque bearer
-    tokens held in memory. Every new user gets a personal default
-    workspace (`ws_<user_id>`) - see
-    docs/adr/0011-frontend-and-auth.md for why a full team/workspace-
-    membership model is intentionally out of scope for this pass.
+    tokens held in an injected `ITokenStore` (`InMemoryTokenStore` by
+    default - identical behavior to every pre-WP3 environment; a real
+    `RedisTokenStore` fixes the multi-replica token-recognition gap,
+    Phase 8 WP3). Every new user gets a personal default workspace
+    (`ws_<user_id>`) - see docs/adr/0011-frontend-and-auth.md for why a
+    full team/workspace-membership model is intentionally out of scope
+    for this pass.
     """
 
-    def __init__(self, user_store: IUserStore) -> None:
+    def __init__(self, user_store: IUserStore, token_store: ITokenStore | None = None) -> None:
         self._users = user_store
-        self._tokens: dict[str, str] = {}  # token -> user_id
+        self._tokens: ITokenStore = token_store if token_store is not None else InMemoryTokenStore()
 
     def register(self, email: str, password: str) -> User:
         if self._users.get_by_email(email) is not None:
@@ -75,7 +79,7 @@ class LocalAuthProvider(IAuthProvider):
             raise AuthError("Invalid email or password")
 
         token = secrets.token_urlsafe(32)
-        self._tokens[token] = user.user_id
+        self._tokens.set(token, user.user_id)
         return AuthToken(token=token, user_id=user.user_id)
 
     def verify_token(self, token: str) -> User | None:

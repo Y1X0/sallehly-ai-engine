@@ -13,7 +13,8 @@ Temporal workflow).
 ```
 jobs.py               GenerationJob / GenerationJobStatus / IGenerationJobStore  (Phase 3)
 pipeline.py            GenerationPipeline - RenderSpec -> engine -> compute -> AssetManager (Phase 3)
-events.py               EventType / Event / IEventBus  (Phase 4; POST_PROCESSING_STARTED/EXPORT_COMPLETED/EXPORT_FAILED added Phase 8)
+events.py               EventType / Event / IEventBus / InMemoryEventBus  (Phase 4; POST_PROCESSING_STARTED/EXPORT_COMPLETED/EXPORT_FAILED added Phase 8)
+redis_event_bus.py      RedisEventBus(IEventBus) - real Redis pub/sub delivery (Phase 8 WP3)
 project_lifecycle.py    ProjectLifecycle - the one place the full-lifecycle business logic lives (Phase 4; finalize_project + Cinematic Intelligence enrichment added Phase 8)
 orchestrator.py         IProjectOrchestrator / SyncProjectOrchestrator - what apps/api depends on (Phase 4)
 post_production.py      PostProductionRunner - bridges GenerationPipeline's clips into the Phase 6 post-production pipeline (Phase 8)

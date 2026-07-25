@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 from ai_director import CreativeDirector
 from asset_manager import AssetManager
-from auth import IAuthProvider, IUserStore, InMemoryUserStore, LocalAuthProvider
+from auth import IAuthProvider, ITokenStore, IUserStore, InMemoryTokenStore, InMemoryUserStore, LocalAuthProvider
+from cache_sdk import ICache, InMemoryCache
 from cinematic_intelligence import CinematicIntelligenceCoordinator
 from cinematic_intelligence.model_adapters import register_defaults as register_model_adapters
 from config_sdk import VIDEO_ENGINE_REGISTRY, Settings
@@ -15,6 +16,7 @@ from llm_providers.local_heuristic_provider import LocalHeuristicLLMProvider
 from persistence import IProjectStore, InMemoryProjectStore
 from render_orchestrator import (
     GenerationPipeline,
+    IEventBus,
     IGenerationJobStore,
     InMemoryEventBus,
     InMemoryGenerationJobStore,
@@ -26,7 +28,7 @@ from render_orchestrator import (
 from storage_sdk import IStorageProvider, LocalFilesystemStorageProvider
 from video_engine_adapter import register_defaults as register_engine_defaults
 from video_engine_adapter.compute import LocalProvider
-from video_engine_sdk import IComputeProvider, IVideoEngine
+from video_engine_sdk import CapabilityManifest, IComputeProvider, IVideoEngine
 
 
 @dataclass
@@ -80,8 +82,21 @@ def build_app_state(settings: Settings) -> AppState:
 
     director = CreativeDirector(llm_provider=llm, memory=memory)
 
+    cache: ICache
+    if settings.cache_backend == "redis":
+        # Lazy import: keeps `redis` off the hot path for every
+        # environment that never selects it - same discipline as every
+        # other lazy import in this function. See
+        # docs/adr/0017-redis-backed-infra.md.
+        from cache_sdk import RedisCache
+
+        cache = RedisCache(settings.redis_url)
+    else:
+        cache = InMemoryCache()
+
     engine: IVideoEngine = VIDEO_ENGINE_REGISTRY.create(settings.video_engine)
-    compiler = CreativeCompiler(capability_manifest=engine.capabilities(), memory=memory)
+    capability_manifest = _get_cached_capability_manifest(cache, engine, settings.video_engine)
+    compiler = CreativeCompiler(capability_manifest=capability_manifest, memory=memory)
 
     compute: IComputeProvider
     if settings.compute_provider == "runpod" and settings.runpod_api_key:
@@ -109,7 +124,17 @@ def build_app_state(settings: Settings) -> AppState:
         project_store = PostgresProjectStore(settings.database_url)
     else:
         project_store = InMemoryProjectStore()
-    events = InMemoryEventBus()
+
+    events: IEventBus
+    if settings.event_bus == "redis":
+        # Lazy import: keeps `redis` off the hot path for every
+        # environment that never selects it. See
+        # docs/adr/0017-redis-backed-infra.md.
+        from render_orchestrator.redis_event_bus import RedisEventBus
+
+        events = RedisEventBus(settings.redis_url)
+    else:
+        events = InMemoryEventBus()
     cinematic = CinematicIntelligenceCoordinator()
     post_production = PostProductionRunner(asset_manager)
     lifecycle = ProjectLifecycle(
@@ -141,7 +166,17 @@ def build_app_state(settings: Settings) -> AppState:
         orchestrator = SyncProjectOrchestrator(lifecycle)
 
     user_store: IUserStore = InMemoryUserStore()
-    auth_provider: IAuthProvider = LocalAuthProvider(user_store)
+    token_store: ITokenStore
+    if settings.token_store == "redis":
+        # Lazy import: keeps `redis` off the hot path for every
+        # environment that never selects it. See
+        # docs/adr/0017-redis-backed-infra.md.
+        from auth import RedisTokenStore
+
+        token_store = RedisTokenStore(settings.redis_url)
+    else:
+        token_store = InMemoryTokenStore()
+    auth_provider: IAuthProvider = LocalAuthProvider(user_store, token_store=token_store)
 
     return AppState(
         project_store=project_store,
@@ -154,3 +189,25 @@ def build_app_state(settings: Settings) -> AppState:
         cinematic_intelligence=cinematic,
         lifecycle=lifecycle,
     )
+
+
+def _get_cached_capability_manifest(cache: ICache, engine: IVideoEngine, video_engine: str) -> CapabilityManifest:
+    """Real `ICache` consumer proving the Phase 8 WP3 plumbing works
+    (`docs/adr/0017-redis-backed-infra.md`) - `engine.capabilities()` is
+    the first of `docs/PHASE8_SCALEOUT_PLAN.md`'s three candidate cache
+    targets (capability-manifest lookups, prompt-template renders,
+    project-list pagination), chosen as the lowest-risk one to
+    demonstrate the mechanism against a real Redis server: it's pure,
+    JSON-shaped data keyed by `video_engine`, with no correctness risk if
+    a cached value briefly outlives an engine registry change (the
+    `ttl_seconds=3600` bound already handles that)."""
+    cache_key = f"capability_manifest:{video_engine}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        cached = dict(cached)
+        cached["motion_strength_range"] = tuple(cached["motion_strength_range"])
+        return CapabilityManifest(**cached)
+
+    manifest = engine.capabilities()
+    cache.set(cache_key, asdict(manifest), ttl_seconds=3600)
+    return manifest

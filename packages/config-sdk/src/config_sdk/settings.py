@@ -15,6 +15,17 @@ class Settings(BaseSettings):
     pre-Phase-8 environment) or "postgres" (PostgresProjectStore - real
     Postgres persistence, see docs/adr/0016-postgres-persistence.md)."""
     redis_url: str = "redis://localhost:6379/0"
+    event_bus: str = "memory"
+    """"memory" (default, InMemoryEventBus - unchanged from every
+    pre-Phase-8 environment) or "redis" (RedisEventBus - real cross-
+    process pub/sub delivery over redis_url, see
+    docs/adr/0017-redis-backed-infra.md)."""
+    token_store: str = "memory"
+    """"memory" (default, InMemoryTokenStore - unchanged from every
+    pre-Phase-8 environment) or "redis" (RedisTokenStore - bearer tokens
+    recognized across every apps/api process sharing redis_url)."""
+    cache_backend: str = "memory"
+    """"memory" (default, InMemoryCache) or "redis" (RedisCache)."""
 
     storage_endpoint_url: str = "http://localhost:9000"
     storage_access_key: str = ""

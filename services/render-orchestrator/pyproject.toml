@@ -15,6 +15,7 @@ dependencies = [
   "export-service",
   "cinematic-intelligence",
   "temporalio>=1.30.0",
+  "redis>=5.0",
 ]
 
 [tool.uv.sources]

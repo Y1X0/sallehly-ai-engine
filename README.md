@@ -196,6 +196,18 @@ Phase 6/7 below describe when each was originally built):
   a real, applied Alembic migration (`packages/persistence/alembic`).
   `PROJECT_STORE=postgres` selects it alongside the default `memory`
   driver, zero call-site changes anywhere above `IProjectStore`.
+- **Phase 8 Scale-out WP3** (`packages/cache-sdk` (new),
+  `services/render-orchestrator/redis_event_bus.py`, `packages/auth` -
+  see `docs/adr/0017-redis-backed-infra.md`): a new `ICache`
+  (`InMemoryCache`/`RedisCache`), `RedisEventBus(IEventBus)`, and
+  `ITokenStore`/`RedisTokenStore` (extracted from `LocalAuthProvider`'s
+  previously-internal token dict) are all genuinely executed - not just
+  structurally validated - against a real local Redis 7 server
+  (`tests/test_cache_sdk.py`, `tests/test_redis_event_bus.py`,
+  `tests/test_redis_token_store.py`, including cross-instance delivery
+  simulating separate API/worker processes). `CACHE_BACKEND`/
+  `EVENT_BUS`/`TOKEN_STORE=redis` each independently select the Redis
+  implementation alongside the default `memory` one.
 
 One thing remains genuinely unexecuted in this environment, documented
 rather than glossed over: real GPU inference (`workers/gpu-worker` needs

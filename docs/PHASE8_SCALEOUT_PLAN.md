@@ -1,7 +1,8 @@
 # Phase 8 Scale-out: Production-Readiness Engineering Plan
 
-**Status:** In progress - WP6 (Temporal activation, ADR 0015) and WP2
-(Postgres-backed `IProjectStore`, ADR 0016) are done. WP1, WP3-5, WP7-13
+**Status:** In progress - WP6 (Temporal activation, ADR 0015), WP2
+(Postgres-backed `IProjectStore`, ADR 0016), and WP3 (Redis-backed
+cache/event bus/token store, ADR 0017) are done. WP1, WP4-5, WP7-13
 remain not started.
 
 ## 0. Scope
@@ -369,11 +370,13 @@ entry in `docs/DECISIONS.md` - these genuinely can't be assumed:
 ## 7. Summary
 
 WP6 (durable workflow execution, `TemporalProjectOrchestrator` genuinely
-executed against a real `temporal` CLI dev server - ADR 0015) and WP2
+executed against a real `temporal` CLI dev server - ADR 0015), WP2
 (durable stores, `PostgresProjectStore` genuinely executed against a
-real local Postgres server with an applied Alembic migration - ADR 0016)
-are done, per your explicit instruction to do WP6 first. WP1, WP3-5
-(logging, cache/events, object storage, security gate) remain the
+real local Postgres server with an applied Alembic migration - ADR 0016),
+and WP3 (`ICache`/`RedisEventBus`/`ITokenStore`'s Redis implementations
+genuinely executed against a real local Redis server - ADR 0017) are
+done, per your explicit instruction to do WP6 first, then databases and
+storage. WP1, WP4-5 (logging, object storage, security gate) remain the
 foundation still to land, then `VastAIProvider`/observability
 maturity/GPU worker deployment in parallel, GPU scheduling once real GPU
 workers exist, and the business layer last - gated on a pricing decision
@@ -381,5 +384,5 @@ from you. `KubernetesProvider` stays deferred until RunPod/Vast.ai
 actually becomes a bottleneck. Every item is a new implementation behind
 an interface this codebase already has - zero planned changes to
 `IVideoEngine`, `IComputeProvider`, `GenerationPipeline`,
-`ProjectLifecycle`, or `CinematicIntelligenceCoordinator`; WP6 and WP2
-both held to that, confirmed above.
+`ProjectLifecycle`, or `CinematicIntelligenceCoordinator`; WP6, WP2, and
+WP3 all held to that, confirmed above.

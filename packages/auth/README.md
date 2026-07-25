@@ -11,7 +11,8 @@ working local default, swap later" pattern as `ILLMProvider`,
 | Interface | Implementation | Notes |
 |---|---|---|
 | `IUserStore` | `InMemoryUserStore` | Dev default; Postgres-backed is a later swap, same pattern as `IProjectStore` |
-| `IAuthProvider` | `LocalAuthProvider` | PBKDF2-HMAC-SHA256 password hashing (stdlib `hashlib`, no bcrypt/argon2 build dependency), opaque bearer tokens in memory |
+| `IAuthProvider` | `LocalAuthProvider` | PBKDF2-HMAC-SHA256 password hashing (stdlib `hashlib`, no bcrypt/argon2 build dependency), opaque bearer tokens held in an injected `ITokenStore` |
+| `ITokenStore` | `InMemoryTokenStore` (default) / `RedisTokenStore` (`TOKEN_STORE=redis`) | Extracted from `LocalAuthProvider`'s previously-internal token dict (Phase 8 WP3) - `RedisTokenStore` fixes the multi-replica gap where a token issued by one `apps/api` process was unrecognized by another. See `docs/adr/0017-redis-backed-infra.md`. |
 
 A production deployment would add an OAuth/OIDC-backed `IAuthProvider`
 (Auth0, Clerk, ...) implementing the same interface - `apps/api`'s route
