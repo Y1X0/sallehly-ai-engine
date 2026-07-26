@@ -405,11 +405,16 @@ weight download) and the Docker registry CDN (building/pushing the
 worker image), and no RunPod account was available here either. Every
 real call was exercised up to that exact boundary by hand before being
 committed (the HF download call reaches a real 403 at the network
-edge, not a fabricated success) - see `docs/PRODUCTION_READINESS_CHECKLIST.md`
-for the precise remaining manual steps (build+push the image, deploy a
-real RunPod endpoint, run against real credentials). Live Temporal
-execution - long documented as a similar boundary (ADR 0010) - turned
-out to be narrower than that: a real `temporal` CLI dev server
+edge, not a fabricated success). Since a GitHub-hosted runner has
+neither restriction, `.github/workflows/deploy-runpod-endpoint.yml` now
+automates the entire build -> push (GHCR) -> deploy -> health-check
+sequence, gated by a real `runpod-production-deploy` Environment
+approval - see `docs/PRODUCTION_READINESS_CHECKLIST.md` §6 for the
+precise remaining steps (add `RUNPOD_API_KEY`/`HF_TOKEN` secrets,
+configure that Environment's reviewers, run the workflow, point
+`apps/api` at the resulting endpoint). Live Temporal execution - long
+documented as a similar boundary (ADR 0010) - turned out to be narrower
+than that: a real `temporal` CLI dev server
 (downloaded directly from GitHub Releases, not through the SDK's own
 blocked auto-downloader) runs here, and `ProjectGenerationWorkflow`/
 `TemporalProjectOrchestrator` are genuinely executed against it as of

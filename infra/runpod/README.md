@@ -15,7 +15,39 @@ calls under your account.
   (`GET {endpoint_id}/health`) via
   `video_engine_adapter.compute.RunPodProvider.health_check()`.
 
-## One-time setup (real steps, real cost)
+## Recommended: deploy via GitHub Actions
+
+`.github/workflows/deploy-runpod-endpoint.yml` runs the entire build ->
+push -> deploy -> health-check sequence for you on a real GitHub-hosted
+runner - this exists specifically because the sandbox this tooling was
+originally written in cannot reach the Docker Hub registry CDN or
+`api.runpod.ai`/`api.runpod.io` (confirmed by hand); a GitHub Actions
+runner has neither restriction.
+
+**One-time setup**, before the first run:
+
+1. Add repository secrets (Settings -> Secrets and variables -> Actions):
+   - `RUNPOD_API_KEY` (required) - from your RunPod account.
+   - `HF_TOKEN` (optional) - only if `models/registry.yaml`'s configured
+     Wan2.2 repo becomes gated (public as of this writing).
+2. Create the `runpod-production-deploy` Environment (Settings ->
+   Environments -> New environment) and set **Required reviewers** to
+   whoever is allowed to authorize a real RunPod endpoint - this is the
+   actual approval gate; no code in this repository can bypass it, the
+   same way `training-phase3-paid-gpu-gate.yml`'s `paid-gpu-approval`
+   Environment already gates real training spend in this repo.
+
+**To run it**: Actions -> "Deploy - RunPod Wan2.2 Production Endpoint" ->
+Run workflow -> check `confirm_deploy` -> Run. It builds and pushes the
+image to this repo's own GHCR (no extra registry secret needed -
+`GITHUB_TOKEN` is sufficient), deploys the endpoint (pausing for the
+Environment's required-reviewer approval), and checks its health -
+writing the image ref and endpoint id to the run's job summary. Copy
+the printed `RUNPOD_ENDPOINT_ID` into a repository secret/variable (or
+your own deployment's env) for `apps/api`'s `COMPUTE_PROVIDER=runpod`
+path.
+
+## Manual alternative (needs your own unrestricted Docker + network access)
 
 1. Build the image (from the repo root, not this directory):
    ```bash
@@ -58,11 +90,17 @@ the `local-inference`/smoke-test path used for the zero-credentials demo.
 
 ## Status
 
-Real, working deployment tooling. Not yet run against a real RunPod
-account from this project (no RunPod credentials or a pushed image
-registry available in the environment these scripts were written in) -
-the code itself is genuine, not a stub, and was validated by inspecting
-the actual installed `runpod` PyPI package's source for its real
+Real, working deployment tooling and a real CI/CD workflow to run it.
+Not yet run against a real RunPod account - no RunPod credentials or an
+unrestricted Docker/network environment were available in the sandbox
+these scripts and `.github/workflows/deploy-runpod-endpoint.yml` were
+written in. The code itself is genuine, not a stub: `deploy_endpoint.py`/
+`check_health.py` were validated by inspecting the actual installed
+`runpod` PyPI package's source for its real
 `create_template`/`create_endpoint`/`Endpoint.health()` implementations
-rather than guessed. See `docs/adr/0005-gpu-provider-runpod-vastai-first.md`
-for the original provider-choice rationale.
+rather than guessed, and the workflow's build/push/deploy/health-check
+sequence mirrors the manual steps above exactly. The first real run of
+that workflow (with `RUNPOD_API_KEY` and the `runpod-production-deploy`
+Environment configured) is the next real, human-gated step. See
+`docs/adr/0005-gpu-provider-runpod-vastai-first.md` for the original
+provider-choice rationale.

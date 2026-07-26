@@ -27,7 +27,7 @@ shipped through Phase 8 Scale-out.
 |---|---|---|---|
 | `local` (default) | Mock stub (`LocalProvider`) | none | ✅ Ready - dev/CI default, always was |
 | `local-inference` | **Real**, tiny-scale `WanPipeline` (`LocalInferenceProvider`) | none | ✅ Ready - verified end-to-end via headless browser, real playable `.mp4` produced |
-| `runpod` | **Real**, full-scale Wan2.2 on a real GPU (`RunPodProvider` + `workers/gpu-worker`) | `RUNPOD_API_KEY`, `RUNPOD_ENDPOINT_ID`, `HF_TOKEN` (worker-side, only if the repo is gated) | ⚠️ Code complete and fails fast on missing credentials; **not yet run against a real deployed endpoint** - see §6 |
+| `runpod` | **Real**, full-scale Wan2.2 on a real GPU (`RunPodProvider` + `workers/gpu-worker`) | `RUNPOD_API_KEY`, `RUNPOD_ENDPOINT_ID`, `HF_TOKEN` (worker-side, only if the repo is gated) | ⚠️ Code + CI deployment automation (`.github/workflows/deploy-runpod-endpoint.yml`) complete and fails fast on missing credentials; **the workflow has not yet been run** (needs real `RUNPOD_API_KEY` + Environment approval) - see §6 |
 | `vastai` | Not implemented | — | ❌ Phase 3 target, unchanged, `VastAIProvider` raises `NotImplementedError` by design |
 
 `build_app_state()` refuses to start with `COMPUTE_PROVIDER=runpod` and
@@ -76,38 +76,51 @@ upgrade paths for when scale actually demands them.
 ## 6. What a human must still do for the first real RunPod production run
 
 Everything below requires access this development environment does not
-have (a funded RunPod account, a Docker registry, an unrestricted
-network) - the code is real and complete, these are deployment actions,
-not missing engineering:
+have (a funded RunPod account, an unrestricted network) - the code and
+CI/CD automation are real and complete, these are deployment actions
+(secrets, approvals, one workflow run), not missing engineering.
 
-1. **Build and push the worker image** (needs a normal Docker
-   environment - this sandbox's network blocks the Docker Hub registry
-   CDN, confirmed by hand):
-   ```bash
-   docker build -f workers/gpu-worker/Dockerfile -t <registry>/sallehly-wan22-worker:2.2.0 .
-   docker push <registry>/sallehly-wan22-worker:2.2.0
-   ```
-2. **Deploy a real RunPod Serverless endpoint** from that image
-   (`infra/runpod/deploy_endpoint.py`, needs a real `RUNPOD_API_KEY`).
-3. **Confirm it's healthy** (`infra/runpod/check_health.py`) before
-   sending real traffic.
-4. **Set `HF_TOKEN`** only if `models/registry.yaml`'s configured Wan2.2
-   repo becomes gated (public as of this writing).
-5. **Point `apps/api` at it**: `COMPUTE_PROVIDER=runpod`,
+Steps 1-3 are now automated by `.github/workflows/deploy-runpod-endpoint.yml`
+(runs on a real GitHub-hosted runner, which has neither restriction this
+sandbox does):
+
+1. **Build and push the worker image** - automated by the workflow's
+   `build-and-push` job (GHCR, using `GITHUB_TOKEN` - no extra registry
+   secret needed).
+2. **Deploy a real RunPod Serverless endpoint** from that image -
+   automated by the workflow's `deploy-endpoint` job
+   (`infra/runpod/deploy_endpoint.py`), gated by the
+   `runpod-production-deploy` Environment's required reviewers.
+3. **Confirm it's healthy** - automated by the workflow's
+   `verify-health` job (`infra/runpod/check_health.py`), result posted
+   to the run's job summary.
+
+What's left, purely deployment/config actions, not something CI can do
+for you:
+
+4. **Add repository secrets**: `RUNPOD_API_KEY` (required), `HF_TOKEN`
+   (optional - only if `models/registry.yaml`'s configured Wan2.2 repo
+   becomes gated; public as of this writing).
+5. **Configure the `runpod-production-deploy` Environment**'s required
+   reviewers (Settings -> Environments) - the actual human approval gate.
+6. **Run the workflow** (Actions -> "Deploy - RunPod Wan2.2 Production
+   Endpoint" -> check `confirm_deploy` -> Run), approve when prompted,
+   and copy the resulting `RUNPOD_ENDPOINT_ID` from the job summary.
+7. **Point `apps/api` at it**: `COMPUTE_PROVIDER=runpod`,
    `RUNPOD_API_KEY`, `RUNPOD_ENDPOINT_ID`.
-6. **Run one real end-to-end request** (a prompt through `/demo` or the
+8. **Run one real end-to-end request** (a prompt through `/demo` or the
    full `/projects` REST flow) and confirm a real, full-quality Wan2.2
    clip comes back - the first genuinely unverified step in this whole
    pipeline, specifically because it needs infrastructure this
    development environment cannot provide.
 
-Everything upstream of step 6 (the full creative pipeline, the exact
+Everything upstream of step 8 (the full creative pipeline, the exact
 job payload shape, the real inference call's mechanism, the real HF
-download/checksum logic, the RunPod HTTP client) has already been
-verified for real, independently, up to the credentials/infrastructure
-boundary - see `docs/adr/0026-pre-first-real-run-audit-fixes.md` and
-the "Real video generation + RunPod production backend" entry in the
-root `README.md`.
+download/checksum logic, the RunPod HTTP client, the deployment
+workflow itself) has already been verified for real, independently, up
+to the credentials/infrastructure boundary - see
+`docs/adr/0026-pre-first-real-run-audit-fixes.md` and the "Real video
+generation + RunPod production backend" entry in the root `README.md`.
 
 ## 7. Test coverage
 
