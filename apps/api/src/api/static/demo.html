@@ -61,9 +61,11 @@
     <br/>• <code>COMPUTE_PROVIDER=local-inference</code> (recommended for this demo) — a real,
     tiny-scale WanPipeline runs in-process (no GPU, no credentials) and you get an actual playable
     generated clip per shot below (small/short/low-res — proves the mechanism, not output quality).
-    <br/>• <code>COMPUTE_PROVIDER=runpod</code> — real full-scale Wan generation on a real GPU,
-    requires <code>RUNPOD_API_KEY</code>/<code>RUNPOD_ENDPOINT_ID</code> for a deployed endpoint;
-    fails clearly at startup if those aren't set, instead of silently mocking.
+    <br/>• <code>COMPUTE_PROVIDER=runpod</code> (production) — real full-scale Wan2.2 generation on a
+    real GPU (<code>workers/gpu-worker</code>, real HF-downloaded + checksum-verified weights, never
+    random). Deploy once via <code>infra/runpod/deploy_endpoint.py</code>, then set
+    <code>RUNPOD_API_KEY</code>/<code>RUNPOD_ENDPOINT_ID</code>; the server refuses to start with a
+    clear error if either is missing, instead of silently mocking.
     <br/>• <code>COMPUTE_PROVIDER=local</code> (server default if unset) — mock stub, shows the
     render job payload only, no actual video.
   </p>

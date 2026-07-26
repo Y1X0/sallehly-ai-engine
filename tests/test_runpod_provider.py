@@ -146,6 +146,33 @@ def test_4xx_fails_immediately_without_retry():
     assert call_count["n"] == 1
 
 
+def test_health_check_hits_the_real_health_path_and_returns_the_raw_response():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == "/v2/test-endpoint/health"
+        return httpx.Response(
+            200,
+            json={"jobs": {"completed": 3, "failed": 0, "inProgress": 1, "inQueue": 0}, "workers": {"ready": 2}},
+        )
+
+    provider = _provider(handler)
+
+    result = provider.health_check()
+
+    assert result["jobs"]["inProgress"] == 1
+    assert result["workers"]["ready"] == 2
+
+
+def test_health_check_raises_on_transport_failure():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="down")
+
+    provider = _provider(handler, max_attempts=1, retry_backoff_sec=0.0)
+
+    with pytest.raises(RunPodComputeError, match="503"):
+        provider.health_check()
+
+
 def test_unrecognized_status_raises():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"id": "job-123", "status": "SOMETHING_NEW"})
