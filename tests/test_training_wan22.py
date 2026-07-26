@@ -293,6 +293,30 @@ class TestWan22CheckpointWriter:
         found = writer2.get_paired_checkpoints("run-1", 50, {"unified"})
         assert found["unified"].step == 50
 
+    def test_latest_paired_step_returns_none_for_a_fresh_run(self):
+        writer = Wan22CheckpointWriter(InMemoryCheckpointStore())
+        assert writer.latest_paired_step("run-1", {"unified"}) is None
+
+    def test_latest_paired_step_returns_the_highest_fully_paired_step(self):
+        writer = Wan22CheckpointWriter(InMemoryCheckpointStore())
+        writer.save_expert_checkpoint(run_id="run-1", step=2, expert="high_noise", artifact_uri="s3://x/h2")
+        writer.save_expert_checkpoint(run_id="run-1", step=2, expert="low_noise", artifact_uri="s3://x/l2")
+        writer.save_expert_checkpoint(run_id="run-1", step=4, expert="high_noise", artifact_uri="s3://x/h4")
+        writer.save_expert_checkpoint(run_id="run-1", step=4, expert="low_noise", artifact_uri="s3://x/l4")
+
+        assert writer.latest_paired_step("run-1", {"high_noise", "low_noise"}) == 4
+
+    def test_latest_paired_step_skips_a_step_with_only_some_experts_saved(self):
+        # Simulates a crash mid-checkpoint: step 4 only got one of two
+        # experts saved before the run died - resuming must fall back to
+        # the last step where *both* experts have a real checkpoint.
+        writer = Wan22CheckpointWriter(InMemoryCheckpointStore())
+        writer.save_expert_checkpoint(run_id="run-1", step=2, expert="high_noise", artifact_uri="s3://x/h2")
+        writer.save_expert_checkpoint(run_id="run-1", step=2, expert="low_noise", artifact_uri="s3://x/l2")
+        writer.save_expert_checkpoint(run_id="run-1", step=4, expert="high_noise", artifact_uri="s3://x/h4")
+
+        assert writer.latest_paired_step("run-1", {"high_noise", "low_noise"}) == 2
+
 
 # --------------------------------------------------------------------------
 # Wan22LoRATrainer (the ITrainer orchestration loop)
@@ -403,6 +427,81 @@ class TestWan22LoRATrainer:
             paired = writer.get_paired_checkpoints(config.run_id, step, {"high_noise", "low_noise"})
             assert set(paired) == {"high_noise", "low_noise"}
         assert len(result.checkpoint_ids) == 4  # 2 experts x 2 checkpoint steps
+
+    def test_train_resumes_from_a_previously_paired_checkpoint(self):
+        """A run that already has a paired checkpoint at step 2 for both
+        experts (e.g. a previous process died after step 2) must resume
+        from there - loading each expert's saved checkpoint and
+        continuing global_step from 2, not restarting at step 0 and not
+        redoing steps 1-2."""
+        from training.wan22.backend import IWan22TrainingBackend, TrainStepResult
+
+        class FakeResumableBackend(IWan22TrainingBackend):
+            def __init__(self):
+                self.steps: list[tuple[str, int]] = []
+                self.loaded: list[tuple[str, str]] = []
+
+            def train_step(self, *, expert, step, batch, lora_config):
+                self.steps.append((expert, step))
+                return TrainStepResult(loss=1.0)
+
+            def save_checkpoint(self, *, expert, step, output_dir):
+                return f"fake://{output_dir}/{expert}/{step}"
+
+            def load_checkpoint(self, *, expert, artifact_uri, lora_config):
+                self.loaded.append((expert, artifact_uri))
+
+        config = _training_config(base_model_id="wan2.2-t2v-a14b", max_train_steps=4, checkpoint_every_steps=2)
+        lora_config = Wan22LoRAConfig.from_training_config(config)
+        backend = FakeResumableBackend()
+        checkpoint_store = InMemoryCheckpointStore()
+        writer = Wan22CheckpointWriter(checkpoint_store)
+        # Simulate a prior run that already completed and checkpointed step 2.
+        writer.save_expert_checkpoint(run_id=config.run_id, step=2, expert="high_noise", artifact_uri="fake://prior/high_noise/2")
+        writer.save_expert_checkpoint(run_id=config.run_id, step=2, expert="low_noise", artifact_uri="fake://prior/low_noise/2")
+
+        trainer = Wan22LoRATrainer(
+            backend=backend, checkpoint_writer=writer, dataset_entries=self._manifest(),
+            lora_config=lora_config, output_dir="/tmp/wan22-test-output",
+        )
+
+        result = trainer.train(config)
+
+        assert result.status == "completed"
+        assert result.final_step == 4
+        assert set(backend.loaded) == {
+            ("high_noise", "fake://prior/high_noise/2"), ("low_noise", "fake://prior/low_noise/2"),
+        }
+        # Only steps 3 and 4 actually ran - steps 1-2 were not redone.
+        steps_trained = sorted({step for _expert, step in backend.steps})
+        assert steps_trained == [3, 4]
+
+    def test_train_does_not_attempt_resume_for_a_fresh_run(self):
+        # No prior checkpoint exists, so load_checkpoint must never be
+        # called and training starts at step 1 as normal.
+        from training.wan22.backend import IWan22TrainingBackend, TrainStepResult
+
+        class FakeBackendThatFailsOnLoad(IWan22TrainingBackend):
+            def train_step(self, *, expert, step, batch, lora_config):
+                return TrainStepResult(loss=1.0)
+
+            def save_checkpoint(self, *, expert, step, output_dir):
+                return f"fake://{output_dir}/{expert}/{step}"
+
+            def load_checkpoint(self, *, expert, artifact_uri, lora_config):
+                raise AssertionError("load_checkpoint must not be called for a fresh run")
+
+        config = _training_config(base_model_id="wan2.2-ti2v-5b", max_train_steps=2, checkpoint_every_steps=2)
+        lora_config = Wan22LoRAConfig.from_training_config(config)
+        trainer = Wan22LoRATrainer(
+            backend=FakeBackendThatFailsOnLoad(), checkpoint_writer=Wan22CheckpointWriter(InMemoryCheckpointStore()),
+            dataset_entries=self._manifest(), lora_config=lora_config, output_dir="/tmp/wan22-test-output",
+        )
+
+        result = trainer.train(config)
+
+        assert result.status == "completed"
+        assert result.final_step == 2
 
 
 # --------------------------------------------------------------------------

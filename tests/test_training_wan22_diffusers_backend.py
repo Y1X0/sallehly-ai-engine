@@ -189,3 +189,97 @@ class TestWan22DiffusersBackendSmokeTest:
 
         with pytest.raises(ModelUnavailableError, match="before any train_step"):
             backend.save_checkpoint(expert="unified", step=1, output_dir=tmp_path)
+
+
+class TestReproducibility:
+    """TrainingConfig.seed must fully determine a run's result across
+    separate process launches - the reproducibility gap the production
+    audit found: noise/timestep sampling and peft LoRA initialization
+    were drawn from torch's global RNG with no seeding at all."""
+
+    def _run_to_final_checkpoint(self, tmp_path, label: str, *, seed: int):
+        config = _config("wan2.2-ti2v-5b", max_train_steps=3, checkpoint_every=3, seed=seed)
+        lora_config = Wan22LoRAConfig.from_training_config(config)
+        backend = build_smoke_test_backend(base_model_id=config.base_model_id, learning_rate=0.1, seed=seed)
+        store = FilesystemCheckpointStore(tmp_path / f"{label}-checkpoints")
+        writer = Wan22CheckpointWriter(store)
+        trainer = Wan22LoRATrainer(
+            backend=backend, checkpoint_writer=writer, dataset_entries=_entries(3), lora_config=lora_config,
+            output_dir=tmp_path / label,
+        )
+        result = trainer.train(config)
+        assert result.status == "completed", result.error_message
+
+        from safetensors.torch import load_file
+
+        return load_file(
+            str(tmp_path / label / "adapters" / "unified" / "step_000003" / "adapter_model.safetensors")
+        )
+
+    def test_same_seed_produces_identical_final_weights(self, tmp_path):
+        weights_a = self._run_to_final_checkpoint(tmp_path, "run-a", seed=7)
+        weights_b = self._run_to_final_checkpoint(tmp_path, "run-b", seed=7)
+
+        assert set(weights_a) == set(weights_b)
+        for key in weights_a:
+            assert torch.equal(weights_a[key], weights_b[key])
+
+    def test_different_seeds_produce_different_final_weights(self, tmp_path):
+        weights_a = self._run_to_final_checkpoint(tmp_path, "run-a", seed=7)
+        weights_b = self._run_to_final_checkpoint(tmp_path, "run-b", seed=99)
+
+        assert any(not torch.equal(weights_a[k], weights_b[k]) for k in weights_a)
+
+
+class TestLoadCheckpoint:
+    def test_load_checkpoint_restores_saved_weights_into_a_fresh_backend(self, tmp_path):
+        from safetensors.torch import load_file
+        from training import expert_checkpoint_id
+
+        config = _config("wan2.2-ti2v-5b", max_train_steps=2, checkpoint_every=2, seed=3)
+        lora_config = Wan22LoRAConfig.from_training_config(config)
+        backend = build_smoke_test_backend(base_model_id=config.base_model_id, learning_rate=0.5, seed=3)
+        store = FilesystemCheckpointStore(tmp_path / "checkpoints")
+        writer = Wan22CheckpointWriter(store)
+        trainer = Wan22LoRATrainer(
+            backend=backend, checkpoint_writer=writer, dataset_entries=_entries(2), lora_config=lora_config,
+            output_dir=tmp_path / "output",
+        )
+        result = trainer.train(config)
+        assert result.status == "completed", result.error_message
+
+        expert_lora = lora_config.experts["unified"]
+        artifact_uri = store.get(expert_checkpoint_id(config.run_id, 2, "unified")).artifact_uri
+        saved_state = load_file(
+            str(tmp_path / "output" / "adapters" / "unified" / "step_000002" / "adapter_model.safetensors")
+        )
+
+        # Different seed on purpose - proves load_checkpoint's restored
+        # weights come from the saved file, not from matching seeds.
+        fresh_backend = build_smoke_test_backend(base_model_id=config.base_model_id, seed=999)
+        fresh_backend.load_checkpoint(expert="unified", artifact_uri=artifact_uri, lora_config=expert_lora)
+
+        from peft import get_peft_model_state_dict
+
+        loaded_state = get_peft_model_state_dict(fresh_backend._peft_models["unified"])
+        assert set(loaded_state) == set(saved_state)
+        for key in saved_state:
+            assert torch.equal(loaded_state[key].cpu(), saved_state[key])
+
+    def test_load_checkpoint_raises_for_non_file_uri(self):
+        lora = LoRAConfig(rank=4, alpha=8, target_modules=("to_q", "to_k", "to_v", "to_out.0"))
+        backend = build_smoke_test_backend(base_model_id="wan2.2-ti2v-5b", seed=0)
+
+        with pytest.raises(ValueError, match="file://"):
+            backend.load_checkpoint(expert="unified", artifact_uri="s3://bucket/key", lora_config=lora)
+
+    def test_load_checkpoint_raises_when_adapter_file_missing(self, tmp_path):
+        from training import ModelUnavailableError
+
+        lora = LoRAConfig(rank=4, alpha=8, target_modules=("to_q", "to_k", "to_v", "to_out.0"))
+        backend = build_smoke_test_backend(base_model_id="wan2.2-ti2v-5b", seed=0)
+        empty_dir = tmp_path / "empty"
+        empty_dir.mkdir()
+
+        with pytest.raises(ModelUnavailableError, match="not found"):
+            backend.load_checkpoint(expert="unified", artifact_uri=f"file://{empty_dir}", lora_config=lora)

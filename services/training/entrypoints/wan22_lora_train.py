@@ -72,11 +72,45 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--registry", default="models/registry.yaml")
     parser.add_argument("--models-cache-root", default=".models-cache")
-    parser.add_argument("--device", default="cpu", help="'cpu' or 'cuda' - passed to the real/smoke-test backend")
+    parser.add_argument(
+        "--device", default="auto",
+        help="'auto' (default): require a CUDA GPU for the real backend and fail immediately if "
+        "none is available - never silently falls back to CPU. 'cuda': same, explicit. 'cpu': "
+        "explicit opt-out (e.g. local debugging of the real backend). Does not affect "
+        "--backend smoke-test, which always runs on CPU regardless of this flag.",
+    )
     return parser
 
 
-def _build_backend(args: argparse.Namespace, base_model_id: str, learning_rate: float):
+def _resolve_device(device_arg: str) -> str:
+    """Resolves --device for the *real* training backend only. 'auto'
+    (the default) requires a CUDA-capable GPU and fails immediately,
+    with a clear error, if none is available - this is what stops a
+    real Kaggle GPU dispatch from silently training on CPU (the most
+    severe gap found in the pre-first-real-run production audit: this
+    flag previously defaulted to 'cpu' and kaggle_kernel_runner.py never
+    overrode it). Pass --device cpu explicitly to opt out on purpose."""
+    if device_arg == "cpu":
+        return "cpu"
+    try:
+        import torch
+    except ImportError as exc:
+        raise RuntimeError(
+            "--device auto/cuda requires torch to be installed (training[gpu-training] extra) "
+            "to check CUDA availability"
+        ) from exc
+    if device_arg in ("auto", "cuda"):
+        if not torch.cuda.is_available():
+            raise RuntimeError(
+                f"--device {device_arg} requires a CUDA-capable GPU, but torch.cuda.is_available() "
+                "is False in this environment - refusing to silently fall back to CPU for a real "
+                "training run. Pass --device cpu explicitly if you really want the real backend on CPU."
+            )
+        return "cuda"
+    return device_arg  # e.g. an explicit "cuda:0", left as-is for advanced use
+
+
+def _build_backend(args: argparse.Namespace, base_model_id: str, learning_rate: float, seed: int):
     if args.backend == "unavailable":
         return UnavailableWan22Backend()
 
@@ -95,8 +129,8 @@ def _build_backend(args: argparse.Namespace, base_model_id: str, learning_rate: 
                 for expert, subfolder in entry.experts.items()
             }
             return build_real_backend(
-                base_model_id=base_model_id, model_sources=model_sources, device=args.device,
-                learning_rate=learning_rate,
+                base_model_id=base_model_id, model_sources=model_sources, device=_resolve_device(args.device),
+                learning_rate=learning_rate, seed=seed,
             )
         if args.backend == "real":
             raise ValueError(
@@ -107,7 +141,7 @@ def _build_backend(args: argparse.Namespace, base_model_id: str, learning_rate: 
     if args.backend in ("auto", "smoke-test"):
         from training import build_smoke_test_backend
 
-        return build_smoke_test_backend(base_model_id=base_model_id, learning_rate=learning_rate)
+        return build_smoke_test_backend(base_model_id=base_model_id, learning_rate=learning_rate, seed=seed)
 
     raise ValueError(f"Unhandled --backend value: {args.backend!r}")
 
@@ -136,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
     checkpoint_store = FilesystemCheckpointStore(args.checkpoint_store_dir)
     checkpoint_writer = Wan22CheckpointWriter(checkpoint_store)
     try:
-        backend = _build_backend(args, config.base_model_id, config.learning_rate)
+        backend = _build_backend(args, config.base_model_id, config.learning_rate, config.seed)
     except Exception as exc:  # noqa: BLE001 - real backend-selection failure, surfaced clearly
         print(f"[{args.job_id}] could not build a training backend: {exc}", file=sys.stderr)
         return 1

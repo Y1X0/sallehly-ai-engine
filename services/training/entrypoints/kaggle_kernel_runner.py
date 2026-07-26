@@ -13,6 +13,11 @@ full story.
 
 What this script does, in order - all real subprocess calls, no
 sys.path tricks:
+  0. Verifies a CUDA GPU is actually attached (`torch.cuda.is_available()`)
+     before doing anything else - fails immediately, with a clear error,
+     otherwise. This kernel's entire purpose is a real GPU run; a
+     misconfigured accelerator setting must not be allowed to silently
+     degrade to a CPU run (see step 4's `--device auto`).
   1. Shallow-clones this repo (public, no auth needed for read access)
      at the git ref recorded in `git_ref.txt` (written by
      `dispatch_via_kaggle()` into the same mounted dataset as
@@ -20,9 +25,12 @@ sys.path tricks:
      `--branch` would silently pull whatever the repo's *default*
      branch happens to be, which will not contain this code until this
      work is merged there) into `/kaggle/working/repo`, and installs
-     `video-engine-sdk` + `training[gpu-training]` from it in editable
-     mode - real network access, requires the kernel's `enable_internet`
-     setting to be True (it is, by default - see `KernelPushConfig`).
+     `video-engine-sdk` + `training` from it in editable mode with
+     `--no-deps`, then installs only whichever of the gpu-training
+     extra's dependencies aren't already importable - Kaggle's kernel
+     image ships its own CUDA-enabled torch build preinstalled, and this
+     never asks pip to resolve or touch `torch` at all (see
+     `_install_missing_packages`'s docstring).
   2. Runs the repo's own `download_wan22_weights.py` for real, fresh,
      inside this run's container. `HF_TOKEN`, if the target repo needs
      one, must be attached to this kernel as a Kaggle Secret exposed as
@@ -31,11 +39,12 @@ sys.path tricks:
   3. Reads `config.yaml`/`dataset_manifest.jsonl` from the Kaggle
      dataset `dispatch_via_kaggle()` uploads and mounts read-only under
      `/kaggle/input/<slug>/` - the real substitute for CLI arguments.
-  4. Runs the cloned repo's own `wan22_lora_train.py --backend real`
-     against those paths, writing output/checkpoints under
-     `/kaggle/working/` - the directory `kaggle kernels output` (and
-     this repo's `fetch_kaggle_kernel_result.py`) downloads after the
-     kernel finishes.
+  4. Runs the cloned repo's own `wan22_lora_train.py --backend real
+     --device auto` against those paths, writing output/checkpoints
+     under `/kaggle/working/` - the directory `kaggle kernels output`
+     (and this repo's `fetch_kaggle_kernel_result.py`) downloads after
+     the kernel finishes. `--device auto` itself refuses to fall back to
+     CPU if CUDA somehow becomes unavailable between step 0 and here.
 
 Pushed by `dispatch_via_kaggle()` alongside `wan22_lora_train.py`, but
 does not import it - everything below runs the cloned copy as a real
@@ -45,6 +54,7 @@ being importable in whatever environment Kaggle happens to run it in.
 
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
@@ -52,10 +62,75 @@ from pathlib import Path
 _REPO_URL = "https://github.com/y1x0/sallehly-ai-engine.git"
 _ENGINE_ID = "wan2.2-ti2v-5b"
 
+# Mirrors services/training/pyproject.toml's `gpu-training` extra, minus
+# torch itself: Kaggle's kernel image ships its own CUDA-enabled torch
+# build preinstalled, and this list exists specifically so it is never
+# reinstalled (see _install_missing_packages's docstring below).
+_GPU_TRAINING_EXTRA_PACKAGES: dict[str, str] = {
+    "diffusers": "diffusers>=0.31",
+    "transformers": "transformers>=4.44",
+    "accelerate": "accelerate>=0.33",
+    "peft": "peft>=0.12",
+    "safetensors": "safetensors>=0.4",
+    "huggingface_hub": "huggingface_hub>=0.24",
+    "imageio": "imageio>=2.34",
+    "imageio_ffmpeg": "imageio-ffmpeg>=0.5",
+}
+
 
 def _run(args: list[str]) -> None:
     print(f"$ {' '.join(args)}", flush=True)
     subprocess.run(args, check=True)
+
+
+def _verify_cuda_available() -> None:
+    """Fails fast, before any install/download work, if this kernel has
+    no CUDA GPU actually attached - the most severe gap the pre-first-
+    real-run production audit found: a real Kaggle GPU dispatch could
+    previously reach the training step and silently train on CPU
+    instead (wan22_lora_train.py's --device defaulted to "cpu" and this
+    wrapper never overrode it). This kernel's whole purpose is a real
+    GPU run, so refusing to proceed without one is the correct failure,
+    not an inconvenience - check the kernel's Settings -> Accelerator."""
+    import torch
+
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "torch.cuda.is_available() is False on this Kaggle kernel - no CUDA GPU is attached. "
+            "Check this kernel's Settings -> Accelerator and re-push; refusing to silently train "
+            "on CPU."
+        )
+
+
+def _install_missing_packages(repo_dir: Path) -> None:
+    """Installs the two local packages with --no-deps so pip's
+    dependency resolution never touches torch, then installs only
+    whichever of the gpu-training extra's OTHER dependencies aren't
+    already importable (also --no-deps).
+
+    A plain `pip install -e "services/training[gpu-training]"` asks pip
+    to satisfy that extra's own `torch>=2.3` requirement - which risks
+    pip deciding to replace Kaggle's preinstalled CUDA-enabled torch
+    build with an unrelated one resolved from PyPI (a real, previously-
+    undetected risk: Kaggle's torch has a `+cuXXX` local version/build
+    matched to its drivers and CUDA toolkit, and there's no reason to
+    trust a PyPI-resolved replacement build works with that same
+    hardware). Reusing Kaggle's preinstalled torch outright removes that
+    risk entirely.
+    """
+    _run([
+        sys.executable, "-m", "pip", "install", "--quiet", "--no-deps",
+        "-e", str(repo_dir / "packages" / "video-engine-sdk"),
+        "-e", str(repo_dir / "services" / "training"),
+    ])
+
+    missing = [
+        requirement
+        for module_name, requirement in _GPU_TRAINING_EXTRA_PACKAGES.items()
+        if importlib.util.find_spec(module_name) is None
+    ]
+    if missing:
+        _run([sys.executable, "-m", "pip", "install", "--quiet", "--no-deps", *missing])
 
 
 def main(
@@ -90,13 +165,11 @@ def main(
         )
     git_ref = git_ref_path.read_text().strip()
 
+    _verify_cuda_available()
+
     if clone:
         _run(["git", "clone", "--depth", "1", "--branch", git_ref, _REPO_URL, str(repo_dir)])
-        _run([
-            sys.executable, "-m", "pip", "install", "--quiet",
-            "-e", str(repo_dir / "packages" / "video-engine-sdk"),
-            "-e", f"{repo_dir / 'services' / 'training'}[gpu-training]",
-        ])
+        _install_missing_packages(repo_dir)
 
     registry_path = repo_dir / "models" / "registry.yaml"
     models_cache_root = kaggle_working_root / "models-cache"
@@ -113,6 +186,7 @@ def main(
         "--checkpoint-store-dir", str(kaggle_working_root / "checkpoints"),
         "--job-id", "kaggle-kernel-job",
         "--backend", "real",
+        "--device", "auto",
         "--registry", str(registry_path),
         "--models-cache-root", str(models_cache_root),
     ])

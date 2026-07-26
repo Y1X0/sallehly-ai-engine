@@ -62,6 +62,17 @@ class Wan22LoRATrainer(ITrainer):
         checkpoint_ids: list[str] = []
         step = 0
         try:
+            expected_experts = frozenset(self._lora_config.experts)
+            resume_step = self._checkpoints.latest_paired_step(config.run_id, expected_experts)
+            if resume_step is not None:
+                resume_records = self._checkpoints.get_paired_checkpoints(config.run_id, resume_step, expected_experts)
+                for expert, lora in self._lora_config.experts.items():
+                    self._backend.load_checkpoint(
+                        expert=expert, artifact_uri=resume_records[expert].artifact_uri, lora_config=lora,
+                    )
+                checkpoint_ids.extend(record.checkpoint_id for record in resume_records.values())
+                step = resume_step
+
             while step < config.max_train_steps:
                 step += 1
                 batch = self._dataset_entries[(step - 1) % len(self._dataset_entries)]

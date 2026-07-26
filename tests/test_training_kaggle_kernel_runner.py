@@ -20,6 +20,8 @@ from pathlib import Path
 import pytest
 from training import LoRAConfig, TrainingConfig
 
+torch = pytest.importorskip("torch")
+
 _SCRIPT_PATH = Path(__file__).resolve().parents[1] / "services" / "training" / "entrypoints" / "kaggle_kernel_runner.py"
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -66,15 +68,36 @@ class TestKaggleKernelRunner:
                 kaggle_working_root=tmp_path / "kaggle_working", clone=False,
             )
 
-    def test_fails_at_the_real_download_step_without_hf_network_access(self, tmp_path):
+    def test_raises_when_no_cuda_available(self, tmp_path, monkeypatch):
+        # The most severe gap the pre-first-real-run production audit
+        # found: without this check, a misconfigured (no-GPU) Kaggle
+        # kernel would silently reach the training step and train on
+        # CPU. This sandbox itself has no GPU, but the check is forced
+        # explicitly here so the test doesn't depend on that incidental
+        # fact of the environment it happens to run in.
+        module = _load_module()
+        input_root = _write_input_dataset(tmp_path)
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+        with pytest.raises(RuntimeError, match="CUDA"):
+            module.main(
+                repo_dir=_REPO_ROOT, kaggle_input_root=input_root,
+                kaggle_working_root=tmp_path / "kaggle_working", clone=False,
+            )
+
+    def test_fails_at_the_real_download_step_without_hf_network_access(self, tmp_path, monkeypatch):
         # This sandbox's network egress to huggingface.co is blocked, so
         # the real download_wan22_weights.py subprocess this wrapper
         # shells out to is expected to fail here - proving the wrapper
         # gets there for real (clones skipped, no fabricated success),
         # not that the download itself succeeds. In an environment with
         # real HF access this same call would proceed to the training step.
+        # CUDA availability is simulated True here (this sandbox has no
+        # real GPU) purely so the test can reach past the CUDA check
+        # exercised separately above.
         module = _load_module()
         input_root = _write_input_dataset(tmp_path)
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
 
         with pytest.raises(subprocess.CalledProcessError) as exc_info:
             module.main(
@@ -83,6 +106,41 @@ class TestKaggleKernelRunner:
             )
 
         assert "download_wan22_weights.py" in " ".join(exc_info.value.cmd)
+
+    def test_install_missing_packages_never_touches_torch(self, tmp_path, monkeypatch):
+        # Core of the fix: pip must never be asked to resolve `torch` at
+        # all here, since that risks replacing Kaggle's preinstalled
+        # CUDA-enabled build with an unrelated one from PyPI.
+        module = _load_module()
+        calls: list[list[str]] = []
+        monkeypatch.setattr(module.subprocess, "run", lambda args, check=True: calls.append(args))
+        monkeypatch.setattr(module.importlib.util, "find_spec", lambda name: None)  # everything "missing"
+
+        module._install_missing_packages(tmp_path / "repo")
+
+        assert len(calls) == 2
+        for call in calls:
+            assert "--no-deps" in call
+            assert not any("torch" in arg.lower() for arg in call)
+
+    def test_wan22_lora_train_invocation_passes_device_auto(self, tmp_path, monkeypatch):
+        # Fix #1's other half: the wrapper must explicitly pass --device
+        # auto so wan22_lora_train.py's own CUDA fail-fast is in force,
+        # rather than relying on a default that could silently change.
+        module = _load_module()
+        input_root = _write_input_dataset(tmp_path)
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        calls: list[list[str]] = []
+        monkeypatch.setattr(module, "_run", lambda args: calls.append(args))
+
+        module.main(
+            repo_dir=_REPO_ROOT, kaggle_input_root=input_root,
+            kaggle_working_root=tmp_path / "kaggle_working", clone=False,
+        )
+
+        train_call = next(c for c in calls if "wan22_lora_train.py" in " ".join(c))
+        assert "--device" in train_call
+        assert train_call[train_call.index("--device") + 1] == "auto"
 
     def test_raises_when_git_ref_missing_from_older_dispatch(self, tmp_path):
         # Simulates a kernel pushed by a pre-ADR-0025-git-ref-fix

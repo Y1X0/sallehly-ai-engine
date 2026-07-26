@@ -38,6 +38,16 @@ class IWan22TrainingBackend(ABC):
         """Returns the artifact_uri the saved weights would live at."""
         ...
 
+    def load_checkpoint(self, *, expert: str, artifact_uri: str, lora_config: LoRAConfig) -> None:
+        """Loads a previously saved checkpoint (as returned by
+        `save_checkpoint`) for `expert`, so training can resume from it.
+        Concrete (not abstract) with a default that refuses: a backend
+        that never produces a checkpoint able to be resumed from (e.g.
+        `UnavailableWan22Backend`) needs no override, and
+        `Wan22LoRATrainer.train()` only ever calls this once a real
+        paired checkpoint has actually been found for its run_id."""
+        raise NotImplementedError(f"{type(self).__name__} does not support load_checkpoint/resume")
+
 
 class UnavailableWan22Backend(IWan22TrainingBackend):
     """The only `IWan22TrainingBackend` implementation that exists today.

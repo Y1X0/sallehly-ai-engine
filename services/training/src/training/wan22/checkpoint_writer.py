@@ -66,3 +66,19 @@ class Wan22CheckpointWriter:
                 f"{sorted(missing)} (found: {sorted(found)})"
             )
         return found
+
+    def latest_paired_step(
+        self, run_id: str, expected_experts: frozenset[str] | set[str]
+    ) -> int | None:
+        """The highest step at which every expert in `expected_experts`
+        has a saved checkpoint - the step a resumed run should continue
+        from. Returns None if no step has a complete set yet (a fresh
+        run, or a run where only some experts ever got checkpointed)."""
+        steps = sorted({record.step for record in self._store.list_for_run(run_id)}, reverse=True)
+        for step in steps:
+            try:
+                self.get_paired_checkpoints(run_id, step, expected_experts)
+            except PairedCheckpointMissingError:
+                continue
+            return step
+        return None

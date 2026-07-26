@@ -98,6 +98,7 @@ jobs:
     # checking this box.
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_wan22_kaggle_smoke_test == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     env:
       KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
       KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
@@ -144,12 +145,20 @@ jobs:
           done
 
       - name: Ingest the placeholder dataset (real DatasetManager pipeline, development-only data)
+        # --val-fraction 0 --test-fraction 0: this placeholder dataset is
+        # only 3 clips - a nonzero val/test split has a real (small but
+        # nonzero) chance of leaving the "train" split empty, which would
+        # break the next step's `ls .training-data/manifests/*_train.jsonl`.
+        # A held-out val/test split is meaningless for a 3-clip smoke
+        # test anyway; the real dataset split fractions apply to real
+        # production ingestion runs, not this CI mechanism check.
         run: >
           uv run python services/training/scripts/ingest_dataset.py
           --clips-dir /tmp/ci-placeholder-clips --rights-cleared --tag ci-placeholder
           --version-store-dir .training-data/dataset-versions
           --manifest-output-dir .training-data/manifests
           --base-model-config services/training/configs/wan22_finetune.yaml
+          --val-fraction 0 --test-fraction 0
 
       - name: Build a scratch smoke-test config (short run, real dataset_version)
         run: |
@@ -188,11 +197,18 @@ jobs:
 
       - name: Wait for the Kaggle kernel and fetch its output (checkpoints)
         id: fetch
+        # Always attempts to pull whatever output exists even on a
+        # polling timeout (fetch_kaggle_kernel_result.py's own fix for
+        # this - see docs/adr/0025-kaggle-dispatch-argv-fix.md), and
+        # --validate-checkpoint fails this step if no loadable
+        # adapter_model.safetensors was actually produced, rather than
+        # reporting success on an empty or corrupt result.
         run: >
           uv run python services/training/scripts/fetch_kaggle_kernel_result.py
           --kernel-ref "${{ steps.dispatch.outputs.kernel_ref }}"
           --output-dir .training-automation/kaggle-output
           --timeout-sec 5400
+          --validate-checkpoint
 
       - name: Record the real outcome and build the training report
         if: always()

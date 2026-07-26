@@ -26,7 +26,45 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--poll-interval-sec", type=float, default=30.0)
     parser.add_argument("--timeout-sec", type=float, default=3600.0)
+    parser.add_argument(
+        "--validate-checkpoint", action="store_true",
+        help="After pulling output, verify at least one adapter_model.safetensors exists under "
+        "--output-dir and is actually loadable - fail otherwise rather than reporting success on "
+        "an empty or corrupt checkpoint.",
+    )
     return parser
+
+
+def _validate_checkpoint(output_dir: Path) -> bool:
+    """Verifies the fetched Kaggle output actually contains at least one
+    loadable LoRA adapter checkpoint. Catches a run that "succeeded"
+    (kernel completed, output pulled) but produced no usable checkpoint
+    - e.g. it crashed before its first checkpoint_every_steps, or wrote
+    a truncated/corrupt safetensors file - rather than reporting success
+    on a result with nothing actually trainable to show for it."""
+    adapter_files = sorted(output_dir.rglob("adapter_model.safetensors"))
+    if not adapter_files:
+        print(f"Checkpoint validation failed: no adapter_model.safetensors found under {output_dir}", file=sys.stderr)
+        return False
+
+    try:
+        from safetensors.torch import load_file
+    except ImportError as exc:
+        print(f"Checkpoint validation failed: safetensors is not installed ({exc})", file=sys.stderr)
+        return False
+
+    for adapter_file in adapter_files:
+        try:
+            state_dict = load_file(str(adapter_file))
+        except Exception as exc:  # noqa: BLE001 - any load failure means an invalid checkpoint
+            print(f"Checkpoint validation failed: {adapter_file} is not loadable: {exc}", file=sys.stderr)
+            return False
+        if not state_dict:
+            print(f"Checkpoint validation failed: {adapter_file} loaded but contains no tensors", file=sys.stderr)
+            return False
+
+    print(f"Checkpoint validation passed: {len(adapter_files)} adapter(s) under {output_dir}")
+    return True
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -39,19 +77,37 @@ def main(argv: list[str] | None = None) -> int:
     client = KaggleClient()
 
     print(f"Polling Kaggle kernel {kernel_ref.full_ref} until terminal (timeout={args.timeout_sec:g}s)...")
+    result = None
+    poll_error: Exception | None = None
     try:
         result = client.poll_kernel_until_terminal(
             kernel_ref, poll_interval_sec=args.poll_interval_sec, timeout_sec=args.timeout_sec,
         )
-    except Exception as exc:  # noqa: BLE001 - top-level CLI boundary, real failure reason goes to stderr
-        print(f"Polling failed: {exc}", file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001 - polling can time out or fail transiently; still fetch below
+        poll_error = exc
+        print(f"Polling failed or timed out: {exc}", file=sys.stderr)
+
+    if result is not None:
+        print(f"Kernel {kernel_ref.full_ref} finished with status={result.status.value} after {result.elapsed_sec:.1f}s")
+
+    # Always attempt to pull whatever output/logs/checkpoints exist so
+    # far, even after a polling timeout - partial progress on a real GPU
+    # run (or a completed run whose terminal-status poll happened to
+    # fail) is valuable and must not be discarded just because polling
+    # itself didn't cleanly succeed.
+    try:
+        client.pull_kernel_output(kernel_ref, args.output_dir)
+        print(f"Pulled kernel output to {args.output_dir}")
+    except Exception as exc:  # noqa: BLE001 - report but don't mask the real poll failure/status below
+        print(f"Could not pull kernel output: {exc}", file=sys.stderr)
+
+    if poll_error is not None or result.status != KaggleKernelStatus.COMPLETE:
         return 1
 
-    print(f"Kernel {kernel_ref.full_ref} finished with status={result.status.value} after {result.elapsed_sec:.1f}s")
-    client.pull_kernel_output(kernel_ref, args.output_dir)
-    print(f"Pulled kernel output to {args.output_dir}")
+    if args.validate_checkpoint and not _validate_checkpoint(args.output_dir):
+        return 1
 
-    return 0 if result.status == KaggleKernelStatus.COMPLETE else 1
+    return 0
 
 
 if __name__ == "__main__":

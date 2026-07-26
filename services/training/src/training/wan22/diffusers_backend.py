@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import random
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +17,11 @@ try:
     import torch
 except ImportError:  # pragma: no cover - exercised via ModelUnavailableError below
     torch = None  # type: ignore[assignment]
+
+try:
+    import numpy as np
+except ImportError:  # pragma: no cover - numpy ships with torch in practice
+    np = None  # type: ignore[assignment]
 
 _MISSING_DEPS_MESSAGE = (
     "training[gpu-training] extra is not installed - torch/diffusers/peft are required for "
@@ -54,6 +61,32 @@ _SMOKE_TEST_TRANSFORMER_KWARGS: dict[str, Any] = {
 _SMOKE_TEST_LATENT_CHANNELS = 4
 _SMOKE_TEST_TEXT_DIM = 32
 _SMOKE_TEST_TEXT_SEQ_LEN = 8
+
+
+def _stable_clip_seed(seed: int, clip_id: str) -> int:
+    """A `clip_id`-derived offset that is stable across process runs -
+    unlike Python's built-in `hash()`, which is salted per-process by
+    `PYTHONHASHSEED` and would silently break reproducibility between
+    two separately-launched training runs given the same
+    `TrainingConfig.seed`."""
+    digest = hashlib.sha256(clip_id.encode("utf-8")).hexdigest()
+    return (seed + int(digest, 16)) & 0xFFFFFFFF
+
+
+def _seed_everything(seed: int) -> None:
+    """Seeds every RNG this backend's training step draws from (python's
+    `random`, `numpy`, and torch's CPU/CUDA generators), so a Wan2.2 LoRA
+    run given the same `TrainingConfig.seed` - noise sampling, timestep
+    sampling, and `peft` LoRA weight initialization (all drawn from
+    torch's global default generator) - reproduces the same result
+    across separate process launches."""
+    random.seed(seed)
+    if np is not None:
+        np.random.seed(seed)
+    if torch is not None:
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
 
 
 @dataclass(frozen=True)
@@ -142,7 +175,7 @@ class RandomLatentBatchEncoder(Wan22BatchEncoder):
         latent_frames = max(1, (entry.num_frames - 1) // _VAE_TEMPORAL_SCALE + 1)
         latent_h = max(1, entry.height // _VAE_SPATIAL_SCALE)
         latent_w = max(1, entry.width // _VAE_SPATIAL_SCALE)
-        clip_seed = (self._seed + hash(entry.clip_id)) & 0xFFFFFFFF
+        clip_seed = _stable_clip_seed(self._seed, entry.clip_id)
         generator = torch.Generator(device="cpu").manual_seed(clip_seed)
 
         hidden_states = torch.randn(
@@ -250,6 +283,8 @@ class Wan22DiffusersBackend(IWan22TrainingBackend):
             raise ValueError("Wan22DiffusersBackend: pass either smoke_test=True or model_sources, not both")
         if not smoke_test and not model_sources:
             raise ValueError("Wan22DiffusersBackend: model_sources is required unless smoke_test=True")
+
+        _seed_everything(seed)
 
         self._base_model_id = base_model_id
         self._model_sources = dict(model_sources or {})
@@ -394,6 +429,29 @@ class Wan22DiffusersBackend(IWan22TrainingBackend):
         self._peft_models[expert].save_pretrained(str(target_dir))
         return f"file://{target_dir.resolve()}"
 
+    def load_checkpoint(self, *, expert: str, artifact_uri: str, lora_config: LoRAConfig) -> None:
+        """Restores a previously `save_checkpoint()`-written LoRA adapter
+        for `expert` from `artifact_uri`, so training can resume from
+        it. Builds (or reuses) the peft-wrapped model for `expert` first
+        - a checkpoint's weights can only be loaded into a model that
+        already has the matching LoRA adapter structure attached."""
+        if not artifact_uri.startswith("file://"):
+            raise ValueError(f"load_checkpoint only supports file:// artifact_uri, got: {artifact_uri!r}")
+        checkpoint_dir = Path(artifact_uri.removeprefix("file://"))
+        adapter_path = checkpoint_dir / "adapter_model.safetensors"
+        if not adapter_path.is_file():
+            raise ModelUnavailableError(f"load_checkpoint: {adapter_path} not found - not a valid LoRA checkpoint")
+
+        try:
+            from peft import set_peft_model_state_dict
+            from safetensors.torch import load_file
+        except ImportError as exc:
+            raise ModelUnavailableError(_MISSING_DEPS_MESSAGE) from exc
+
+        peft_model, _optimizer = self._get_trainable(expert, lora_config)
+        state_dict = load_file(str(adapter_path))
+        set_peft_model_state_dict(peft_model, state_dict)
+
 
 def build_smoke_test_backend(
     *, base_model_id: str, learning_rate: float = 1e-4, seed: int = 0
@@ -416,6 +474,7 @@ def build_real_backend(
     model_sources: dict[str, Wan22ModelSource],
     device: str = "cuda",
     learning_rate: float = 1e-4,
+    seed: int = 0,
     batch_encoder: Wan22BatchEncoder | None = None,
 ) -> Wan22DiffusersBackend:
     """Wires a `Wan22DiffusersBackend` at real Wan2.2 scale, pointed at
@@ -426,11 +485,15 @@ def build_real_backend(
     until a real `DiffusersBatchEncoder` is built from the same weights'
     VAE/tokenizer/text-encoder and passed in explicitly - see
     docs/EXECUTION_PLAN_FIRST_GPU_RUN.md for that remaining manual step.
+    `seed` seeds every RNG this run's training step draws from (see
+    `_seed_everything`) - always pass `TrainingConfig.seed`, never leave
+    it at its default for a real run.
     """
     return Wan22DiffusersBackend(
         base_model_id=base_model_id,
         model_sources=model_sources,
         device=device,
         learning_rate=learning_rate,
+        seed=seed,
         batch_encoder=batch_encoder,
     )
