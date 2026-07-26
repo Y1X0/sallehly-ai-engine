@@ -1,0 +1,60 @@
+name: Training - Phase 1b Wan2.2 Smoke Test (CPU only, $0)
+
+# The controlled, zero-cost smoke test required before any real GPU run
+# (docs/EXECUTION_PLAN_FIRST_GPU_RUN.md, docs/adr/0024-wan22-real-training-backend.md):
+# real diffusers.WanTransformer3DModel + real peft LoRA injection + a
+# real forward/backward/optimizer step + real paired checkpoint save, at
+# a tiny randomly-initialized scale so it runs on CPU in seconds. No GPU
+# is requested, no Wan2.2 weights are downloaded, and no paid provider is
+# touched anywhere in this workflow - it only installs the optional
+# training[gpu-training] extra (torch/diffusers/peft, CPU build) and runs
+# services/training/scripts/run_smoke_test.py plus its own test suite.
+
+on:
+  push:
+    branches:
+      - "training/**"
+  pull_request:
+    paths:
+      - "services/training/src/training/wan22/diffusers_backend.py"
+      - "services/training/src/training/hf_download.py"
+      - "services/training/scripts/run_smoke_test.py"
+      - "services/training/scripts/download_wan22_weights.py"
+      - "services/training/scripts/ingest_dataset.py"
+      - "services/training/scripts/run_experiment.py"
+      - "models/registry.yaml"
+      - ".github/workflows/training-phase1b-smoke-test.yml"
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ffmpeg (optional real-dataset-pipeline path in run_smoke_test.py)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Sync workspace with the gpu-training extra (torch/diffusers/peft - CPU only here)
+        run: uv sync --all-packages --extra gpu-training
+
+      - name: Run the controlled Wan2.2 smoke test (real mechanism, tiny scale, CPU, $0)
+        run: >
+          uv run python services/training/scripts/run_smoke_test.py --base-model-id wan2.2-ti2v-5b
+          && uv run python services/training/scripts/run_smoke_test.py --base-model-id wan2.2-t2v-a14b
+
+      - name: Run the real-backend / download / dispatch test suites
+        run: >
+          uv run pytest
+          tests/test_training_wan22_diffusers_backend.py
+          tests/test_training_hf_download.py
+          tests/test_training_wan22_registry_metadata.py
+          tests/test_training_scripts_dispatch.py
+          tests/test_training_scripts_download_weights.py
+          tests/test_training_scripts_ingest_dataset.py
+          tests/test_training_scripts_smoke_test.py
+          -q

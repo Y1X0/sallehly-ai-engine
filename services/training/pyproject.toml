@@ -1,11 +1,32 @@
 [project]
 name = "training"
 version = "0.1.0"
-description = "Phase 9 Preparation: dataset pipeline, model registry, evaluation framework, and training configuration for the Sallehly custom foundation model track. No GPU, no model downloads, no training execution - see docs/adr/0021-phase9-preparation.md."
+description = "Dataset pipeline, model registry, evaluation framework, training configuration, and (via the optional gpu-training extra) the real Wan2.2 LoRA training execution layer for the Sallehly custom foundation model track. See docs/adr/0021-phase9-preparation.md and docs/adr/0024-wan22-real-training-backend.md."
 requires-python = ">=3.11"
 dependencies = [
   "video-engine-sdk",
   "pyyaml>=6.0",
+]
+
+# Deliberately an optional extra, not a base dependency: Phase 1 CI
+# (.github/workflows/training-phase1-dataset-validation.yml) runs
+# `uv sync --all-packages` on every push/PR and must stay fast/CPU-only/
+# $0 as designed. Only the smoke-test workflow and a real GPU training
+# environment need `torch`/`diffusers`/etc, so they install this extra
+# explicitly (`uv sync --all-packages --extra gpu-training` or
+# `pip install "training[gpu-training]"`). See
+# docs/adr/0024-wan22-real-training-backend.md decision 1.
+[project.optional-dependencies]
+gpu-training = [
+  "torch>=2.3",
+  "diffusers>=0.31",
+  "transformers>=4.44",
+  "accelerate>=0.33",
+  "peft>=0.12",
+  "safetensors>=0.4",
+  "huggingface_hub>=0.24",
+  "imageio>=2.34",
+  "imageio-ffmpeg>=0.5",
 ]
 
 [tool.uv.sources]

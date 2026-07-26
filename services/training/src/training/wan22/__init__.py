@@ -2,6 +2,16 @@ from .backend import IWan22TrainingBackend, TrainStepResult, UnavailableWan22Bac
 from .checkpoint_writer import PairedCheckpointMissingError, Wan22CheckpointWriter, expert_checkpoint_id
 from .command import TrainingCommand, build_training_command
 from .dataset_adapter import Wan22DatasetAdapter, Wan22ManifestEntry, load_manifest_jsonl
+from .diffusers_backend import (
+    DiffusersBatchEncoder,
+    RandomLatentBatchEncoder,
+    Wan22BatchEncoder,
+    Wan22DiffusersBackend,
+    Wan22ModelSource,
+    build_real_backend,
+    build_smoke_test_backend,
+    default_model_sources,
+)
 from .dispatch import (
     build_training_command_for_job,
     dispatch_via_kaggle,
@@ -16,29 +26,47 @@ from .lora_config import (
     Wan22LoRAConfig,
     expected_experts,
 )
+from .registry_metadata import (
+    Wan22DownloadSpec,
+    Wan22RegistryEntry,
+    load_wan22_registry_entries,
+    validate_wan22_registry_entry,
+)
 from .trainer import Wan22LoRATrainer
 
 __all__ = [
     "EXPERT_HIGH_NOISE",
     "EXPERT_LOW_NOISE",
     "EXPERT_UNIFIED",
+    "DiffusersBatchEncoder",
     "IWan22TrainingBackend",
     "PairedCheckpointMissingError",
+    "RandomLatentBatchEncoder",
     "TrainStepResult",
     "TrainingCommand",
     "UnavailableWan22Backend",
+    "Wan22BatchEncoder",
     "Wan22CheckpointWriter",
     "Wan22DatasetAdapter",
+    "Wan22DiffusersBackend",
+    "Wan22DownloadSpec",
     "Wan22EvaluationHook",
     "Wan22LoRAConfig",
     "Wan22LoRATrainer",
     "Wan22ManifestEntry",
+    "Wan22ModelSource",
+    "Wan22RegistryEntry",
+    "build_real_backend",
+    "build_smoke_test_backend",
     "build_training_command",
     "build_training_command_for_job",
+    "default_model_sources",
     "dispatch_via_kaggle",
     "dispatch_via_modal",
     "expected_experts",
     "expert_checkpoint_id",
     "load_manifest_jsonl",
+    "load_wan22_registry_entries",
+    "validate_wan22_registry_entry",
     "write_job_inputs",
 ]

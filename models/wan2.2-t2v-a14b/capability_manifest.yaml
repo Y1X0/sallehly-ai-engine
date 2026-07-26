@@ -1,0 +1,41 @@
+# Read by the Render Configuration Compiler via CapabilityManifest
+# (packages/schemas/json/capability_manifest.schema.json) once a real
+# IVideoEngine adapter for this engine exists and VIDEO_ENGINE=wan2.2-t2v-a14b
+# is selected. No such adapter exists yet - see
+# models/registry.yaml's `status: training-target` note for this engine
+# and docs/adr/0024-wan22-real-training-backend.md. This manifest exists
+# now so training.registry.validate_capability_manifest() has a real,
+# checkable manifest to validate a trained LoRA checkpoint's
+# ModelVersionRecord against before promotion (registry.records.PromotionStatus).
+#
+# Values mirror BASE_MODEL_REGISTRY["wan2.2-t2v-a14b"]
+# (services/training/src/training/config.py) - keep the two in sync.
+
+engine_id: wan2.2-t2v-a14b
+engine_version: "2.2.0"
+license: Apache-2.0
+
+modes:
+  - text_to_video
+
+max_shot_duration_sec: 5.0
+min_shot_duration_sec: 1.0
+
+resolutions:
+  - "1280x720"
+
+fps_options: [16]
+
+motion_strength_range: [0, 100]
+
+supports_negative_prompt: true
+supports_seed: true
+supports_conditioning_images: false
+max_conditioning_images: 0
+
+gpu_requirements:
+  min_vram_gb: 40
+  recommended_gpu: "NVIDIA A100 (40GB) or better - two-expert MoE DiT, both experts loaded together"
+
+# Placeholder - fill in once a real training/inference run measures this.
+average_render_seconds_per_shot: null

@@ -17,6 +17,7 @@ package) and needs no GPU or downloaded weights.
 
 from __future__ import annotations
 
+import importlib.util
 import math
 
 import pytest
@@ -32,6 +33,19 @@ from cinematic_intelligence.model_adapters import (
 from cinematic_intelligence_sdk import ReferenceImageEntry, ReferencePackage
 from config_sdk import CONDITIONING_ADAPTER_REGISTRY, EMBEDDING_PROVIDER_REGISTRY
 from PIL import Image
+
+
+# services/training's optional `gpu-training` extra (docs/adr/0024-wan22-real-training-backend.md)
+# adds torch/transformers to this uv workspace's single shared virtualenv
+# - when that extra is installed, torch/transformers become importable
+# from *any* package's code, including this one, invalidating the two
+# tests below (which assert ModelUnavailableError specifically because
+# torch/transformers are absent). Skip them in that specific
+# environment rather than asserting a precondition that may no longer
+# hold; every other test in this file has no such dependency and is
+# unaffected either way.
+_TORCH_INSTALLED = importlib.util.find_spec("torch") is not None
+_TRANSFORMERS_INSTALLED = importlib.util.find_spec("transformers") is not None
 
 
 def _reference_package(kind: str, asset_id: str, project_id: str = "proj_model_adapters") -> ReferencePackage:
@@ -90,6 +104,7 @@ class TestEmbeddingProviderEmbedImageUnavailable:
         with pytest.raises(ModelUnavailableError, match="open_clip_torch"):
             provider.embed_image("file:///tmp/does-not-matter.png")
 
+    @pytest.mark.skipif(_TORCH_INSTALLED, reason="torch is installed (gpu-training extra) - see module comment")
     def test_dino_embed_image_raises_model_unavailable(self):
         provider = DinoEmbeddingProvider()
         with pytest.raises(ModelUnavailableError, match="torch"):
@@ -187,6 +202,9 @@ class TestIPAdapterSupports:
         adapter = IPAdapterConditioningAdapter()
         assert adapter.supports(_reference_package("object", "asset_1")) is False
 
+    @pytest.mark.skipif(
+        _TRANSFORMERS_INSTALLED, reason="transformers is installed (gpu-training extra) - see module comment"
+    )
     def test_apply_raises_model_unavailable(self):
         adapter = IPAdapterConditioningAdapter()
         package = _reference_package("character", "asset_1")

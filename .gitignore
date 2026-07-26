@@ -28,6 +28,16 @@ models/**/*.bin
 *.mp4
 *.mov
 
+# Local training-automation / training-data artifacts (job records,
+# approvals, usage ledgers, ingested-dataset manifests, downloaded model
+# weights) - always machine-local, never committed. See
+# services/training/scripts/run_experiment.py, ingest_dataset.py,
+# download_wan22_weights.py, and docs/adr/0024-wan22-real-training-backend.md.
+.training-automation/
+.training-data/
+.training-runs/
+.models-cache/
+
 # OS / editor
 .DS_Store
 .idea/
