@@ -30,7 +30,7 @@ def _make_clips_dir(tmp_path: Path, n: int = 3) -> Path:
     clips_dir = tmp_path / "clips"
     clips_dir.mkdir()
     for i, color in enumerate(["red", "green", "blue"][:n]):
-        make_color_clip(clips_dir / f"clip_{i}.mp4", color, duration=1.0, size="320x240", rate=24)
+        make_color_clip(clips_dir / f"clip_{i}.mp4", color, duration=1.0, size="854x480", rate=24)
     return clips_dir
 
 
