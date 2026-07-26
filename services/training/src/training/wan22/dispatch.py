@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from ..automation.controller import JobRecord
-from ..automation.kaggle_client import KaggleClient, KaggleDatasetRef, KaggleKernelRef, KernelPushConfig
+from ..automation.kaggle_client import (
+    DatasetMetadata,
+    KaggleClient,
+    KaggleDatasetRef,
+    KaggleKernelRef,
+    KernelPushConfig,
+)
 from ..automation.modal_client import GPUType, ModalJobConfig, ModalJobHandle, ModalJobLauncher
 from .command import TrainingCommand, build_training_command
+
+_KAGGLE_RUNNER_FILENAME = "kaggle_kernel_runner.py"
 
 
 def build_training_command_for_job(job: JobRecord, **kwargs) -> TrainingCommand:
@@ -35,20 +44,58 @@ def dispatch_via_kaggle(
     kaggle_client: KaggleClient,
     kernel_ref: KaggleKernelRef,
     *,
-    dataset_sources: tuple[KaggleDatasetRef, ...] = (),
+    dataset_owner_slug: str | None = None,
+    extra_dataset_sources: tuple[KaggleDatasetRef, ...] = (),
 ) -> str:
-    """Item 8 (Kaggle half): pushes the entrypoint script as a Kaggle
-    kernel via the real `KaggleClient` built in the automation layer -
-    no new Kaggle integration code, just wiring. `kernel_dir` is the
-    entrypoint script's own directory, since `kaggle kernels push`
-    uploads a whole directory and `code_file` must live inside it."""
+    """Item 8 (Kaggle half): pushes a real, runnable Kaggle kernel via
+    the real `KaggleClient` built in the automation layer.
+
+    A plain Kaggle kernel push cannot receive CLI arguments the way a
+    local subprocess or `TrainingCommand.to_argv()` assumes - `kaggle
+    kernels push` runs `code_file` with no argv at all (see
+    docs/adr/0025-kaggle-dispatch-argv-fix.md for how this was found and
+    why it matters: the original ADR 0023 wiring pushed
+    `wan22_lora_train.py` directly as `code_file`, which would have
+    crashed on Kaggle's side on its first required `--config` argument).
+
+    The real fix: upload `command.config_path` +
+    `command.dataset_manifest_path` as a Kaggle dataset (mounted
+    read-only under `/kaggle/input/<slug>/` at kernel runtime), and push
+    `kaggle_kernel_runner.py` (which lives alongside the entrypoint, and
+    reads its inputs from that mount, then calls
+    `wan22_lora_train.main()` directly) as the kernel's `code_file`
+    instead of the entrypoint itself. `kernel_dir` is still the
+    entrypoint script's own directory - both files must be pushed
+    together, since the runner imports the entrypoint by module name.
+    """
     write_job_inputs(job, command)
+
+    dataset_input_dir = Path(command.config_path).parent / "kaggle_dataset_input"
+    dataset_input_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(command.config_path, dataset_input_dir / "config.yaml")
+    shutil.copyfile(command.dataset_manifest_path, dataset_input_dir / "dataset_manifest.jsonl")
+
+    input_dataset_ref = KaggleDatasetRef(
+        owner_slug=dataset_owner_slug or kernel_ref.owner_slug,
+        dataset_slug=f"{job.job_id}-input".replace("_", "-"),
+    )
+    kaggle_client.upload_dataset(
+        dataset_input_dir,
+        DatasetMetadata(
+            dataset_ref=input_dataset_ref,
+            title=f"Wan2.2 training input - {job.job_id}",
+            subtitle="config.yaml + dataset_manifest.jsonl for one training run - see kaggle_kernel_runner.py",
+        ),
+        is_new=True,
+    )
+
     entrypoint_path = Path(command.entrypoint)
+    runner_path = entrypoint_path.parent / _KAGGLE_RUNNER_FILENAME
     push_config = KernelPushConfig(
         kernel_ref=kernel_ref,
         title=f"Sallehly Wan2.2 LoRA training - {job.job_id}",
-        code_file=entrypoint_path.name,
-        dataset_sources=dataset_sources,
+        code_file=runner_path.name,
+        dataset_sources=(input_dataset_ref, *extra_dataset_sources),
     )
     return kaggle_client.push_kernel(entrypoint_path.parent, push_config)
 

@@ -13,6 +13,7 @@ without ever touching real weights.
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 
 import pytest
 from training import (
@@ -29,7 +30,6 @@ from training import (
     InMemoryJobStatusStore,
     InMemoryUsageLedger,
     KaggleClient,
-    KaggleDatasetRef,
     KaggleKernelRef,
     LoRAConfig,
     ModalJobLauncher,
@@ -487,19 +487,28 @@ class TestDispatchWiring:
         command = build_training_command_for_job(job, base_dir=str(tmp_path), **command_kwargs)
         return job, command
 
-    def test_dispatch_via_kaggle_pushes_kernel_with_entrypoint_directory(self, tmp_path):
-        # dispatch_via_kaggle() writes a real kernel-metadata.json into
-        # the entrypoint's own directory (that's how `kaggle kernels
-        # push` works) - point the entrypoint at a scratch directory
-        # under tmp_path rather than the real
-        # services/training/entrypoints/, so this test never touches
-        # the source tree.
+    def test_dispatch_via_kaggle_uploads_input_dataset_then_pushes_runnable_kernel(self, tmp_path):
+        # A plain Kaggle kernel push cannot receive CLI arguments
+        # (docs/adr/0025-kaggle-dispatch-argv-fix.md) - dispatch_via_kaggle()
+        # now uploads config.yaml/dataset_manifest.jsonl as a real Kaggle
+        # dataset first, then pushes kaggle_kernel_runner.py (not
+        # wan22_lora_train.py directly) referencing that dataset. Point
+        # the entrypoint at a scratch directory under tmp_path rather
+        # than the real services/training/entrypoints/, so this test
+        # never touches the source tree.
         fake_entrypoint_dir = tmp_path / "fake_entrypoints"
         fake_entrypoint_dir.mkdir()
         (fake_entrypoint_dir / "wan22_lora_train.py").write_text("# fake entrypoint for tests\n")
+        (fake_entrypoint_dir / "kaggle_kernel_runner.py").write_text("# fake runner for tests\n")
         job, command = self._planned_job(
             tmp_path, provider="kaggle", entrypoint=str(fake_entrypoint_dir / "wan22_lora_train.py"),
         )
+        # dispatch_via_kaggle() expects the dataset manifest to already
+        # exist on disk (built ahead of time by ingest_dataset.py, per
+        # write_job_inputs()'s own docstring) - create a fake one here.
+        Path(command.dataset_manifest_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(command.dataset_manifest_path).write_text('{"clip_id": "c1"}\n')
+
         calls = []
 
         def runner(args):
@@ -508,14 +517,32 @@ class TestDispatchWiring:
 
         client = KaggleClient(runner=runner)
         kernel_ref = KaggleKernelRef(owner_slug="sallehly", kernel_slug=job.job_id)
-        dataset_ref = KaggleDatasetRef(owner_slug="sallehly", dataset_slug="training-clips")
 
-        output = dispatch_via_kaggle(job, command, client, kernel_ref, dataset_sources=(dataset_ref,))
+        output = dispatch_via_kaggle(job, command, client, kernel_ref)
 
         assert output == "Kernel version pushed"
-        assert calls[0][:3] == ["kaggle", "kernels", "push"]
+        # Two real CLI calls: create the input dataset, then push the kernel.
+        assert calls[0][:3] == ["kaggle", "datasets", "create"]
+        assert calls[1][:3] == ["kaggle", "kernels", "push"]
         # The config was written to disk as a real side effect of dispatch.
         assert TrainingConfig.from_yaml(command.config_path).run_id == job.config.run_id
+        # The uploaded dataset staging dir actually contains both real inputs.
+        staged_dir = Path(command.config_path).parent / "kaggle_dataset_input"
+        assert (staged_dir / "config.yaml").is_file()
+        assert (staged_dir / "dataset_manifest.jsonl").is_file()
+
+    def test_dispatch_via_kaggle_requires_dataset_manifest_to_already_exist(self, tmp_path):
+        fake_entrypoint_dir = tmp_path / "fake_entrypoints"
+        fake_entrypoint_dir.mkdir()
+        (fake_entrypoint_dir / "wan22_lora_train.py").write_text("# fake entrypoint for tests\n")
+        job, command = self._planned_job(
+            tmp_path, provider="kaggle", entrypoint=str(fake_entrypoint_dir / "wan22_lora_train.py"),
+        )
+        client = KaggleClient(runner=lambda args: _fake_result(stdout="unused"))
+        kernel_ref = KaggleKernelRef(owner_slug="sallehly", kernel_slug=job.job_id)
+
+        with pytest.raises(FileNotFoundError):
+            dispatch_via_kaggle(job, command, client, kernel_ref)
 
     def test_dispatch_via_modal_launches_with_gpu_and_extra_args(self, tmp_path):
         job, command = self._planned_job(tmp_path, provider="modal")

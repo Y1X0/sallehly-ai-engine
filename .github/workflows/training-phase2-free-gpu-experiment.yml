@@ -6,26 +6,57 @@ name: Training - Phase 2 Free GPU Experiment (Kaggle/Modal, $0)
 # CostGuard/approval is needed at this tier - only PAID_GPU jobs (Phase
 # 3, training-phase3-paid-gpu-gate.yml) go through the approval gate.
 #
-# Real Kaggle/Modal dispatch (--dispatch) additionally requires a real
-# training entrypoint this repo does not ship yet (see the script's own
-# docstring) - until then this workflow exercises the real, tested
-# planning/tracking/reporting path and stops there, by design.
+# `plan-experiment` (nightly + manual) only ever plans - never
+# downloads weights, never touches a real GPU, never spends a Kaggle/
+# Modal quota. It never needs secrets and is unaffected by anything
+# below.
+#
+# `wan22-ti2v5b-kaggle-smoke-test` is the real thing: downloads real
+# Wan2.2 TI2V-5B weights, ingests a small CI-generated dataset, and
+# dispatches a real LoRA training smoke test to a real Kaggle free GPU
+# (docs/adr/0025-kaggle-dispatch-argv-fix.md is what makes this actually
+# runnable, not just "kaggle kernels push exits 0"). It is manual-only
+# (workflow_dispatch, never the nightly schedule) and requires an
+# explicit confirmation input - a real GPU + real weights download is a
+# deliberate, human-triggered action here, never an unattended one.
+#
+# *** DEVELOPMENT-ONLY DATASET WARNING ***
+# The clips this job generates (solid-color, ffmpeg lavfi test sources)
+# exist ONLY to exercise the real DatasetManager/dispatch/training
+# mechanism end-to-end - GitHub-hosted runners have no access to real
+# footage. They are not representative training data and the resulting
+# checkpoint has no real quality: it proves the pipeline runs, not that
+# a usable model comes out the other end. See
+# docs/WAN22_KAGGLE_SMOKE_TEST.md ("Replacing the placeholder dataset")
+# for how to run this against a real dataset instead - the production
+# path is `services/training/scripts/ingest_dataset.py` against your
+# own real, rights-cleared clips, run outside this placeholder-data CI
+# job.
 
 on:
   schedule:
-    - cron: "0 3 * * *" # nightly, 03:00 UTC
+    - cron: "0 3 * * *" # nightly, 03:00 UTC - plan-experiment only, see above
   workflow_dispatch:
     inputs:
       provider:
-        description: "Free-tier GPU provider to target"
+        description: "[plan-experiment] Free-tier GPU provider to target"
         required: true
         default: "modal"
         type: choice
         options: ["modal", "kaggle"]
       base_config:
-        description: "TrainingConfig YAML under services/training/configs/"
+        description: "[plan-experiment] TrainingConfig YAML under services/training/configs/"
         required: true
         default: "services/training/configs/wan21_finetune.yaml"
+      run_wan22_kaggle_smoke_test:
+        description: "[wan22-ti2v5b-kaggle-smoke-test] Actually download real weights and dispatch a real Kaggle GPU run (free tier, but a real external action - requires KAGGLE_USERNAME/KAGGLE_KEY repo secrets)"
+        required: true
+        default: false
+        type: boolean
+      kaggle_username:
+        description: "[wan22-ti2v5b-kaggle-smoke-test] Kaggle username the pushed kernel is owned by (usually not the same as your GitHub username)"
+        required: false
+        default: ""
 
 concurrency:
   group: training-phase2-free-gpu
@@ -59,4 +90,144 @@ jobs:
         with:
           name: training-phase2-job-records
           path: .training-automation/jobs
+          retention-days: 30
+
+  wan22-ti2v5b-kaggle-smoke-test:
+    # Manual-only, explicit opt-in - never runs on the nightly schedule
+    # and never runs from a plain "Run workflow" click without also
+    # checking this box.
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_wan22_kaggle_smoke_test == 'true'
+    runs-on: ubuntu-latest
+    env:
+      KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+      KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ffmpeg (for the CI placeholder dataset)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Sync workspace with the gpu-training extra
+        run: uv sync --all-packages --extra gpu-training
+
+      - name: Verify Kaggle authentication (fails fast, before any real work below)
+        run: |
+          if [ -z "$KAGGLE_USERNAME" ] || [ -z "$KAGGLE_KEY" ]; then
+            echo "KAGGLE_USERNAME / KAGGLE_KEY repo secrets are not set - see docs/EXECUTION_PLAN_FIRST_GPU_RUN.md" >&2
+            exit 1
+          fi
+          uv run kaggle kernels list --mine >/dev/null
+
+      # *** DEVELOPMENT-ONLY DATASET - NOT real curated footage ***
+      # GitHub-hosted runners have no access to your real clips. This
+      # generates a few tiny solid-color test clips purely to exercise
+      # the real DatasetManager pipeline (ffprobe, validation, split,
+      # versioning) end-to-end against real files - it validates the
+      # MECHANISM, not model quality. See docs/WAN22_KAGGLE_SMOKE_TEST.md
+      # ("Replacing the placeholder dataset") for the real production
+      # path: run services/training/scripts/ingest_dataset.py yourself
+      # against real, rights-cleared footage (outside this CI job, since
+      # CI cannot see your files), then dispatch from that real manifest.
+      - name: Generate a DEVELOPMENT-ONLY placeholder dataset (not real footage)
+        run: |
+          mkdir -p /tmp/ci-placeholder-clips
+          for color in red green blue; do
+            ffmpeg -y -hide_banner -loglevel error -f lavfi \
+              -i "color=c=${color}:size=960x544:duration=3:rate=16" \
+              -c:v libx264 -pix_fmt yuv420p "/tmp/ci-placeholder-clips/${color}.mp4"
+          done
+
+      - name: Ingest the placeholder dataset (real DatasetManager pipeline, development-only data)
+        run: >
+          uv run python services/training/scripts/ingest_dataset.py
+          --clips-dir /tmp/ci-placeholder-clips --rights-cleared --tag ci-placeholder
+          --version-store-dir .training-data/dataset-versions
+          --manifest-output-dir .training-data/manifests
+          --base-model-config services/training/configs/wan22_finetune.yaml
+
+      - name: Build a scratch smoke-test config (short run, real dataset_version)
+        run: |
+          uv run python - <<'PY'
+          import dataclasses
+          import glob
+          from pathlib import Path
+          from training import TrainingConfig
+
+          manifest = sorted(glob.glob(".training-data/manifests/*_train.jsonl"))[-1]
+          version_id = Path(manifest).name.removesuffix("_train.jsonl")
+          config = TrainingConfig.from_yaml("services/training/configs/wan22_finetune.yaml")
+          config = dataclasses.replace(
+              config, dataset_version=version_id, max_train_steps=20,
+              checkpoint_every_steps=10, eval_every_steps=10,
+          )
+          config.to_yaml(".training-data/ci_smoke_config.yaml")
+          print(f"dataset_version={version_id}")
+          PY
+
+      - name: Dispatch the LoRA training smoke test to Kaggle's free GPU
+        id: dispatch
+        run: |
+          MANIFEST=$(ls .training-data/manifests/*_train.jsonl | tail -1)
+          KERNEL_REF="${{ github.event.inputs.kaggle_username || github.repository_owner }}/wan22-ci-smoke-${{ github.run_id }}"
+          uv run python services/training/scripts/run_experiment.py \
+            --base-config .training-data/ci_smoke_config.yaml \
+            --allowed-ranges services/training/automation/allowed_ranges.example.json \
+            --tier free_gpu --provider kaggle --dispatch \
+            --dataset-manifest "$MANIFEST" \
+            --kaggle-kernel-ref "$KERNEL_REF" \
+            --job-store-dir .training-automation/jobs \
+            --job-id "ci-smoke-${{ github.run_id }}"
+          echo "kernel_ref=$KERNEL_REF" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the Kaggle kernel and fetch its output (checkpoints)
+        id: fetch
+        run: >
+          uv run python services/training/scripts/fetch_kaggle_kernel_result.py
+          --kernel-ref "${{ steps.dispatch.outputs.kernel_ref }}"
+          --output-dir .training-automation/kaggle-output
+          --timeout-sec 5400
+
+      - name: Record the real outcome and build the training report
+        if: always()
+        run: |
+          uv run python - <<'PY'
+          from pathlib import Path
+          from training.automation import ExperimentConfigGenerator, FilesystemJobStatusStore, TrainingController
+
+          job_store = FilesystemJobStatusStore(".training-automation/jobs")
+          controller = TrainingController(
+              job_store=job_store, config_generator=ExperimentConfigGenerator(allowed_ranges={}),
+          )
+          job_id = "ci-smoke-${{ github.run_id }}"
+          fetch_succeeded = "${{ steps.fetch.outcome }}" == "success"
+          if fetch_succeeded:
+              controller.mark_completed(
+                  job_id, result_summary="Kaggle kernel finished - see kaggle-output/ for checkpoints and logs.",
+              )
+          else:
+              controller.mark_failed(
+                  job_id, error_message="Kaggle kernel did not finish successfully - see the "
+                  "'Wait for the Kaggle kernel' step's own log for the real reason.",
+              )
+          report = controller.report(job_id)
+          Path(".training-automation/report.md").write_text(report)
+          print(report)
+          PY
+
+      - name: Upload checkpoint + report artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wan22-ti2v5b-kaggle-smoke-${{ github.run_id }}
+          path: |
+            .training-automation/kaggle-output
+            .training-automation/report.md
+            .training-data/manifests
+            .training-data/ci_smoke_config.yaml
           retention-days: 30
