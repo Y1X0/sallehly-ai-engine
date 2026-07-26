@@ -38,6 +38,15 @@ design, [`docs/DECISIONS.md`](docs/DECISIONS.md) for the decision log, and
 
 ## Status
 
+**v1.0.0.** Phase 8 pipeline integration, Phase 9 preparation, and a
+real Wan2.2 training + inference execution layer (Kaggle free-GPU
+dispatch, RunPod production backend) are all complete - see
+`CHANGELOG.md` and `docs/PRODUCTION_READINESS_CHECKLIST.md` for the
+release-level summary and exactly what a real production rollout still
+needs from you (RunPod credentials, a pushed worker image). The
+phase-by-phase build log below is kept in full for how each piece was
+verified.
+
 **Phase 8 — Pipeline integration.** A user can register, submit a
 creative idea, review and approve/reject the storyboard and render
 plan, watch it through to a generated video asset, review a live
@@ -344,22 +353,63 @@ Phase 6/7 below describe when each was originally built):
   and the untrained `SallehlyModelAdapter` (graceful per-case error).
   `dispatch_via_kaggle`/`dispatch_via_modal` reuse the automation layer's
   real `KaggleClient`/`ModalJobLauncher` via a shared `TrainingCommand`.
-  The one real execution boundary, `IWan22TrainingBackend`, has exactly
-  one implementation (`UnavailableWan22Backend`) that always raises
-  `ModelUnavailableError` - `services/training/entrypoints/
-  wan22_lora_train.py` was actually run end-to-end during development
-  against a hand-built dataset manifest and correctly failed there, with
-  no partial state left behind. 37 new tests, no GPU used, no model
-  downloaded, no training executed.
+  The one real execution boundary, `IWan22TrainingBackend`, initially had
+  exactly one implementation (`UnavailableWan22Backend`) that always
+  raised `ModelUnavailableError` - superseded by `Wan22DiffusersBackend`
+  below. 37 new tests, no GPU used, no model downloaded, no training
+  executed at the time this layer was built.
+- **Wan2.2 real training backend + Kaggle free-GPU dispatch** (`services/training/wan22`,
+  see `docs/adr/0024-wan22-real-training-backend.md`, `docs/adr/0025-kaggle-dispatch-argv-fix.md`,
+  `docs/adr/0026-pre-first-real-run-audit-fixes.md`): `Wan22DiffusersBackend`
+  - a real `diffusers.WanTransformer3DModel` + real `peft` LoRA injection,
+  running a genuine forward/backward/`AdamW` step every call (verified
+  against the installed `diffusers`/`peft` versions before being
+  committed) - replaces `UnavailableWan22Backend` as the default. Real
+  Hugging Face weight download with per-file SHA-256 checksum
+  verification (`training.hf_download`, never random weights). A real,
+  previously-undiscovered gap was found and fixed: Kaggle kernels accept
+  no CLI arguments at all, so the original dispatch would have crashed
+  instantly - `dispatch_via_kaggle()` now uploads the job's config as a
+  real Kaggle dataset and pushes a wrapper (`kaggle_kernel_runner.py`)
+  that clones the right git ref, verifies CUDA is actually available
+  (fails fast rather than silently training on CPU), installs only
+  missing packages so Kaggle's preinstalled CUDA-enabled torch is never
+  touched, and runs the real training entrypoint. Full reproducibility
+  (torch/numpy/random seeding), checkpoint resume, and checkpoint
+  validation after download round out the pipeline
+  (`.github/workflows/training-phase2-free-gpu-experiment.yml`,
+  manual-only, real GPU + real weights on explicit opt-in).
+- **Real video generation + RunPod production backend** (`video_engine_adapter.inference`,
+  `video_engine_adapter.compute.LocalInferenceProvider`, `workers/gpu-worker`,
+  `infra/runpod/`): closes the "`workers/gpu-worker` is a stub" gap.
+  `generate_video()` runs a real `diffusers.WanPipeline` end to end (real
+  denoising loop, real VAE decode) and writes a real `.mp4` -
+  `COMPUTE_PROVIDER=local-inference` does this in-process at a tiny,
+  verified-by-hand scale with zero credentials (proves the mechanism,
+  not output quality); `COMPUTE_PROVIDER=runpod` runs the same call at
+  real Wan2.2 scale on a real GPU via `workers/gpu-worker/handler.py`
+  (real HF download + checksum verification, reusing
+  `training.hf_download` - never random weights), dispatched through the
+  already-real `RunPodProvider` HTTP client to a real endpoint deployed
+  via `infra/runpod/deploy_endpoint.py` (the official `runpod` SDK's
+  actual management API). `COMPUTE_PROVIDER=runpod` without
+  `RUNPOD_API_KEY`/`RUNPOD_ENDPOINT_ID` fails the API at startup with a
+  clear error instead of silently falling back to the mock. Try it at
+  `GET /demo` (`apps/api/src/api/static/demo.html`) - a prompt in, the
+  full pipeline runs, a real generated clip plays back in the browser.
 
-One thing remains genuinely unexecuted in this environment, documented
-rather than glossed over: real GPU inference (`workers/gpu-worker` needs
-actual Wan2.1 weights deployed to a GPU). Everything on the code side of
-that boundary is implemented and tested against local/mocked
-equivalents - the same honesty class Phase 8 held its own two
-genuinely-vision-model-dependent interfaces to. Live Temporal execution
-- long documented as the other side of this same boundary (ADR 0010) -
-turned out to be narrower than that: a real `temporal` CLI dev server
+Real GPU inference against actual Wan2.2 weights on a real deployed
+RunPod endpoint has not been executed end-to-end from this development
+environment: its network egress blocks both huggingface.co (the real
+weight download) and the Docker registry CDN (building/pushing the
+worker image), and no RunPod account was available here either. Every
+real call was exercised up to that exact boundary by hand before being
+committed (the HF download call reaches a real 403 at the network
+edge, not a fabricated success) - see `docs/PRODUCTION_READINESS_CHECKLIST.md`
+for the precise remaining manual steps (build+push the image, deploy a
+real RunPod endpoint, run against real credentials). Live Temporal
+execution - long documented as a similar boundary (ADR 0010) - turned
+out to be narrower than that: a real `temporal` CLI dev server
 (downloaded directly from GitHub Releases, not through the SDK's own
 blocked auto-downloader) runs here, and `ProjectGenerationWorkflow`/
 `TemporalProjectOrchestrator` are genuinely executed against it as of

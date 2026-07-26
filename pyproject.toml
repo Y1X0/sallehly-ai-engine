@@ -1,6 +1,6 @@
 [project]
 name = "sallehly-ai-video-engine"
-version = "0.1.0"
+version = "1.0.0"
 description = "AI-directed cinematic video generation platform (workspace root)"
 requires-python = ">=3.11"
 

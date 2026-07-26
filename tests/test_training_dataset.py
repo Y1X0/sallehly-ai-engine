@@ -16,7 +16,6 @@ from training import (
     DatasetManager,
     DatasetValidator,
     EmbeddingDuplicateDetector,
-    FfprobeNotAvailableError,
     FilesystemDatasetVersionStore,
     HashDuplicateDetector,
     HeuristicCaptionProvider,
