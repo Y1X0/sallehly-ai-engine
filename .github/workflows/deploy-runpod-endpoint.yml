@@ -28,6 +28,19 @@ name: Deploy - RunPod Wan2.2 Production Endpoint (real cost, human-gated)
 # packages - no extra registry secret needed.
 
 on:
+  # GitHub only registers a workflow_dispatch-triggered workflow (making
+  # it selectable/runnable in the Actions UI, or via `gh workflow run`)
+  # once it has seen at least one real event for that workflow file on
+  # this branch - a workflow_dispatch-only file freshly added to a
+  # non-default branch does not appear in the Actions tab at all until
+  # then (confirmed GitHub Actions behavior, not a bug in this file).
+  # This `push` trigger, scoped to this one branch, is what registers
+  # it; every job below stays gated on `github.event_name ==
+  # 'workflow_dispatch'`, so a plain push here never does anything real
+  # - it only makes the manual "Run workflow" button appear.
+  push:
+    branches:
+      - claude/sallehly-engine-audit-vnxs4f
   workflow_dispatch:
     inputs:
       confirm_deploy:
