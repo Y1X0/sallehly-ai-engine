@@ -181,6 +181,7 @@ jobs:
             --tier free_gpu --provider kaggle --dispatch \
             --dataset-manifest "$MANIFEST" \
             --kaggle-kernel-ref "$KERNEL_REF" \
+            --git-ref "${{ github.ref_name }}" \
             --job-store-dir .training-automation/jobs \
             --job-id "ci-smoke-${{ github.run_id }}"
           echo "kernel_ref=$KERNEL_REF" >> "$GITHUB_OUTPUT"

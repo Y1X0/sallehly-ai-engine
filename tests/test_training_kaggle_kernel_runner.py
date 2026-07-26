@@ -31,7 +31,7 @@ def _load_module():
     return module
 
 
-def _write_input_dataset(tmp_path: Path) -> Path:
+def _write_input_dataset(tmp_path: Path, *, include_git_ref: bool = True) -> Path:
     input_root = tmp_path / "kaggle_input"
     dataset_dir = input_root / "job-input"
     dataset_dir.mkdir(parents=True)
@@ -49,6 +49,8 @@ def _write_input_dataset(tmp_path: Path) -> Path:
                     "num_frames": 9, "fps": 8.0})
         + "\n"
     )
+    if include_git_ref:
+        (dataset_dir / "git_ref.txt").write_text("claude/sallehly-engine-audit-vnxs4f")
     return input_root
 
 
@@ -81,3 +83,17 @@ class TestKaggleKernelRunner:
             )
 
         assert "download_wan22_weights.py" in " ".join(exc_info.value.cmd)
+
+    def test_raises_when_git_ref_missing_from_older_dispatch(self, tmp_path):
+        # Simulates a kernel pushed by a pre-ADR-0025-git-ref-fix
+        # dispatch_via_kaggle() (config + manifest present, no
+        # git_ref.txt) - must fail with a clear, specific message rather
+        # than silently cloning the wrong branch.
+        module = _load_module()
+        input_root = _write_input_dataset(tmp_path, include_git_ref=False)
+
+        with pytest.raises(RuntimeError, match="git_ref.txt"):
+            module.main(
+                repo_dir=_REPO_ROOT, kaggle_input_root=input_root,
+                kaggle_working_root=tmp_path / "kaggle_working", clone=False,
+            )

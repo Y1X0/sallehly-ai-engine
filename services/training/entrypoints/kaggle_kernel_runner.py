@@ -14,10 +14,15 @@ full story.
 What this script does, in order - all real subprocess calls, no
 sys.path tricks:
   1. Shallow-clones this repo (public, no auth needed for read access)
-     into `/kaggle/working/repo` and installs `video-engine-sdk` +
-     `training[gpu-training]` from it in editable mode - real network
-     access, requires the kernel's `enable_internet` setting to be True
-     (it is, by default - see `KernelPushConfig`).
+     at the git ref recorded in `git_ref.txt` (written by
+     `dispatch_via_kaggle()` into the same mounted dataset as
+     config.yaml/dataset_manifest.jsonl - a plain `git clone` with no
+     `--branch` would silently pull whatever the repo's *default*
+     branch happens to be, which will not contain this code until this
+     work is merged there) into `/kaggle/working/repo`, and installs
+     `video-engine-sdk` + `training[gpu-training]` from it in editable
+     mode - real network access, requires the kernel's `enable_internet`
+     setting to be True (it is, by default - see `KernelPushConfig`).
   2. Runs the repo's own `download_wan22_weights.py` for real, fresh,
      inside this run's container. `HF_TOKEN`, if the target repo needs
      one, must be attached to this kernel as a Kaggle Secret exposed as
@@ -64,16 +69,8 @@ def main(
     only ever overridden by tests - a real Kaggle kernel invocation
     (`python kaggle_kernel_runner.py`, no args) always uses the real
     Kaggle paths and always clones fresh."""
-    if clone:
-        _run(["git", "clone", "--depth", "1", _REPO_URL, str(repo_dir)])
-        _run([
-            sys.executable, "-m", "pip", "install", "--quiet",
-            "-e", str(repo_dir / "packages" / "video-engine-sdk"),
-            "-e", f"{repo_dir / 'services' / 'training'}[gpu-training]",
-        ])
-
     # Fail fast on a misconfigured dispatch (no dataset attached) before
-    # spending any time on the ~11GB weights download below.
+    # spending any time on cloning or the ~11GB weights download below.
     input_candidates = sorted(p for p in kaggle_input_root.glob("*") if p.is_dir())
     if not input_candidates:
         raise RuntimeError(
@@ -82,6 +79,24 @@ def main(
             "was not pushed with one."
         )
     input_dir = input_candidates[0]
+
+    git_ref_path = input_dir / "git_ref.txt"
+    if not git_ref_path.is_file():
+        raise RuntimeError(
+            f"{git_ref_path} not found - dispatch_via_kaggle() must write the git ref this kernel "
+            "should clone into the input dataset; this kernel was pushed by an out-of-date "
+            "dispatch_via_kaggle() that predates docs/adr/0025-kaggle-dispatch-argv-fix.md's "
+            "git-ref fix."
+        )
+    git_ref = git_ref_path.read_text().strip()
+
+    if clone:
+        _run(["git", "clone", "--depth", "1", "--branch", git_ref, _REPO_URL, str(repo_dir)])
+        _run([
+            sys.executable, "-m", "pip", "install", "--quiet",
+            "-e", str(repo_dir / "packages" / "video-engine-sdk"),
+            "-e", f"{repo_dir / 'services' / 'training'}[gpu-training]",
+        ])
 
     registry_path = repo_dir / "models" / "registry.yaml"
     models_cache_root = kaggle_working_root / "models-cache"

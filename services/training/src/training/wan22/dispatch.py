@@ -44,6 +44,7 @@ def dispatch_via_kaggle(
     kaggle_client: KaggleClient,
     kernel_ref: KaggleKernelRef,
     *,
+    git_ref: str = "master",
     dataset_owner_slug: str | None = None,
     extra_dataset_sources: tuple[KaggleDatasetRef, ...] = (),
 ) -> str:
@@ -67,6 +68,16 @@ def dispatch_via_kaggle(
     instead of the entrypoint itself. `kernel_dir` is still the
     entrypoint script's own directory - both files must be pushed
     together, since the runner imports the entrypoint by module name.
+
+    `git_ref` is also written into that same uploaded dataset
+    (`git_ref.txt`) - `kaggle_kernel_runner.py` clones this repo fresh
+    inside the kernel (no persistent disk between runs) and needs to
+    know which branch/tag/commit to check out; a plain `git clone` with
+    no `--branch` would silently pull whatever the repo's *default*
+    branch happens to be, which will not contain this code until this
+    work is actually merged there. Callers dispatching from a feature
+    branch (e.g. a CI job running via `${{ github.ref_name }}`) must
+    pass that branch name here.
     """
     write_job_inputs(job, command)
 
@@ -74,6 +85,7 @@ def dispatch_via_kaggle(
     dataset_input_dir.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(command.config_path, dataset_input_dir / "config.yaml")
     shutil.copyfile(command.dataset_manifest_path, dataset_input_dir / "dataset_manifest.jsonl")
+    (dataset_input_dir / "git_ref.txt").write_text(git_ref)
 
     input_dataset_ref = KaggleDatasetRef(
         owner_slug=dataset_owner_slug or kernel_ref.owner_slug,

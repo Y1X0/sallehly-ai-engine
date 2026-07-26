@@ -518,7 +518,7 @@ class TestDispatchWiring:
         client = KaggleClient(runner=runner)
         kernel_ref = KaggleKernelRef(owner_slug="sallehly", kernel_slug=job.job_id)
 
-        output = dispatch_via_kaggle(job, command, client, kernel_ref)
+        output = dispatch_via_kaggle(job, command, client, kernel_ref, git_ref="claude/sallehly-engine-audit-vnxs4f")
 
         assert output == "Kernel version pushed"
         # Two real CLI calls: create the input dataset, then push the kernel.
@@ -526,10 +526,30 @@ class TestDispatchWiring:
         assert calls[1][:3] == ["kaggle", "kernels", "push"]
         # The config was written to disk as a real side effect of dispatch.
         assert TrainingConfig.from_yaml(command.config_path).run_id == job.config.run_id
-        # The uploaded dataset staging dir actually contains both real inputs.
+        # The uploaded dataset staging dir actually contains all three real inputs -
+        # including git_ref.txt, so the Kaggle-side clone checks out the right
+        # branch instead of silently falling back to the repo's default branch.
         staged_dir = Path(command.config_path).parent / "kaggle_dataset_input"
         assert (staged_dir / "config.yaml").is_file()
         assert (staged_dir / "dataset_manifest.jsonl").is_file()
+        assert (staged_dir / "git_ref.txt").read_text() == "claude/sallehly-engine-audit-vnxs4f"
+
+    def test_dispatch_via_kaggle_defaults_git_ref_to_master(self, tmp_path):
+        fake_entrypoint_dir = tmp_path / "fake_entrypoints"
+        fake_entrypoint_dir.mkdir()
+        (fake_entrypoint_dir / "wan22_lora_train.py").write_text("# fake entrypoint for tests\n")
+        job, command = self._planned_job(
+            tmp_path, provider="kaggle", entrypoint=str(fake_entrypoint_dir / "wan22_lora_train.py"),
+        )
+        Path(command.dataset_manifest_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(command.dataset_manifest_path).write_text('{"clip_id": "c1"}\n')
+        client = KaggleClient(runner=lambda args: _fake_result(stdout="Kernel version pushed"))
+        kernel_ref = KaggleKernelRef(owner_slug="sallehly", kernel_slug=job.job_id)
+
+        dispatch_via_kaggle(job, command, client, kernel_ref)
+
+        staged_dir = Path(command.config_path).parent / "kaggle_dataset_input"
+        assert (staged_dir / "git_ref.txt").read_text() == "master"
 
     def test_dispatch_via_kaggle_requires_dataset_manifest_to_already_exist(self, tmp_path):
         fake_entrypoint_dir = tmp_path / "fake_entrypoints"

@@ -94,6 +94,13 @@ def build_parser() -> argparse.ArgumentParser:
         "dispatch_via_kaggle writes kernel-metadata.json into this path's own directory.",
     )
     parser.add_argument("--kaggle-kernel-ref", default=None, help="'owner_slug/kernel_slug' - required for provider=kaggle")
+    parser.add_argument(
+        "--git-ref", default="master",
+        help="Branch/tag/commit of this repo for the Kaggle kernel to clone (it has no persistent "
+        "disk, so it clones fresh every run - see docs/adr/0025-kaggle-dispatch-argv-fix.md). "
+        "Dispatching from a feature branch in CI must pass that branch name here "
+        "(e.g. ${{ github.ref_name }}), not the default 'master'.",
+    )
     parser.add_argument("--modal-gpu-type", default="T4", choices=[t.value for t in GPUType])
     parser.add_argument("--modal-function-timeout-sec", type=int, default=3600)
     parser.add_argument("--modal-max-wall-clock-sec", type=int, default=4200)
@@ -158,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("--kaggle-kernel-ref 'owner_slug/kernel_slug' is required for provider=kaggle")
             owner_slug, _, kernel_slug = args.kaggle_kernel_ref.partition("/")
             kernel_ref = KaggleKernelRef(owner_slug=owner_slug, kernel_slug=kernel_slug)
-            result = dispatch_via_kaggle(job, command, KaggleClient(), kernel_ref)
+            result = dispatch_via_kaggle(job, command, KaggleClient(), kernel_ref, git_ref=args.git_ref)
             print(f"Pushed Kaggle kernel {kernel_ref.full_ref}: {result}")
         elif args.provider == "modal":
             handle = dispatch_via_modal(

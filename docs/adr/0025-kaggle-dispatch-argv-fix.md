@@ -95,3 +95,22 @@ push, wait, fetch.
   (a possible future optimization, not built here).
 - Modal dispatch remains non-functional (separate gap, not fixed by
   this ADR) - the CI workflow this unblocks targets Kaggle only.
+
+## Addendum: git ref fix (found during the first real pre-flight review)
+
+A second gap in the same category surfaced while verifying this was
+actually ready to run: `kaggle_kernel_runner.py`'s `git clone` had no
+`--branch` argument, so it would silently pull whatever this repo's
+*default* branch is (`master`) - which does not contain any of this
+Wan2.2 training work until it is actually merged there. On a real run
+from a feature branch, the Kaggle kernel would have cloned old code
+missing `wan22_lora_train.py`'s real backend entirely.
+
+Fixed the same way as the config/manifest problem: `dispatch_via_kaggle()`
+gained a `git_ref: str = "master"` parameter, written into the same
+uploaded dataset as `git_ref.txt`; `kaggle_kernel_runner.py` reads it
+and clones `--branch <that ref>`, and fails with a clear error if the
+file is missing (an older, pre-fix dispatch). `run_experiment.py`
+gained a matching `--git-ref` CLI flag, and the CI workflow passes
+`--git-ref "${{ github.ref_name }}"` so a run dispatched from any
+branch clones that same branch on the Kaggle side.
