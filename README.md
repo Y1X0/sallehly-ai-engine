@@ -322,6 +322,35 @@ Phase 6/7 below describe when each was originally built):
   by a GitHub Environment's required reviewers (the only path that can
   ever authorize spend). 44 new tests, zero real network calls, no GPU
   rented, no model downloaded, no training executed.
+- **Wan2.2 training execution layer** (`services/training/wan22` - see
+  `docs/adr/0023-wan22-training-execution-layer.md`): closes the "no
+  training entrypoint exists" gap ADR 0022 flagged. `BASE_MODEL_REGISTRY`
+  gained three real, Apache-2.0 Wan2.2 entries (`wan2.2-ti2v-5b` unified;
+  `wan2.2-t2v-a14b`/`wan2.2-i2v-a14b` two-expert MoE). `Wan22DatasetAdapter`
+  turns real `ClipRecord`s into a Wan2.2 manifest, refusing uncaptioned or
+  rights-uncleared clips. `Wan22LoRAConfig` makes the fine-tuning
+  blueprint's central risk finding - training only one MoE expert
+  produces an incoherent model - a type error: `expected_experts()`
+  returns the exact required expert set per variant, and there is no way
+  to construct a valid config for an A14B model with only one expert
+  configured. `Wan22CheckpointWriter` extends the existing
+  `ICheckpointStore` (no new storage mechanism) and its
+  `get_paired_checkpoints()` is a real integrity check `Wan22LoRATrainer`
+  calls after every checkpoint, not just documentation.
+  `Wan22LoRATrainer(ITrainer)` nests the expert loop inside the step loop
+  so it's structurally impossible to advance one expert without the
+  others. `Wan22EvaluationHook` wires the Stage 7 eval-cadence hook to a
+  real `BenchmarkRunner`, proven against both `Wan21Adapter` (success)
+  and the untrained `SallehlyModelAdapter` (graceful per-case error).
+  `dispatch_via_kaggle`/`dispatch_via_modal` reuse the automation layer's
+  real `KaggleClient`/`ModalJobLauncher` via a shared `TrainingCommand`.
+  The one real execution boundary, `IWan22TrainingBackend`, has exactly
+  one implementation (`UnavailableWan22Backend`) that always raises
+  `ModelUnavailableError` - `services/training/entrypoints/
+  wan22_lora_train.py` was actually run end-to-end during development
+  against a hand-built dataset manifest and correctly failed there, with
+  no partial state left behind. 37 new tests, no GPU used, no model
+  downloaded, no training executed.
 
 One thing remains genuinely unexecuted in this environment, documented
 rather than glossed over: real GPU inference (`workers/gpu-worker` needs

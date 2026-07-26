@@ -108,6 +108,59 @@ BASE_MODEL_REGISTRY: dict[str, BaseModelInfo] = {
         commercial_use_verified=False,
         source_url="https://huggingface.co/stabilityai/stable-video-diffusion-img2vid-xt-1-1",
     ),
+    "wan2.2-ti2v-5b": BaseModelInfo(
+        model_id="wan2.2-ti2v-5b",
+        display_name="Wan2.2 TI2V-5B (unified)",
+        publisher="Alibaba (Wan-Video)",
+        license="Apache-2.0",
+        license_notes=(
+            "Fully permissive, same license family as Wan2.1 - no revenue cap, no "
+            "output-usage restriction. TI2V-5B is the unified single-network variant "
+            "(handles both text-to-video and image-to-video, no MoE expert split) - "
+            "the selected Stage A target from the Wan2.2 fine-tuning blueprint: "
+            "cheapest to validate the training pipeline shape on before committing to "
+            "the larger A14B variants. Checked via web search 2026-07-25."
+        ),
+        default_resolution="960x544",
+        default_fps=16,
+        min_vram_gb=16.0,
+        commercial_use_verified=True,
+        source_url="https://github.com/Wan-Video/Wan2.2",
+    ),
+    "wan2.2-t2v-a14b": BaseModelInfo(
+        model_id="wan2.2-t2v-a14b",
+        display_name="Wan2.2 T2V-A14B (MoE, text-to-video)",
+        publisher="Alibaba (Wan-Video)",
+        license="Apache-2.0",
+        license_notes=(
+            "Same Apache-2.0 license family as Wan2.1/TI2V-5B. A14B is a two-expert "
+            "Mixture-of-Experts DiT (separate high-noise/low-noise denoising networks, "
+            "switched by a fixed SNR/timestep threshold, not a learned router) - both "
+            "experts MUST be fine-tuned and checkpointed together (see the Wan2.2 "
+            "fine-tuning blueprint's central risk finding); training only one produces "
+            "an incoherent model. This is the selected Stage B production target."
+        ),
+        default_resolution="1280x720",
+        default_fps=16,
+        min_vram_gb=40.0,
+        commercial_use_verified=True,
+        source_url="https://github.com/Wan-Video/Wan2.2",
+    ),
+    "wan2.2-i2v-a14b": BaseModelInfo(
+        model_id="wan2.2-i2v-a14b",
+        display_name="Wan2.2 I2V-A14B (MoE, image-to-video)",
+        publisher="Alibaba (Wan-Video)",
+        license="Apache-2.0",
+        license_notes=(
+            "Same license and dual-MoE-expert architecture/caveats as "
+            "wan2.2-t2v-a14b, conditioned for image-to-video instead of text-to-video."
+        ),
+        default_resolution="1280x720",
+        default_fps=16,
+        min_vram_gb=40.0,
+        commercial_use_verified=True,
+        source_url="https://github.com/Wan-Video/Wan2.2",
+    ),
 }
 
 

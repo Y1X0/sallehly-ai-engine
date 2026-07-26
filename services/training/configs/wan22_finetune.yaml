@@ -1,0 +1,35 @@
+schema_version: '1.0'
+run_id: wan22-ti2v5b-lora-stage-a-v1
+base_model_id: wan2.2-ti2v-5b
+base_model_revision: 2.2.0
+strategy: lora
+dataset_version: REPLACE_WITH_REAL_DATASET_VERSION_ID
+resolution: 960x544
+fps: 16
+max_frames: 81
+learning_rate: 0.0001
+batch_size: 1
+gradient_accumulation_steps: 4
+max_train_steps: 1500
+mixed_precision: bf16
+min_vram_gb: 16.0
+gpu_count: 1
+checkpoint_every_steps: 150
+eval_every_steps: 150
+seed: 42
+lora:
+  rank: 16
+  alpha: 32
+  target_modules:
+  - to_q
+  - to_k
+  - to_v
+  - to_out.0
+  dropout: 0.0
+notes: 'Wan2.2 TI2V-5B (Apache-2.0, Alibaba/Wan-Video) - the Stage A target from the
+  Wan2.2 fine-tuning blueprint: unified single-network variant (no MoE expert split),
+  cheapest to validate the training pipeline shape on before committing to the larger
+  dual-expert A14B variants. Sized to fit the free/near-zero-cost GPU tier (16-24GB
+  VRAM per musubi-tuner community reports with fp8 + block-swap) - see docs/adr/0023-wan22-training-execution-layer.md
+  and the training-factory architecture report. Not executable without a real GPU,
+  real Wan2.2 weights, and a real dataset.'

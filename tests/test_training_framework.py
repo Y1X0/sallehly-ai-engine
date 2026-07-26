@@ -155,8 +155,19 @@ def test_training_config_without_lora_round_trips_through_yaml(tmp_path):
     assert restored.lora is None
 
 
-def test_base_model_registry_has_all_four_required_base_models():
-    assert set(BASE_MODEL_REGISTRY) == {"wan2.1", "hunyuanvideo", "cogvideox", "stable-video-diffusion"}
+def test_base_model_registry_has_all_required_base_models():
+    # The original four Phase 9 Preparation candidates, plus the three
+    # Wan2.2 variants added when Wan2.2 was selected as the foundation
+    # model (docs/adr/0023-wan22-training-execution-layer.md).
+    assert set(BASE_MODEL_REGISTRY) == {
+        "wan2.1",
+        "hunyuanvideo",
+        "cogvideox",
+        "stable-video-diffusion",
+        "wan2.2-ti2v-5b",
+        "wan2.2-t2v-a14b",
+        "wan2.2-i2v-a14b",
+    }
     for model_id, info in BASE_MODEL_REGISTRY.items():
         assert info.model_id == model_id
         assert info.display_name

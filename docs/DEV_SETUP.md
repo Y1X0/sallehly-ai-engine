@@ -422,6 +422,51 @@ passed. `.github/workflows/training-phase1-dataset-validation.yml` and
 `training-phase2-free-gpu-experiment.yml` are the CPU-validation and
 free-GPU-planning workflows and need no approval at all.
 
+## 3g. Wan2.2 training execution layer (services/training/wan22)
+
+The real Wan2.2 training execution layer (see
+`docs/adr/0023-wan22-training-execution-layer.md`) - dataset manifest
+building, LoRA config expansion, checkpoint pairing, and the
+`Wan22LoRATrainer(ITrainer)` orchestration loop, all real and CPU-only.
+Running the actual entrypoint always ends in a clean, reported failure
+today, by design - there is no real training backend attached:
+
+```bash
+# Build a tiny fake dataset manifest by hand (a real one comes from
+# Wan22DatasetAdapter.write_manifest_jsonl() against real ClipRecords):
+mkdir -p /tmp/wan22-example
+python3 - <<'EOF'
+import json
+entries = [
+    {"clip_id": "clip_1", "video_path": "file:///data/clip1.mp4",
+     "caption": "a red car driving through a tunnel",
+     "width": 960, "height": 544, "num_frames": 81, "fps": 16.0},
+]
+with open("/tmp/wan22-example/dataset_manifest.jsonl", "w") as f:
+    for e in entries:
+        f.write(json.dumps(e) + "\n")
+EOF
+
+uv run python services/training/entrypoints/wan22_lora_train.py \
+  --config services/training/configs/wan22_finetune.yaml \
+  --dataset-manifest /tmp/wan22-example/dataset_manifest.jsonl \
+  --output-dir /tmp/wan22-example/output \
+  --checkpoint-store-dir /tmp/wan22-example/checkpoints \
+  --job-id job-example-2
+# -> "... status=failed at step=1" / "error: Wan2.2 training backend
+#    unavailable: no GPU, no downloaded Wan2.2 weights, ..."
+```
+
+That failure is the correct, deliberate behavior - it proves the entire
+orchestration (config validation, manifest loading, LoRA expert
+expansion, the step loop) runs for real, while making it structurally
+impossible for real training to happen without a real
+`IWan22TrainingBackend` attached. `Wan22LoRAConfig.from_training_config()`
+is worth trying directly too - swap `base_model_id` to
+`wan2.2-t2v-a14b`/`wan2.2-i2v-a14b` in a copy of the config and note
+`lora_config.experts` always comes back with both `high_noise` and
+`low_noise`, never just one.
+
 ## 4. Exercise the pipeline without a GPU
 
 Set `COMPUTE_PROVIDER=local` (the `.env.example` and `apps/api` default).
