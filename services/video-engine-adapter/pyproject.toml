@@ -9,6 +9,22 @@ dependencies = [
   "httpx>=0.27",
 ]
 
+[project.optional-dependencies]
+# Real (not mock) local Wan inference - LocalInferenceProvider /
+# video_engine_adapter.inference.wan_inference. Mirrors
+# services/training's own `gpu-training` extra: deliberately NOT a base
+# dependency, so every environment that never selects
+# COMPUTE_PROVIDER=local-inference stays free of torch/diffusers
+# entirely (LocalProvider/RunPodProvider need neither).
+real-inference = [
+  "torch>=2.3",
+  "diffusers>=0.31",
+  "transformers>=4.44",
+  "tokenizers>=0.19",
+  "imageio>=2.34",
+  "imageio-ffmpeg>=0.5",
+]
+
 [tool.uv.sources]
 video-engine-sdk = { workspace = true }
 config-sdk = { workspace = true }

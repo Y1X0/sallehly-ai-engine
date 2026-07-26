@@ -94,20 +94,28 @@ demo-only endpoint refuses to read anything outside that directory."""
 def demo_page() -> FileResponse:
     """Serves the zero-setup click-through demo (apps/api/src/api/static/demo.html):
     prompt in, real CreativeDirector/ShotPlanner/CreativeCompiler/
-    ProjectLifecycle pipeline runs, mock-rendered artifacts out. Uses the
-    same running server and its default (offline, in-memory) AppState -
-    no separate build step or frontend project required."""
+    ProjectLifecycle pipeline runs, real generated video artifacts out
+    (COMPUTE_PROVIDER=local-inference - see
+    video_engine_adapter.compute.LocalInferenceProvider) or a mock job
+    payload (COMPUTE_PROVIDER=local, the server's unset-env-var default).
+    Uses the same running server and its AppState - no separate build
+    step or frontend project required."""
     return FileResponse(_STATIC_DIR / "demo.html")
+
+
+_VIDEO_MEDIA_TYPES = {".mp4": "video/mp4", ".webm": "video/webm"}
 
 
 @app.get("/demo/asset-content")
 def demo_asset_content(uri: str) -> Response:
-    """Lets the demo page preview a generated artifact's content. Assets
-    from the default local mock pipeline are `file://` paths under
-    `.docker-data/` (LocalProvider's render stubs, or
-    LocalFilesystemStorageProvider's uploads) - this reads and returns
-    that file's raw content, refusing anything outside `.docker-data/`
-    to keep this demo convenience from becoming an arbitrary file read.
+    """Lets the demo page preview or play a generated artifact. Assets
+    are `file://` paths under `.docker-data/` - either a real `.mp4`
+    (LocalInferenceProvider's actual generated video - streamed back as
+    `video/mp4` so the page's `<video>` tag can play it directly) or a
+    JSON stub (LocalProvider's mock render, or
+    LocalFilesystemStorageProvider's uploads). Refuses anything outside
+    `.docker-data/` to keep this demo convenience from becoming an
+    arbitrary file read.
     """
     if not uri.startswith("file://"):
         raise HTTPException(status_code=400, detail="Only file:// asset URIs can be previewed here")
@@ -116,6 +124,9 @@ def demo_asset_content(uri: str) -> Response:
         raise HTTPException(status_code=403, detail="Refusing to read a path outside .docker-data/")
     if not path.is_file():
         raise HTTPException(status_code=404, detail=f"No such file: {path}")
+    video_media_type = _VIDEO_MEDIA_TYPES.get(path.suffix.lower())
+    if video_media_type is not None:
+        return FileResponse(path, media_type=video_media_type)
     return Response(content=path.read_text(), media_type="application/json")
 
 

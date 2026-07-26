@@ -47,15 +47,25 @@
   .asset-card { border-left: 3px solid #4caf7d; }
   pre.mini { font-size: 0.78rem; background: #0f1116; padding: 0.6rem; border-radius: 6px; overflow-x: auto; }
   #status { font-size: 0.9rem; margin-top: 0.6rem; color: #9aa0aa; }
+  video.preview-video { display: block; max-width: 260px; margin-top: 0.5rem; border-radius: 6px; background: #000; }
 </style>
 </head>
 <body>
-  <h1>Sallehly AI Engine <span class="badge">DEMO — offline / mock render</span></h1>
+  <h1>Sallehly AI Engine <span class="badge">DEMO</span></h1>
   <p class="sub">
     Type a video idea. This runs the real Creative Director → Shot Planner → Creative Compiler →
-    Render Orchestrator pipeline end-to-end. Rendering uses a local mock compute provider
-    (no GPU, no external calls) so you can see the full flow and the exact job payload that
-    would otherwise go to a real Wan2.2 render worker.
+    Render Orchestrator pipeline end-to-end, then a real Wan text-to-video generation
+    (<code>video_engine_adapter.inference.wan_inference</code>) for every shot.
+    <br/><br/>
+    <b>Compute provider matters for what you'll see:</b>
+    <br/>• <code>COMPUTE_PROVIDER=local-inference</code> (recommended for this demo) — a real,
+    tiny-scale WanPipeline runs in-process (no GPU, no credentials) and you get an actual playable
+    generated clip per shot below (small/short/low-res — proves the mechanism, not output quality).
+    <br/>• <code>COMPUTE_PROVIDER=runpod</code> — real full-scale Wan generation on a real GPU,
+    requires <code>RUNPOD_API_KEY</code>/<code>RUNPOD_ENDPOINT_ID</code> for a deployed endpoint;
+    fails clearly at startup if those aren't set, instead of silently mocking.
+    <br/>• <code>COMPUTE_PROVIDER=local</code> (server default if unset) — mock stub, shows the
+    render job payload only, no actual video.
   </p>
 
   <label for="prompt">Video idea / prompt</label>
@@ -117,12 +127,17 @@ async function renderAssets(assets) {
   let html = `<div class="card asset-card"><h3>Generated artifacts (${assets.length})</h3>`;
   for (const asset of assets) {
     const uri = asset.versions[asset.versions.length - 1].uri;
+    const contentUrl = `/demo/asset-content?uri=${encodeURIComponent(uri)}`;
     let preview = "";
-    try {
-      const content = await api("GET", `/demo/asset-content?uri=${encodeURIComponent(uri)}`);
-      preview = `<pre class="mini">${JSON.stringify(content, null, 2)}</pre>`;
-    } catch (e) {
-      preview = `<span class="kv">${uri}</span>`;
+    if (uri.toLowerCase().endsWith(".mp4")) {
+      preview = `<video class="preview-video" src="${contentUrl}" controls muted loop></video>`;
+    } else {
+      try {
+        const content = await api("GET", contentUrl);
+        preview = `<pre class="mini">${JSON.stringify(content, null, 2)}</pre>`;
+      } catch (e) {
+        preview = `<span class="kv">${uri}</span>`;
+      }
     }
     html += `<div class="shot"><b>${asset.asset_id}</b> (${asset.kind}, shot ${asset.shot_id})${preview}</div>`;
   }

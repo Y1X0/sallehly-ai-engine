@@ -60,6 +60,25 @@ class Settings(BaseSettings):
     vastai_api_key: str = ""
     vastai_instance_host: str = ""
 
+    video_inference_smoke_test: bool = True
+    """Only read when compute_provider == "local-inference"
+    (LocalInferenceProvider). True (default): a tiny-but-real WanPipeline
+    that needs no GPU/weights/network - see
+    video_engine_adapter.inference.wan_inference's docstring for exactly
+    what this does and doesn't prove. False: real full-scale Wan2.1/2.2
+    inference from video_inference_model_id - requires a real CUDA GPU
+    and real downloaded weights."""
+    video_inference_model_id: str = ""
+    """HF Hub repo id (or local weights directory) for real, non-smoke
+    local inference. Required (and validated at startup) when
+    compute_provider == "local-inference" and video_inference_smoke_test
+    is False."""
+    video_inference_device: str = "cpu"
+    """"cpu" (default, smoke-test path only), "cuda", or "auto" - passed
+    to LocalInferenceProvider's real (non-smoke) path, which fails fast
+    if it resolves to "cuda"/"auto" with no CUDA GPU actually available
+    rather than silently running on CPU."""
+
     cors_allowed_origins: str = "http://localhost:3000"
     """Comma-separated origins apps/api allows via CORS - the frontend's own
     origin, since browsers enforce this for cross-origin fetch()/XHR."""

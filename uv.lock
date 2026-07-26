@@ -3883,12 +3883,29 @@ dependencies = [
     { name = "video-engine-sdk" },
 ]
 
+[package.optional-dependencies]
+real-inference = [
+    { name = "diffusers" },
+    { name = "imageio" },
+    { name = "imageio-ffmpeg" },
+    { name = "tokenizers" },
+    { name = "torch" },
+    { name = "transformers" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "config-sdk", editable = "packages/config-sdk" },
+    { name = "diffusers", marker = "extra == 'real-inference'", specifier = ">=0.31" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "imageio", marker = "extra == 'real-inference'", specifier = ">=2.34" },
+    { name = "imageio-ffmpeg", marker = "extra == 'real-inference'", specifier = ">=0.5" },
+    { name = "tokenizers", marker = "extra == 'real-inference'", specifier = ">=0.19" },
+    { name = "torch", marker = "extra == 'real-inference'", specifier = ">=2.3" },
+    { name = "transformers", marker = "extra == 'real-inference'", specifier = ">=4.44" },
     { name = "video-engine-sdk", editable = "packages/video-engine-sdk" },
 ]
+provides-extras = ["real-inference"]
 
 [[package]]
 name = "video-engine-sdk"
