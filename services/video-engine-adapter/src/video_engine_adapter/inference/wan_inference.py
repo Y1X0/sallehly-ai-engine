@@ -257,6 +257,19 @@ def build_real_pipeline(model_id: str, *, device: str = "cuda") -> Any:
         # memory-management options, not new capabilities of this engine.
         pipeline.enable_sequential_cpu_offload()
         pipeline.enable_attention_slicing()
+        # Sequential offload fixed the resident-weight footprint (run
+        # 30301127047 confirmed only 5.43GB in use at failure time, well
+        # under the T4's 14.56GB), but a real, single activation
+        # allocation still failed: OutOfMemoryError, "Tried to allocate
+        # 13.45 GiB" with only 9.13GiB free - the full 17-frame,
+        # 960x544 video being decoded by the VAE in one shot.
+        # AutoencoderKLWan.enable_tiling()/enable_slicing() are
+        # diffusers' own built-in VAE memory options for exactly this:
+        # tiling splits a large decode into smaller spatial tiles, and
+        # slicing decodes one frame group at a time, instead of one
+        # huge tensor. Neither changes precision, resolution, or output.
+        pipeline.vae.enable_tiling()
+        pipeline.vae.enable_slicing()
         return pipeline
     return pipeline.to(resolved_device)
 
