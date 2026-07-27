@@ -46,6 +46,43 @@ Nothing above used `real_deploy=true`, a real RunPod endpoint, or any
 GPU deployment - see §2 and §6 for what remains genuinely unverified
 (a real, funded RunPod run) and exactly why.
 
+## 0b. Production audit - fixes applied
+
+A read-only audit (security, error handling, logging, DB migration
+readiness, API contracts, frontend UX) found the core pipeline,
+ownership checks, rate limiting, input validation, and error handling
+already production-ready with no blockers. Two concrete, high-priority
+gaps were found and fixed here (no new features, no architecture
+change, no RunPod/GPU involved):
+
+- **Alembic migration now runs automatically on deploy ✅** -
+  `apps/api/Dockerfile` previously started `uvicorn` directly with no
+  migration step anywhere in the deploy path (`alembic upgrade head`
+  was a manual local-only step per `docs/DEV_SETUP.md`); a real
+  production deploy against Postgres risked running application code
+  against an un-migrated schema. `apps/api/docker-entrypoint.sh` now
+  runs `alembic upgrade head` before starting the server, gated on
+  `PROJECT_STORE=postgres` (a no-op for the default `PROJECT_STORE=memory`,
+  same swap-point discipline as every other `Settings`-driven default -
+  see `docs/DECISIONS.md` decision 62), and still respects a `command:`
+  override (e.g. `docker-compose.yml`'s `--reload` for local dev)
+  instead of ignoring it. Verified for real against a fresh local
+  Postgres 16: `alembic upgrade head` created the `projects`/
+  `alembic_version` tables from empty, a second run was a clean no-op
+  (idempotent), and the full entrypoint script (migration + real
+  `uvicorn` startup) answered a real `GET /healthz` with `200 OK`.
+- **`POST /auth/refresh` now documented ✅** - implemented in
+  `apps/api/src/api/routes/auth.py` (token rotation, `docs/DECISIONS.md`
+  decision 77) but entirely missing from `docs/api/openapi.yaml`.
+  Added with the same request/response/security shape every other
+  bearer-authenticated route uses. `docs/api/openapi.yaml` now lists
+  all 29 real routes with none missing either direction.
+
+Verified with the full suite after both changes: `uv run pytest tests/`
+- 757 passed, 28 skipped (Redis/Temporal/real-GPU-only, same class of
+skip as always), `ruff check .` clean, `apps/web-dashboard`'s
+`npm test` - 40/40 passed.
+
 ## 1. Core creative pipeline
 
 | Component | Status | Evidence |
