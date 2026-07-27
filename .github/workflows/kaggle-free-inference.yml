@@ -86,6 +86,15 @@ jobs:
         with:
           version: "latest"
 
+      # dispatch_inference.py/fetch_inference_result.py import
+      # training.automation.kaggle_client, which (via training's own
+      # package __init__.py) transitively imports video_engine_sdk -
+      # needs the workspace synced, but training's own base deps are
+      # just video-engine-sdk + pyyaml (no torch/diffusers - same fast/
+      # CPU-only pattern training-phase1-dataset-validation.yml uses).
+      - name: Sync workspace (base deps only, no torch/diffusers)
+        run: uv sync --all-packages
+
       - name: Verify Kaggle authentication (fails fast, before any real work below)
         # The kaggle CLI writes its own real error (invalid credentials,
         # rate limit, etc.) to stdout, not stderr - a bare `>/dev/null`
