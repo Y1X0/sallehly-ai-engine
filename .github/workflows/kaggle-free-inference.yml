@@ -16,10 +16,16 @@ name: Kaggle - Free GPU Wan2.2 Inference ($0, human-gated)
 # Kaggle dataset + kernel under your account) and downloads ~11GB of
 # real Wan2.2 weights inside that kernel.
 #
-# Required repository secrets: KAGGLE_USERNAME, KAGGLE_KEY (from
-# kaggle.com/settings -> API -> Create New Token) - see
-# infra/kaggle/README.md. Fails fast, before any real work, if either
-# is missing - this workflow never silently no-ops.
+# Required repository secrets: KAGGLE_USERNAME (your real Kaggle
+# username - needed to address the dataset/kernel this workflow
+# creates, separate from authentication) and KAGGLE_API_TOKEN (from
+# kaggle.com/settings/api -> "Generate New Token" - a KGAT_... access
+# token; this is Kaggle's current auth method, superseding the older
+# username+key pair the kaggle CLI's own KAGGLE_USERNAME/KAGGLE_KEY env
+# vars supported - confirmed by hand against a real "Authentication
+# required" rejection using only the old pair, see infra/kaggle/README.md).
+# Fails fast, before any real work, if either is missing - this
+# workflow never silently no-ops.
 #
 # Honest caveat carried over from
 # models/wan2.2-ti2v-5b/capability_manifest.yaml: this engine's
@@ -71,7 +77,7 @@ jobs:
     timeout-minutes: 90
     env:
       KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
-      KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -87,18 +93,10 @@ jobs:
         # a bare "exit code 1" in the log. Capture combined output and
         # only print it (to stderr, so it surfaces clearly) on failure.
         run: |
-          if [ -z "$KAGGLE_USERNAME" ] || [ -z "$KAGGLE_KEY" ]; then
-            echo "KAGGLE_USERNAME / KAGGLE_KEY repo secrets are not set - see infra/kaggle/README.md" >&2
+          if [ -z "$KAGGLE_USERNAME" ] || [ -z "$KAGGLE_API_TOKEN" ]; then
+            echo "KAGGLE_USERNAME / KAGGLE_API_TOKEN repo secrets are not set - see infra/kaggle/README.md" >&2
             exit 1
           fi
-          # Safe diagnostic (lengths only, never the values themselves) -
-          # a real local repro with fake-but-well-formed credentials
-          # reaches a real network call, not the "Authentication
-          # required" message this failed with, so the values
-          # themselves are the remaining suspect (stray whitespace/
-          # newline, wrong field pasted in, etc.).
-          echo "KAGGLE_USERNAME length: ${#KAGGLE_USERNAME}"
-          echo "KAGGLE_KEY length: ${#KAGGLE_KEY}"
           OUTPUT=$(uv run --with kaggle kaggle kernels list --mine 2>&1) || {
             echo "$OUTPUT" >&2
             echo "Real 'kaggle kernels list --mine' call failed - see the output above for the actual reason." >&2

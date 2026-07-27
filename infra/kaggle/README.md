@@ -40,12 +40,21 @@ happens inside the dispatched kernel, on Kaggle's own machine.
 
 | Secret | Required | Where to get it |
 |---|---|---|
-| `KAGGLE_USERNAME` | Yes | kaggle.com/settings → API → "Create New Token" → downloads `kaggle.json` (contains both fields) |
-| `KAGGLE_KEY` | Yes | same `kaggle.json` file |
+| `KAGGLE_USERNAME` | Yes | Your real Kaggle username (kaggle.com/&lt;username&gt;) - used to address the dataset/kernel this workflow creates, separate from authentication |
+| `KAGGLE_API_TOKEN` | Yes | kaggle.com/settings/api → "Generate New Token" → a `KGAT_...` access token |
 
 Nobody but a repo admin can add secrets - this workflow (like every
 other one in this repo) fails fast with a clear message if either is
 missing, before doing any real work.
+
+**Not** the older `KAGGLE_USERNAME`/`KAGGLE_KEY` pair from a downloaded
+`kaggle.json` - confirmed by hand (a real dispatch attempt with that
+pair alone hit "Authentication required to call the Kaggle API" from
+the `kaggle` CLI itself) that Kaggle's current API token flow no longer
+authenticates through it reliably; the CLI's own error output
+explicitly recommends `KAGGLE_API_TOKEN` instead. If you already have
+an old `kaggle.json`, generate a fresh token from the URL above rather
+than reusing it.
 
 **To run it**: Actions → "Kaggle - Free GPU Wan2.2 Inference" → Run
 workflow → fill in `prompt` → check `confirm_run` → Run (the Kaggle
@@ -59,8 +68,8 @@ on failure) as the run's workflow artifact.
 ## Manual alternative (your own machine, real Kaggle credentials)
 
 ```bash
-export KAGGLE_USERNAME=...   # from kaggle.json
-export KAGGLE_KEY=...        # from kaggle.json
+export KAGGLE_USERNAME=...    # your real Kaggle username
+export KAGGLE_API_TOKEN=...   # kaggle.com/settings/api -> "Generate New Token"
 
 uv run --with kaggle python infra/kaggle/dispatch_inference.py \
     --prompt "A calm lake at sunrise, gentle ripples, warm golden light" \
@@ -103,11 +112,19 @@ uv run --with kaggle python infra/kaggle/fetch_inference_result.py \
 
 Real, working dispatch tooling, built additively (no changes to
 `apps/`, `services/`, or `packages/` core code - only new files under
-`infra/kaggle/` and one new GitHub Actions workflow). Not yet run for
-real: `KAGGLE_USERNAME`/`KAGGLE_KEY` are not currently configured as
-repository secrets (confirmed by actually triggering
-`training-phase2-free-gpu-experiment.yml`'s Kaggle smoke test, which
-failed at its own "Verify Kaggle authentication" step with exactly
-that message - see `docs/PRODUCTION_READINESS_CHECKLIST.md` §0 for the
-run id). Add the two secrets above, then run the workflow, to get the
-first real result.
+`infra/kaggle/` and one new GitHub Actions workflow). Two real, dead-end
+attempts along the way, both confirmed by hand, not guessed:
+
+1. Missing secrets entirely - `KAGGLE_USERNAME`/`KAGGLE_KEY` unset,
+   failed at "Verify Kaggle authentication" with that exact message
+   (run 30261667030).
+2. Secrets set, but as the older username+key pair - still failed with
+   "Authentication required to call the Kaggle API", the `kaggle` CLI's
+   own error text pointing at its current `KAGGLE_API_TOKEN`-based auth
+   instead (run 30273871847). Reproduced the same auth cascade locally
+   (reading the installed `kaggle` package's own source) to confirm
+   this wasn't a bug in this dispatch tooling before switching to
+   `KAGGLE_API_TOKEN` above.
+
+Add `KAGGLE_USERNAME` + `KAGGLE_API_TOKEN` as described above, then run
+the workflow, to get the first real result.

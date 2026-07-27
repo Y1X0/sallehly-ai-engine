@@ -5,8 +5,10 @@ Kaggle free GPU kernel (P100/T4) via the real `kaggle` CLI
 wrapper Phase 2's free-GPU training dispatch already uses).
 
 This is a real, account-mutating action under the Kaggle account
-identified by `KAGGLE_USERNAME`/`KAGGLE_KEY` (creates a private Kaggle
-dataset + kernel) - but Kaggle's own GPU quota for this is free (no
+identified by `KAGGLE_USERNAME` (authenticated via `KAGGLE_API_TOKEN` -
+the `kaggle` CLI's own env var for its current access-token auth flow,
+see infra/kaggle/README.md) (creates a private Kaggle dataset + kernel)
+- but Kaggle's own GPU quota for this is free (no
 billing, unlike RunPod). Nothing here downloads Wan weights or touches
 a GPU itself - that all happens inside the dispatched kernel
 (kaggle_inference_kernel_runner.py), on Kaggle's own machine.
