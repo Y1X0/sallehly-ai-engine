@@ -5,7 +5,13 @@
 # Build from the REPO ROOT (not this directory), so the COPY lines below
 # can reach the packages this image needs:
 #   docker build -f workers/gpu-worker/Dockerfile -t <your-registry>/sallehly-wan22-worker:2.2.0 .
-FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+# ubuntu24.04 (not 22.04): this repo's own packages declare
+# requires-python = ">=3.11" (packages/video-engine-sdk et al.) -
+# ubuntu22.04's default python3 is 3.10, which the real first build
+# caught immediately ("Package 'video-engine-sdk' requires a different
+# Python: 3.10.12 not in '>=3.11'"). ubuntu24.04 ships Python 3.12 by
+# default, satisfying that requirement with no extra PPA/toolchain.
+FROM nvidia/cuda:12.4.1-runtime-ubuntu24.04
 
 WORKDIR /workspace
 
@@ -32,7 +38,11 @@ COPY services/video-engine-adapter /workspace/services/video-engine-adapter
 COPY services/training /workspace/services/training
 COPY models/registry.yaml /workspace/models/registry.yaml
 
-RUN pip3 install --no-cache-dir runpod \
+# --break-system-packages: ubuntu24.04's python3 is PEP 668
+# "externally managed" (a system pip install refuses to run at all
+# without it) - safe here since this container's only job is running
+# this one application, not hosting unrelated system Python tooling.
+RUN pip3 install --no-cache-dir --break-system-packages runpod \
     -e /workspace/packages/video-engine-sdk \
     -e /workspace/packages/storage-sdk \
     -e /workspace/packages/config-sdk \
