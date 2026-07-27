@@ -11,7 +11,14 @@
 # caught immediately ("Package 'video-engine-sdk' requires a different
 # Python: 3.10.12 not in '>=3.11'"). ubuntu24.04 ships Python 3.12 by
 # default, satisfying that requirement with no extra PPA/toolchain.
-FROM nvidia/cuda:12.4.1-runtime-ubuntu24.04
+#
+# 12.6.3 (not 12.4.1): nvidia/cuda only publishes ubuntu24.04 variants
+# starting around the 12.6.x line - 12.4.1-runtime-ubuntu24.04 does not
+# exist ("not found", confirmed by the real second build attempt).
+# Nothing in this image depends on exactly 12.4.1; any CUDA 12.x runtime
+# new enough to have real Ubuntu 24.04 support is fine for the pip-
+# installed torch/diffusers stack this image actually runs.
+FROM nvidia/cuda:12.6.3-runtime-ubuntu24.04
 
 WORKDIR /workspace
 
