@@ -75,6 +75,16 @@ class KernelPushConfig:
     is_private: bool = True
     enable_gpu: bool = True
     enable_internet: bool = True
+    # Leaving this unset lets Kaggle pick either accelerator for a free
+    # GPU session - real runs showed it can hand out an older Pascal
+    # P100, whose compute capability recent PyTorch wheels no longer ship
+    # compiled kernels for at all (a real "CUDA error: no kernel image is
+    # available for execution on the device", not specific to any one
+    # dtype - confirmed by hand: it persisted identically after switching
+    # bf16 to fp16). "NvidiaTeslaT4" / "NvidiaTeslaP100" (the exact
+    # strings kagglesdk's own machine_shape field documents) let a caller
+    # pin a specific accelerator instead of leaving it to chance.
+    machine_shape: str | None = None
 
     def validate(self) -> None:
         if not self.title.strip():
@@ -87,7 +97,7 @@ class KernelPushConfig:
             raise ValueError(f"Unsupported kernel_type: {self.kernel_type!r}")
 
     def to_kernel_metadata_dict(self) -> dict:
-        return {
+        metadata = {
             "id": self.kernel_ref.full_ref,
             "title": self.title,
             "code_file": self.code_file,
@@ -100,6 +110,9 @@ class KernelPushConfig:
             "competition_sources": [],
             "kernel_sources": [],
         }
+        if self.machine_shape:
+            metadata["machine_shape"] = self.machine_shape
+        return metadata
 
 
 @dataclass

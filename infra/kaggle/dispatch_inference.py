@@ -187,6 +187,14 @@ def main(argv: list[str] | None = None) -> int:
         title=kernel_slug,
         code_file=_KERNEL_RUNNER_FILENAME,
         dataset_sources=(dataset_ref,),
+        # Pin the accelerator to T4 - confirmed by hand (runs 30288629219,
+        # 30297185938) that leaving this to Kaggle's own default can hand
+        # out an older Pascal P100, whose compute capability recent
+        # PyTorch wheels no longer ship compiled kernels for at all (a
+        # real "CUDA error: no kernel image is available for execution on
+        # the device" that persisted identically across both bf16 and
+        # fp16 - not a dtype problem, an unsupported-architecture one).
+        machine_shape="NvidiaTeslaT4",
     )
     print(f"Pushing kernel {kernel_ref.full_ref!r} ...")
     client.push_kernel(runner_dir, push_config)
