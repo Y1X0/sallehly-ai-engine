@@ -81,12 +81,22 @@ jobs:
           version: "latest"
 
       - name: Verify Kaggle authentication (fails fast, before any real work below)
+        # The kaggle CLI writes its own real error (invalid credentials,
+        # rate limit, etc.) to stdout, not stderr - a bare `>/dev/null`
+        # here would silently discard the actual reason and leave only
+        # a bare "exit code 1" in the log. Capture combined output and
+        # only print it (to stderr, so it surfaces clearly) on failure.
         run: |
           if [ -z "$KAGGLE_USERNAME" ] || [ -z "$KAGGLE_KEY" ]; then
             echo "KAGGLE_USERNAME / KAGGLE_KEY repo secrets are not set - see infra/kaggle/README.md" >&2
             exit 1
           fi
-          uv run --with kaggle kaggle kernels list --mine >/dev/null
+          OUTPUT=$(uv run --with kaggle kaggle kernels list --mine 2>&1) || {
+            echo "$OUTPUT" >&2
+            echo "Real 'kaggle kernels list --mine' call failed - see the output above for the actual reason." >&2
+            exit 1
+          }
+          echo "$OUTPUT"
 
       - name: Dispatch the real Kaggle GPU inference kernel
         id: dispatch
