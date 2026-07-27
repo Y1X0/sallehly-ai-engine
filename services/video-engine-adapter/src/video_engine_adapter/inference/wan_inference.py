@@ -241,11 +241,22 @@ def build_real_pipeline(model_id: str, *, device: str = "cuda") -> Any:
         # numbers regardless of num_frames (17 vs 9). That proves the
         # ceiling is the resident pipeline's own weight footprint, not
         # per-step activation memory that scales with frame count.
-        # enable_model_cpu_offload() is diffusers' own built-in method for
-        # exactly this: it keeps only the actively-running submodule on GPU
-        # and shuttles the rest to CPU between stages, freeing several GB
-        # without changing precision, resolution, or output.
-        pipeline.enable_model_cpu_offload()
+        # enable_model_cpu_offload() alone (whole submodules moved between
+        # CPU/GPU) still hit a real CUDA memory-allocation failure on a
+        # pinned T4 (run 30299011624: "CUBLAS_STATUS_ALLOC_FAILED" -
+        # cuBLAS's own error for "no memory left for its workspace", the
+        # same underlying condition as an OOM, just reported through a
+        # different call path). enable_sequential_cpu_offload() is
+        # diffusers' own, more aggressive built-in offload mode - it moves
+        # individual weight tensors to GPU only for their exact forward
+        # call instead of whole submodules, trading some speed for a much
+        # smaller resident footprint. enable_attention_slicing() is a
+        # second, complementary built-in toggle that reduces the peak
+        # memory attention computation itself needs. Neither changes
+        # precision, resolution, or output - both are standard diffusers
+        # memory-management options, not new capabilities of this engine.
+        pipeline.enable_sequential_cpu_offload()
+        pipeline.enable_attention_slicing()
         return pipeline
     return pipeline.to(resolved_device)
 
