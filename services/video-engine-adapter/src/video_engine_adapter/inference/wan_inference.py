@@ -219,6 +219,21 @@ def build_real_pipeline(model_id: str, *, device: str = "cuda") -> Any:
         raise WanInferenceUnavailableError(_MISSING_DEPS_MESSAGE) from exc
 
     pipeline = WanPipeline.from_pretrained(model_id, torch_dtype=torch.bfloat16)
+    if resolved_device == "cuda":
+        # A full bf16 Wan2.2-TI2V-5B pipeline (transformer + text encoder +
+        # VAE) left resident on GPU via a plain .to("cuda") consumes ~15.6GB
+        # by itself - confirmed by hand on real Kaggle GPU runs
+        # (30284984066, 30286719822): both left only ~33MiB free and failed
+        # on an 18MiB allocation during generation, with byte-identical
+        # numbers regardless of num_frames (17 vs 9). That proves the
+        # ceiling is the resident pipeline's own weight footprint, not
+        # per-step activation memory that scales with frame count.
+        # enable_model_cpu_offload() is diffusers' own built-in method for
+        # exactly this: it keeps only the actively-running submodule on GPU
+        # and shuttles the rest to CPU between stages, freeing several GB
+        # without changing precision, resolution, or output.
+        pipeline.enable_model_cpu_offload()
+        return pipeline
     return pipeline.to(resolved_device)
 
 

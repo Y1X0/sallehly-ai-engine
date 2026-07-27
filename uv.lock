@@ -3885,6 +3885,7 @@ dependencies = [
 
 [package.optional-dependencies]
 real-inference = [
+    { name = "accelerate" },
     { name = "diffusers" },
     { name = "imageio" },
     { name = "imageio-ffmpeg" },
@@ -3895,6 +3896,7 @@ real-inference = [
 
 [package.metadata]
 requires-dist = [
+    { name = "accelerate", marker = "extra == 'real-inference'", specifier = ">=0.30" },
     { name = "config-sdk", editable = "packages/config-sdk" },
     { name = "diffusers", marker = "extra == 'real-inference'", specifier = ">=0.31" },
     { name = "httpx", specifier = ">=0.27" },

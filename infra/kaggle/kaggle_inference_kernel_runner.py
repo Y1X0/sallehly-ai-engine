@@ -61,6 +61,11 @@ _MISSING_OK_PACKAGES: dict[str, str] = {
     "imageio": "imageio>=2.34",
     "imageio_ffmpeg": "imageio-ffmpeg>=0.5",
     "httpx": "httpx>=0.27",
+    # Required by wan_inference.build_real_pipeline()'s enable_model_cpu_offload()
+    # call - added after a real Kaggle GPU run showed the full bf16
+    # pipeline left resident on GPU consumes ~15.6GB by itself, leaving no
+    # room for generation on a 16GB card.
+    "accelerate": "accelerate>=0.30",
 }
 
 

@@ -23,6 +23,12 @@ real-inference = [
   "tokenizers>=0.19",
   "imageio>=2.34",
   "imageio-ffmpeg>=0.5",
+  # Required by wan_inference.build_real_pipeline()'s enable_model_cpu_offload()
+  # call (diffusers raises ImportError without it) - added after a real
+  # 16GB Kaggle GPU run confirmed the full bf16 pipeline left resident on
+  # GPU via .to("cuda") consumes ~15.6GB by itself, leaving no room for
+  # generation; cpu offload is diffusers' own built-in fix for that.
+  "accelerate>=0.30",
 ]
 
 [tool.uv.sources]
