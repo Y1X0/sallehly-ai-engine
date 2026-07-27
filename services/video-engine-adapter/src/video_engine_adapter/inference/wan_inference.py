@@ -218,7 +218,20 @@ def build_real_pipeline(model_id: str, *, device: str = "cuda") -> Any:
     except ImportError as exc:
         raise WanInferenceUnavailableError(_MISSING_DEPS_MESSAGE) from exc
 
-    pipeline = WanPipeline.from_pretrained(model_id, torch_dtype=torch.bfloat16)
+    pipeline_dtype = torch.bfloat16
+    if resolved_device == "cuda" and not torch.cuda.is_bf16_supported():
+        # Confirmed by hand on a real Kaggle GPU run (30288629219, right
+        # after the cpu-offload fix above resolved the prior OOM): loading
+        # in bf16 on an older CUDA architecture (Kaggle's free tier can
+        # assign a Pascal P100, which has no bf16 tensor-core support,
+        # instead of a T4) fails with "CUDA error: no kernel image is
+        # available for execution on the device" - there is no compiled
+        # bf16 kernel for that architecture. fp16 is supported on every
+        # CUDA GPU Kaggle offers, with no precision-quality difference
+        # that matters here (this is a hardware-compatibility fallback,
+        # not a quality choice).
+        pipeline_dtype = torch.float16
+    pipeline = WanPipeline.from_pretrained(model_id, torch_dtype=pipeline_dtype)
     if resolved_device == "cuda":
         # A full bf16 Wan2.2-TI2V-5B pipeline (transformer + text encoder +
         # VAE) left resident on GPU via a plain .to("cuda") consumes ~15.6GB
