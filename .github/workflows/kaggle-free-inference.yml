@@ -113,6 +113,17 @@ jobs:
           }
           echo "$OUTPUT"
 
+      - name: Diagnostic - real Kaggle GPU/TPU accelerator quota
+        # Run 30281023767 pushed successfully with enable_gpu=true but the
+        # kernel itself reported torch.cuda.is_available() == False - a
+        # real, not-yet-explained gap between "requested a GPU" and "one
+        # was actually attached". `kaggle quota` is the CLI's own real
+        # command for the account's weekly GPU/TPU accelerator quota -
+        # printing it here (before guessing at a code fix) shows whether
+        # this free account's quota is simply exhausted, which several
+        # dispatches in the last hour could plausibly have done.
+        run: uv run --with kaggle kaggle quota 2>&1
+
       - name: Dispatch the real Kaggle GPU inference kernel
         id: dispatch
         # --kaggle-username is deliberately omitted here - dispatch_inference.py
