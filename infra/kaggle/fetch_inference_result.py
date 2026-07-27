@@ -23,11 +23,25 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "services" / "training" / "src"))
 from training.automation.errors import KaggleAutomationError  # noqa: E402
 from training.automation.kaggle_client import KaggleClient, KaggleKernelRef  # noqa: E402
+
+# A kernel/dataset just pushed by dispatch_inference.py can take a few
+# seconds to become visible to `kaggle kernels status`/`kernels output`
+# on Kaggle's own backend - confirmed by hand: a real dispatch
+# immediately followed by a status check hit "Cannot access kernel ...
+# (Permission 'kernels.get' was denied)" on the very first call, purely
+# from propagation delay (the kernel had just been created seconds
+# earlier under the same account/token that created it). Retrying a
+# few times with a short delay before giving up is the correct fix,
+# not a workaround - this is a real, transient condition, not a
+# genuine permissions problem.
+_INITIAL_PROPAGATION_RETRIES = 4
+_INITIAL_PROPAGATION_DELAY_SEC = 15.0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -46,11 +60,39 @@ def _parse_kernel_ref(ref: str) -> KaggleKernelRef:
     return KaggleKernelRef(owner_slug=owner, kernel_slug=slug)
 
 
+def _wait_until_kernel_is_visible(client: KaggleClient, kernel_ref: KaggleKernelRef) -> None:
+    """Retries the first status check a few times - a kernel/dataset
+    dispatch_inference.py just pushed can take a few seconds to become
+    visible on Kaggle's backend, and the very first status check can
+    otherwise fail with a misleading permission error (see this
+    module's own comment above)."""
+    last_exc: KaggleAutomationError | None = None
+    for attempt in range(1, _INITIAL_PROPAGATION_RETRIES + 1):
+        try:
+            client.get_kernel_status(kernel_ref)
+            return
+        except KaggleAutomationError as exc:
+            last_exc = exc
+            print(
+                f"Kernel not visible yet (attempt {attempt}/{_INITIAL_PROPAGATION_RETRIES}): {exc} - "
+                f"retrying in {_INITIAL_PROPAGATION_DELAY_SEC:.0f}s ...",
+                file=sys.stderr,
+            )
+            time.sleep(_INITIAL_PROPAGATION_DELAY_SEC)
+    print(
+        f"Kernel still not visible after {_INITIAL_PROPAGATION_RETRIES} attempts - "
+        f"proceeding anyway, last error: {last_exc}",
+        file=sys.stderr,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     kernel_ref = _parse_kernel_ref(args.kernel_ref)
     output_dir = Path(args.output_dir)
     client = KaggleClient()
+
+    _wait_until_kernel_is_visible(client, kernel_ref)
 
     print(f"Polling {kernel_ref.full_ref} (timeout {args.timeout_sec:.0f}s) ...")
     try:
@@ -63,7 +105,15 @@ def main(argv: list[str] | None = None) -> int:
         print("Pulling whatever output exists anyway before giving up ...", file=sys.stderr)
         result = None
 
-    client.pull_kernel_output(kernel_ref, output_dir)
+    try:
+        client.pull_kernel_output(kernel_ref, output_dir)
+    except KaggleAutomationError as exc:
+        # Surface the real reason and keep going - the checks below
+        # (video.mp4/error.json presence) already handle "no output
+        # was ever produced" correctly; a failed *download* attempt
+        # must not crash this script uncaught (it did, for real, the
+        # first time this happened - see this module's own comment).
+        print(f"Could not download kernel output: {exc}", file=sys.stderr)
 
     video_path = output_dir / "output" / "video.mp4"
     metadata_path = output_dir / "output" / "metadata.json"
