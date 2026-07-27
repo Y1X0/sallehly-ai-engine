@@ -133,7 +133,7 @@ class KaggleJobResult:
     raw_status_output: str = ""
 
 
-_STATUS_PATTERN = re.compile(r'"([a-zA-Z]+)"')
+_STATUS_PATTERN = re.compile(r'"([A-Za-z_.]+)"')
 
 
 def _default_binary_path() -> str:
@@ -202,6 +202,19 @@ class KaggleClient:
             ]
         return self._run(args).stdout
 
+    def get_dataset_status(self, dataset_ref: KaggleDatasetRef) -> str:
+        """Real `kaggle datasets status <ref>` - Kaggle processes a freshly
+        created dataset asynchronously (its own `datasets create` output
+        says "Your private Dataset is being created..."); pushing a kernel
+        that references it before this reaches "ready" makes Kaggle silently
+        drop it from the kernel's dataset_sources (only a CLI warning, no
+        error) - confirmed by hand, run 30278022296's kernel then failed
+        with "No dataset mounted under /kaggle/input". Returns the raw
+        lowercase status string (e.g. "ready", "blobs_received", "failed").
+        """
+        args = [self._binary, "datasets", "status", dataset_ref.full_ref]
+        return self._run(args).stdout.strip()
+
     def download_dataset(self, dataset_ref: KaggleDatasetRef, dest_dir: Path) -> Path:
         dest_dir.mkdir(parents=True, exist_ok=True)
         args = [
@@ -269,7 +282,14 @@ class KaggleClient:
         match = _STATUS_PATTERN.search(stdout)
         if match is None:
             raise KaggleAutomationError(f"Could not parse kernel status from output: {stdout!r}")
-        raw = match.group(1).lower()
+        # A real `kernels status` call (confirmed by hand, run 30278022296)
+        # prints the raw enum repr - `"KernelWorkerStatus.RUNNING"`, not
+        # the bare `"running"` this originally assumed - because
+        # kernels_status_cli() does `'%s' % response.status` on the enum
+        # member itself. rsplit(".")[-1] strips that class-name prefix
+        # when present and is a no-op on the plain values this codebase's
+        # own tests use, so both keep working.
+        raw = match.group(1).rsplit(".", 1)[-1].lower().replace("_", "")
         try:
             return KaggleKernelStatus(raw)
         except ValueError:

@@ -192,6 +192,28 @@ class TestKaggleClient:
         with pytest.raises(KaggleAutomationError):
             client.get_kernel_status(KaggleKernelRef(owner_slug="sallehly", kernel_slug="x"))
 
+    def test_get_kernel_status_parses_real_enum_repr(self):
+        # Real `kernels status` output (confirmed by hand, run 30278022296)
+        # prints the enum's own repr - "KernelWorkerStatus.RUNNING" - not
+        # the bare "running" originally assumed.
+        client = KaggleClient(
+            runner=lambda args: _fake_result(stdout='sallehly/x has status "KernelWorkerStatus.RUNNING"')
+        )
+        status = client.get_kernel_status(KaggleKernelRef(owner_slug="sallehly", kernel_slug="x"))
+        assert status == KaggleKernelStatus.RUNNING
+
+    def test_get_kernel_status_parses_real_cancel_acknowledged(self):
+        client = KaggleClient(
+            runner=lambda args: _fake_result(stdout='sallehly/x has status "KernelWorkerStatus.CANCEL_ACKNOWLEDGED"')
+        )
+        status = client.get_kernel_status(KaggleKernelRef(owner_slug="sallehly", kernel_slug="x"))
+        assert status == KaggleKernelStatus.CANCELLED
+
+    def test_get_dataset_status_returns_stripped_stdout(self):
+        client = KaggleClient(runner=lambda args: _fake_result(stdout="ready\n"))
+        status = client.get_dataset_status(KaggleDatasetRef(owner_slug="sallehly", dataset_slug="x"))
+        assert status == "ready"
+
     def test_command_failure_raises_kaggle_automation_error(self):
         client = KaggleClient(runner=lambda args: _fake_result(returncode=1, stderr="401 unauthorized"))
         with pytest.raises(KaggleAutomationError, match="401 unauthorized"):

@@ -39,6 +39,7 @@ from pathlib import Path
 # - same account, same CLI, same real dataset-upload/kernel-push
 # mechanics, only the kernel's own code differs (inference, not training).
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "services" / "training" / "src"))
+from training.automation.errors import KaggleAutomationError  # noqa: E402
 from training.automation.kaggle_client import (  # noqa: E402
     DatasetMetadata,
     KaggleClient,
@@ -46,6 +47,39 @@ from training.automation.kaggle_client import (  # noqa: E402
     KaggleKernelRef,
     KernelPushConfig,
 )
+
+# A freshly created Kaggle dataset processes asynchronously - real
+# `datasets create` output says "Your private Dataset is being
+# created...". Pushing a kernel that references it before Kaggle reports
+# "ready" makes Kaggle silently drop it from the kernel's dataset_sources
+# (only a CLI warning, no error) - confirmed by hand: run 30278022296's
+# kernel was pushed successfully but then failed inside with "No dataset
+# mounted under /kaggle/input" because its dataset was still processing.
+_DATASET_READY_RETRIES = 10
+_DATASET_READY_DELAY_SEC = 10.0
+_DATASET_READY_STATUS = "ready"
+_DATASET_FAILED_STATUSES = ("failed", "deleted")
+
+
+def _wait_until_dataset_is_ready(client: KaggleClient, dataset_ref: KaggleDatasetRef) -> None:
+    for attempt in range(1, _DATASET_READY_RETRIES + 1):
+        try:
+            status = client.get_dataset_status(dataset_ref)
+        except KaggleAutomationError as exc:
+            print(f"Dataset status check failed (attempt {attempt}/{_DATASET_READY_RETRIES}): {exc}", file=sys.stderr)
+            status = ""
+        else:
+            print(f"Dataset {dataset_ref.full_ref!r} status: {status!r} (attempt {attempt}/{_DATASET_READY_RETRIES})")
+            if status == _DATASET_READY_STATUS:
+                return
+            if status in _DATASET_FAILED_STATUSES:
+                raise RuntimeError(f"Dataset {dataset_ref.full_ref!r} reached terminal status {status!r} - cannot push a kernel referencing it")
+        time.sleep(_DATASET_READY_DELAY_SEC)
+    print(
+        f"Dataset {dataset_ref.full_ref!r} did not reach {_DATASET_READY_STATUS!r} after "
+        f"{_DATASET_READY_RETRIES} attempts - pushing the kernel anyway, it may run without input",
+        file=sys.stderr,
+    )
 
 _DEFAULT_MODEL_ID = "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
 _KERNEL_RUNNER_FILENAME = "kaggle_inference_kernel_runner.py"
@@ -131,6 +165,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
         is_new=True,
     )
+    _wait_until_dataset_is_ready(client, dataset_ref)
 
     kernel_ref = KaggleKernelRef(owner_slug=kaggle_username, kernel_slug=kernel_slug)
     runner_dir = Path(__file__).resolve().parent
