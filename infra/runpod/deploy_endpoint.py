@@ -24,6 +24,14 @@ workspace - it's deployment tooling, not application code):
 Prints the real endpoint id on success - export it as
 `RUNPOD_ENDPOINT_ID` for `apps/api` (`COMPUTE_PROVIDER=runpod`) and for
 `infra/runpod/check_health.py`.
+
+Pass `--dry-run` to validate every argument and print exactly what
+would be created (template name/image, endpoint gpu/worker config)
+WITHOUT calling the real RunPod API - `runpod.api_key` is never set and
+`runpod.create_template()`/`runpod.create_endpoint()` are never called
+in this mode. `--dry-run` does not require `RUNPOD_API_KEY` (or
+`--api-key`) at all - this is the free/no-cost default the CI workflow
+uses unless a real deployment is explicitly requested.
 """
 
 from __future__ import annotations
@@ -56,11 +64,42 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--idle-timeout-sec", type=int, default=5)
     parser.add_argument("--container-disk-gb", type=int, default=50, help="Must fit the downloaded Wan2.2 weights (~11GB) plus torch/diffusers")
     parser.add_argument("--registry-auth-id", default=None, help="From runpod.create_container_registry_auth, if --image is in a private registry")
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Validate arguments and print what would be created, without calling the real RunPod "
+        "API (no runpod.api_key assignment, no create_template/create_endpoint call). Does not "
+        "require --api-key/RUNPOD_API_KEY.",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    hf_token = args.hf_token or os.environ.get("HF_TOKEN")
+    env = {"HF_TOKEN": hf_token} if hf_token else {}
+
+    if args.dry_run:
+        print("Dry run - validating configuration only, no RunPod API call will be made.")
+        print(f"  image:            {args.image}")
+        print(f"  name:             {args.name}")
+        print(f"  gpu_ids:          {args.gpu_ids}")
+        print(f"  gpu_count:        {args.gpu_count}")
+        print(f"  workers_min:      {args.workers_min}")
+        print(f"  workers_max:      {args.workers_max}")
+        print(f"  idle_timeout_sec: {args.idle_timeout_sec}")
+        print(f"  container_disk_gb:{args.container_disk_gb}")
+        print(f"  registry_auth_id: {args.registry_auth_id}")
+        print(f"  HF_TOKEN set:     {bool(hf_token)}")
+        if args.workers_min < 0 or args.workers_max < 1 or args.workers_min > args.workers_max:
+            print("Invalid worker configuration: need 0 <= workers_min <= workers_max and workers_max >= 1.", file=sys.stderr)
+            return 1
+        if not args.image:
+            print("Invalid configuration: --image is required.", file=sys.stderr)
+            return 1
+        print("\nDry run OK - this configuration would create a real template + endpoint if run without --dry-run.")
+        print("Endpoint created: dry-run-noop")
+        return 0
 
     try:
         import runpod
@@ -75,12 +114,9 @@ def main(argv: list[str] | None = None) -> int:
 
     api_key = args.api_key or os.environ.get("RUNPOD_API_KEY")
     if not api_key:
-        print("--api-key or RUNPOD_API_KEY is required.", file=sys.stderr)
+        print("--api-key or RUNPOD_API_KEY is required (unless --dry-run).", file=sys.stderr)
         return 1
     runpod.api_key = api_key
-
-    hf_token = args.hf_token or os.environ.get("HF_TOKEN")
-    env = {"HF_TOKEN": hf_token} if hf_token else {}
 
     print(f"Creating template {args.name!r} from image {args.image!r} ...")
     template = runpod.create_template(
