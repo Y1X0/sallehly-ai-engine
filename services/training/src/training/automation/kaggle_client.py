@@ -172,7 +172,15 @@ class KaggleClient:
             self._binary = cli_path or "kaggle"
         else:
             self._binary = cli_path or _default_binary_path()
-            self._runner = subprocess.run
+            # Plain `subprocess.run(args)` leaves .stdout as None (output
+            # goes straight to this process's inherited stdout instead) -
+            # confirmed by a real Kaggle run (30277585931): get_kernel_status
+            # printed the real "... has status ..." line straight to the
+            # job log, then crashed parsing it because result.stdout was
+            # None. Every test injects its own runner with stdout already
+            # set, so this default path was never actually exercised until
+            # this real integration run surfaced it.
+            self._runner = lambda args: subprocess.run(args, capture_output=True, text=True)
 
     def upload_dataset(
         self,
