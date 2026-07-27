@@ -51,10 +51,6 @@ on:
         description: "Text-to-video prompt"
         required: true
         default: "A calm lake at sunrise, gentle ripples, warm golden light, cinematic"
-      kaggle_username:
-        description: "Kaggle username the pushed kernel/dataset are owned by (usually not the same as your GitHub username)"
-        required: true
-        default: ""
       num_frames:
         description: "Frame count (17 = ~1.06s @ 16fps - kept small for the first trial run)"
         required: true
@@ -94,13 +90,16 @@ jobs:
 
       - name: Dispatch the real Kaggle GPU inference kernel
         id: dispatch
+        # --kaggle-username is deliberately omitted here - dispatch_inference.py
+        # already falls back to the KAGGLE_USERNAME env var (set above from
+        # the repo secret) when the flag isn't passed, so this never asks
+        # for the same value twice.
         run: |
           OUTPUT=$(uv run --with kaggle python infra/kaggle/dispatch_inference.py \
             --prompt "${{ github.event.inputs.prompt }}" \
             --num-frames "${{ github.event.inputs.num_frames }}" \
             --sampling-steps "${{ github.event.inputs.sampling_steps }}" \
             --git-ref "${{ github.ref_name }}" \
-            --kaggle-username "${{ github.event.inputs.kaggle_username }}" \
             --kernel-slug "wan-inference-${{ github.run_id }}")
           echo "$OUTPUT"
           KERNEL_REF=$(echo "$OUTPUT" | grep "^Kernel dispatched:" | sed 's/^Kernel dispatched: //')

@@ -48,8 +48,10 @@ other one in this repo) fails fast with a clear message if either is
 missing, before doing any real work.
 
 **To run it**: Actions → "Kaggle - Free GPU Wan2.2 Inference" → Run
-workflow → fill in `prompt` and your real `kaggle_username` → check
-`confirm_run` → Run. It dispatches a real Kaggle kernel, polls it (up
+workflow → fill in `prompt` → check `confirm_run` → Run (the Kaggle
+account the kernel/dataset are pushed under comes from the
+`KAGGLE_USERNAME` secret above - no need to type it again). It
+dispatches a real Kaggle kernel, polls it (up
 to 80 minutes - Wan2.2-TI2V-5B is ~11GB, plus load+generate time), and
 uploads the real result (`video.mp4` + `metadata.json`, or `error.json`
 on failure) as the run's workflow artifact.
