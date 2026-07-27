@@ -134,6 +134,15 @@ jobs:
           fi
           echo "kernel_ref=$KERNEL_REF" >> "$GITHUB_OUTPUT"
 
+      - name: Diagnostic - list my real Kaggle kernels (confirm the actual ref Kaggle assigned)
+        # A real dispatch (30276675131) succeeded at push but every
+        # subsequent status/output call on the assumed ref hit
+        # "Permission 'kernels.get' was denied" across 4 retries 15s
+        # apart - not a propagation delay. The CLI's own error text
+        # names a wrong slug as the most likely cause, so confirm the
+        # real ref Kaggle registered before guessing further.
+        run: uv run --with kaggle kaggle kernels list --mine --sort-by dateCreated 2>&1 | head -20
+
       - name: Wait for the Kaggle kernel and fetch its real output (video.mp4 or error.json)
         run: >
           uv run --with kaggle python infra/kaggle/fetch_inference_result.py
