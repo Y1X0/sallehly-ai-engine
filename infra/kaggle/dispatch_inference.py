@@ -136,7 +136,20 @@ def main(argv: list[str] | None = None) -> int:
     runner_dir = Path(__file__).resolve().parent
     push_config = KernelPushConfig(
         kernel_ref=kernel_ref,
-        title=f"Sallehly Wan inference - {kernel_slug}",
+        # Must equal kernel_slug exactly, not a human-readable title -
+        # confirmed by a real dispatch (run 30276967278): Kaggle's own
+        # push warned "Your kernel title does not resolve to the
+        # specified id" and silently created the kernel under a slug
+        # derived from the title instead ("sallehly-wan-inference-
+        # wan-inference-<run_id>"), not the id this script/
+        # fetch_inference_result.py actually poll - every subsequent
+        # kernels status/output call then hit a real (not transient)
+        # "Permission kernels.get was denied" because it was querying
+        # a ref that didn't exist. Kaggle derives the real slug from
+        # the title when they diverge, so the title must slugify to
+        # exactly kernel_slug - using kernel_slug itself as the title
+        # guarantees that (it's already lowercase/hyphenated).
+        title=kernel_slug,
         code_file=_KERNEL_RUNNER_FILENAME,
         dataset_sources=(dataset_ref,),
     )
