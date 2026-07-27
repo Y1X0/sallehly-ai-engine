@@ -1,0 +1,115 @@
+name: Kaggle - Free GPU Wan2.2 Inference ($0, human-gated)
+
+# Runs one real Wan2.2 text-to-video inference on a real Kaggle free
+# GPU (P100/T4) - the inference counterpart to
+# training-phase2-free-gpu-experiment.yml's Kaggle training smoke test,
+# reusing the exact same real KaggleClient and the real, already-tested
+# video_engine_adapter.inference.wan_inference.generate_video() (the
+# same call LocalInferenceProvider / workers/gpu-worker/handler.py
+# make). No RunPod, no paid GPU, no new inference implementation - only
+# a new, isolated way to dispatch the existing real inference code to
+# a free GPU (infra/kaggle/).
+#
+# Free by design: Kaggle's GPU quota for this has no billing, unlike
+# RunPod. Still manual-only (workflow_dispatch) and gated behind
+# `confirm_run`, since it is a real external action (creates a private
+# Kaggle dataset + kernel under your account) and downloads ~11GB of
+# real Wan2.2 weights inside that kernel.
+#
+# Required repository secrets: KAGGLE_USERNAME, KAGGLE_KEY (from
+# kaggle.com/settings -> API -> Create New Token) - see
+# infra/kaggle/README.md. Fails fast, before any real work, if either
+# is missing - this workflow never silently no-ops.
+#
+# Honest caveat carried over from
+# models/wan2.2-ti2v-5b/capability_manifest.yaml: this engine's
+# gpu_requirements.min_vram_gb is 16 - the same as Kaggle's free P100/T4.
+# This run may hit a real CUDA out-of-memory error - that is a real,
+# informative result this workflow reports clearly, not a bug in it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_run:
+        description: "Actually dispatch a real Kaggle GPU inference run (free, but a real external action under your Kaggle account) - required"
+        required: true
+        default: false
+        type: boolean
+      prompt:
+        description: "Text-to-video prompt"
+        required: true
+        default: "A calm lake at sunrise, gentle ripples, warm golden light, cinematic"
+      kaggle_username:
+        description: "Kaggle username the pushed kernel/dataset are owned by (usually not the same as your GitHub username)"
+        required: true
+        default: ""
+      num_frames:
+        description: "Frame count (17 = ~1.06s @ 16fps - kept small for the first trial run)"
+        required: true
+        default: "17"
+      sampling_steps:
+        description: "Denoising steps (kept low for the first trial run - this engine's real default is ~40)"
+        required: true
+        default: "20"
+
+concurrency:
+  group: kaggle-free-inference
+  cancel-in-progress: false
+
+jobs:
+  dispatch-and-fetch:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.confirm_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+      KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Verify Kaggle authentication (fails fast, before any real work below)
+        run: |
+          if [ -z "$KAGGLE_USERNAME" ] || [ -z "$KAGGLE_KEY" ]; then
+            echo "KAGGLE_USERNAME / KAGGLE_KEY repo secrets are not set - see infra/kaggle/README.md" >&2
+            exit 1
+          fi
+          uv run --with kaggle kaggle kernels list --mine >/dev/null
+
+      - name: Dispatch the real Kaggle GPU inference kernel
+        id: dispatch
+        run: |
+          OUTPUT=$(uv run --with kaggle python infra/kaggle/dispatch_inference.py \
+            --prompt "${{ github.event.inputs.prompt }}" \
+            --num-frames "${{ github.event.inputs.num_frames }}" \
+            --sampling-steps "${{ github.event.inputs.sampling_steps }}" \
+            --git-ref "${{ github.ref_name }}" \
+            --kaggle-username "${{ github.event.inputs.kaggle_username }}" \
+            --kernel-slug "wan-inference-${{ github.run_id }}")
+          echo "$OUTPUT"
+          KERNEL_REF=$(echo "$OUTPUT" | grep "^Kernel dispatched:" | sed 's/^Kernel dispatched: //')
+          if [ -z "$KERNEL_REF" ]; then
+            echo "Could not parse kernel_ref from dispatch_inference.py output - see the log above" >&2
+            exit 1
+          fi
+          echo "kernel_ref=$KERNEL_REF" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the Kaggle kernel and fetch its real output (video.mp4 or error.json)
+        run: >
+          uv run --with kaggle python infra/kaggle/fetch_inference_result.py
+          --kernel-ref "${{ steps.dispatch.outputs.kernel_ref }}"
+          --output-dir ./kaggle-inference-output
+          --timeout-sec 4800
+
+      - name: Upload the real result (video + metadata, or error.json) as a workflow artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kaggle-wan-inference-${{ github.run_id }}
+          path: kaggle-inference-output
+          if-no-files-found: warn
+          retention-days: 30
