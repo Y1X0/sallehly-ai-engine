@@ -28,6 +28,18 @@ name: Kaggle - Free GPU Wan2.2 Inference ($0, human-gated)
 # informative result this workflow reports clearly, not a bug in it.
 
 on:
+  # GitHub only registers a workflow_dispatch-triggered workflow (making
+  # it selectable/runnable in the Actions UI, or via the API) once it
+  # has seen at least one real event for that workflow file on this
+  # branch - a workflow_dispatch-only file on a non-default branch does
+  # not appear in the Actions tab/API at all until then (same real issue
+  # deploy-runpod-endpoint.yml hit first, see its own `on:` comment).
+  # This `push` trigger, scoped to this one branch, is what registers
+  # it; the real job below stays gated on `github.event_name ==
+  # 'workflow_dispatch'`, so a plain push here never does anything real.
+  push:
+    branches:
+      - claude/sallehly-engine-audit-vnxs4f
   workflow_dispatch:
     inputs:
       confirm_run:
