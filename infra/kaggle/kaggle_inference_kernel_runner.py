@@ -109,20 +109,27 @@ def main(
     (`python kaggle_inference_kernel_runner.py`, no args) always uses
     the real Kaggle paths and always clones fresh (no persistent disk
     between kernel runs)."""
-    input_candidates = sorted(p for p in kaggle_input_root.glob("*") if p.is_dir())
-    if not input_candidates:
+    # Kaggle's own /kaggle/input layout is not fixed: older kernels mount a
+    # dataset directly at /kaggle/input/<dataset-slug>/, but a real run
+    # (30279700088) showed Kaggle now nests it one level deeper, under
+    # /kaggle/input/datasets/<dataset-slug>/ - a plain `glob("*")` picked
+    # the "datasets" parent itself (sorted first) instead of descending into
+    # it, so git_ref.txt/inference_request.json were never found even
+    # though the dataset really was attached. Searching recursively for the
+    # file this kernel actually needs is robust to either layout.
+    git_ref_matches = sorted(kaggle_input_root.rglob("git_ref.txt"))
+    if not git_ref_matches:
         raise RuntimeError(
-            f"No dataset mounted under {kaggle_input_root} - dispatch_inference.py must attach the "
-            "job's git_ref.txt/inference_request.json dataset via KernelPushConfig.dataset_sources; "
+            f"No git_ref.txt found anywhere under {kaggle_input_root} - dispatch_inference.py must attach "
+            "the job's git_ref.txt/inference_request.json dataset via KernelPushConfig.dataset_sources; "
             "this kernel was not pushed with one."
         )
-    input_dir = input_candidates[0]
-
+    input_dir = git_ref_matches[0].parent
     git_ref_path = input_dir / "git_ref.txt"
     request_path = input_dir / "inference_request.json"
-    if not git_ref_path.is_file() or not request_path.is_file():
+    if not request_path.is_file():
         raise RuntimeError(
-            f"Expected {git_ref_path} and {request_path} in the mounted dataset - "
+            f"Found {git_ref_path} but not {request_path} in the mounted dataset - "
             "dispatch_inference.py builds both; this kernel was pushed without them."
         )
     git_ref = git_ref_path.read_text().strip()
