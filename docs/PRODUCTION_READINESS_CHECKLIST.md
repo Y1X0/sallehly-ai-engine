@@ -7,6 +7,45 @@ production traffic. Every ✅/⚠️ below is backed by a real, passing test
 or a real (if sandbox-network-limited) execution - see the linked ADR
 for the specific evidence, not just the claim.
 
+## 0. Verification log (stabilization pass before further expansion)
+
+A deliberate pause to confirm everything built so far actually runs,
+before adding anything new, real deploy included:
+
+- **Local stack e2e verified ✅** - `docker compose up -d postgres redis`
+  itself is blocked by this sandbox's network policy (same CDN
+  restriction as Docker Hub/RunPod, see §2/§6), but the app's own
+  defaults (`PROJECT_STORE=memory`, `CACHE_BACKEND=memory`,
+  `EVENT_BUS=memory`, `TOKEN_STORE=memory`, `STORAGE_PROVIDER=local`)
+  need no external service at all. Ran `apps/api`
+  (`uv run --package api uvicorn api.main:app`) and `apps/web-dashboard`
+  (`npm run dev`) as real, separate OS processes and drove the full
+  `e2e/lifecycle.spec.ts` Playwright suite against them (4/4 passed),
+  plus a manual screenshot pass through every gate.
+- **Browser lifecycle verified ✅** - register → log in → create project
+  → generate creative plan → storyboard renders → approve → render plan
+  renders → approve → start generation → generation completes → assets
+  visible, all confirmed with real screenshots taken mid-run, not just
+  the automated assertions. Reject-with-feedback, auth-required
+  redirects, and per-user project isolation also passed.
+- **GitHub Actions free mode verified ✅** - `deploy-runpod-endpoint.yml`
+  run [30231055452](https://github.com/Y1X0/sallehly-ai-engine/actions/runs/30231055452)
+  (`confirm_deploy=true`, `real_deploy=false`) completed with
+  `conclusion: success`: `build-and-push` built and pushed a real image
+  to GHCR, `deploy-endpoint` ran `deploy_endpoint.py --dry-run` (no
+  `RUNPOD_API_KEY`, no Environment approval wait - `runpod-free-dry-run`
+  has no protection rules), and `verify-health` was skipped entirely, as
+  designed.
+- **RunPod dry-run verified ✅** - same run: the "Free mode - validate
+  deploy logic" step printed `Dry run OK ... Endpoint created:
+  dry-run-noop` without ever calling `runpod.api_key`/
+  `create_template()`/`create_endpoint()`. No RunPod account, balance,
+  or credential was touched.
+
+Nothing above used `real_deploy=true`, a real RunPod endpoint, or any
+GPU deployment - see §2 and §6 for what remains genuinely unverified
+(a real, funded RunPod run) and exactly why.
+
 ## 1. Core creative pipeline
 
 | Component | Status | Evidence |
@@ -27,7 +66,7 @@ shipped through Phase 8 Scale-out.
 |---|---|---|---|
 | `local` (default) | Mock stub (`LocalProvider`) | none | ✅ Ready - dev/CI default, always was |
 | `local-inference` | **Real**, tiny-scale `WanPipeline` (`LocalInferenceProvider`) | none | ✅ Ready - verified end-to-end via headless browser, real playable `.mp4` produced |
-| `runpod` | **Real**, full-scale Wan2.2 on a real GPU (`RunPodProvider` + `workers/gpu-worker`) | `RUNPOD_API_KEY`, `RUNPOD_ENDPOINT_ID`, `HF_TOKEN` (worker-side, only if the repo is gated) | ⚠️ Code + CI deployment automation (`.github/workflows/deploy-runpod-endpoint.yml`) complete and fails fast on missing credentials; **the workflow has not yet been run** (needs real `RUNPOD_API_KEY` + Environment approval) - see §6 |
+| `runpod` | **Real**, full-scale Wan2.2 on a real GPU (`RunPodProvider` + `workers/gpu-worker`) | `RUNPOD_API_KEY`, `RUNPOD_ENDPOINT_ID`, `HF_TOKEN` (worker-side, only if the repo is gated) | ⚠️ Code + CI deployment automation (`.github/workflows/deploy-runpod-endpoint.yml`) complete; **build-and-push and the free/dry-run deploy path have both run for real and succeeded** (free-mode run [30231055452](https://github.com/Y1X0/sallehly-ai-engine/actions/runs/30231055452) - see §0); a real (`real_deploy=true`) endpoint has not been created - the one attempt (run 30228235422) reached the real RunPod API and was correctly rejected for lacking $0.01 account balance, an account-funding step, not a code gap - see §6 |
 | `vastai` | Not implemented | — | ❌ Phase 3 target, unchanged, `VastAIProvider` raises `NotImplementedError` by design |
 
 `build_app_state()` refuses to start with `COMPUTE_PROVIDER=runpod` and
@@ -77,23 +116,29 @@ upgrade paths for when scale actually demands them.
 
 Everything below requires access this development environment does not
 have (a funded RunPod account, an unrestricted network) - the code and
-CI/CD automation are real and complete, these are deployment actions
-(secrets, approvals, one workflow run), not missing engineering.
+CI/CD automation are real, complete, and already exercised end-to-end
+in free/dry-run mode (§0); what's left is deployment actions (secrets,
+approvals, account balance, one workflow run with `real_deploy=true`),
+not missing engineering.
 
 Steps 1-3 are now automated by `.github/workflows/deploy-runpod-endpoint.yml`
 (runs on a real GitHub-hosted runner, which has neither restriction this
-sandbox does):
+sandbox does). `real_deploy=false` (the default) already ran for real -
+see §0 - and needs no further verification:
 
 1. **Build and push the worker image** - automated by the workflow's
    `build-and-push` job (GHCR, using `GITHUB_TOKEN` - no extra registry
-   secret needed).
+   secret needed). **Verified for real.**
 2. **Deploy a real RunPod Serverless endpoint** from that image -
    automated by the workflow's `deploy-endpoint` job
-   (`infra/runpod/deploy_endpoint.py`), gated by the
-   `runpod-production-deploy` Environment's required reviewers.
+   (`infra/runpod/deploy_endpoint.py`), gated by
+   `real_deploy=true` + the `runpod-production-deploy` Environment's
+   required reviewers. **Dry-run path verified for real; the real path
+   reached RunPod's actual API and was correctly rejected for lacking
+   account balance - not yet completed with a funded account.**
 3. **Confirm it's healthy** - automated by the workflow's
    `verify-health` job (`infra/runpod/check_health.py`), result posted
-   to the run's job summary.
+   to the run's job summary. Only runs when `real_deploy=true`.
 
 What's left, purely deployment/config actions, not something CI can do
 for you:
@@ -101,26 +146,31 @@ for you:
 4. **Add repository secrets**: `RUNPOD_API_KEY` (required), `HF_TOKEN`
    (optional - only if `models/registry.yaml`'s configured Wan2.2 repo
    becomes gated; public as of this writing).
-5. **Configure the `runpod-production-deploy` Environment**'s required
+5. **Fund the RunPod account** with at least $0.01 balance - RunPod's
+   own API rejects endpoint creation otherwise (confirmed by the real
+   rejection in run 30228235422).
+6. **Configure the `runpod-production-deploy` Environment**'s required
    reviewers (Settings -> Environments) - the actual human approval gate.
-6. **Run the workflow** (Actions -> "Deploy - RunPod Wan2.2 Production
-   Endpoint" -> check `confirm_deploy` -> Run), approve when prompted,
+7. **Run the workflow with `real_deploy=true`** (Actions -> "Deploy -
+   RunPod Wan2.2 Production Endpoint" -> Run workflow -> check both
+   `confirm_deploy` and `real_deploy` -> Run), approve when prompted,
    and copy the resulting `RUNPOD_ENDPOINT_ID` from the job summary.
-7. **Point `apps/api` at it**: `COMPUTE_PROVIDER=runpod`,
+8. **Point `apps/api` at it**: `COMPUTE_PROVIDER=runpod`,
    `RUNPOD_API_KEY`, `RUNPOD_ENDPOINT_ID`.
-8. **Run one real end-to-end request** (a prompt through `/demo` or the
+9. **Run one real end-to-end request** (a prompt through `/demo` or the
    full `/projects` REST flow) and confirm a real, full-quality Wan2.2
    clip comes back - the first genuinely unverified step in this whole
    pipeline, specifically because it needs infrastructure this
    development environment cannot provide.
 
-Everything upstream of step 8 (the full creative pipeline, the exact
+Everything upstream of step 9 (the full creative pipeline, the exact
 job payload shape, the real inference call's mechanism, the real HF
 download/checksum logic, the RunPod HTTP client, the deployment
-workflow itself) has already been verified for real, independently, up
-to the credentials/infrastructure boundary - see
-`docs/adr/0026-pre-first-real-run-audit-fixes.md` and the "Real video
-generation + RunPod production backend" entry in the root `README.md`.
+workflow itself, and now the entire free-mode CI path) has already been
+verified for real, independently, up to the credentials/infrastructure
+boundary - see `docs/adr/0026-pre-first-real-run-audit-fixes.md` and
+the "Real video generation + RunPod production backend" entry in the
+root `README.md`.
 
 ## 7. Test coverage
 
@@ -141,7 +191,9 @@ triggered, cost-protected, all 8 blocking issues from the pre-first-run
 audit resolved (ADR 0026).
 
 **CONDITIONAL for `COMPUTE_PROVIDER=runpod` real production inference**
-- code-complete and fails safely, but requires the six manual
-deployment steps in §6 before the first real request. Not a code gap;
-an infrastructure/credentials gap only this session's environment
-prevented closing.
+- code-complete, fails safely, and the entire pipeline up to RunPod's
+own account-balance check has now run for real in CI (§0); requires the
+remaining manual deployment steps in §6 (funded account, secrets,
+Environment approval, one `real_deploy=true` run) before the first real
+request. Not a code gap; an infrastructure/credentials/balance gap only
+a human with a funded RunPod account can close.
