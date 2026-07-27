@@ -91,6 +91,14 @@ jobs:
             echo "KAGGLE_USERNAME / KAGGLE_KEY repo secrets are not set - see infra/kaggle/README.md" >&2
             exit 1
           fi
+          # Safe diagnostic (lengths only, never the values themselves) -
+          # a real local repro with fake-but-well-formed credentials
+          # reaches a real network call, not the "Authentication
+          # required" message this failed with, so the values
+          # themselves are the remaining suspect (stray whitespace/
+          # newline, wrong field pasted in, etc.).
+          echo "KAGGLE_USERNAME length: ${#KAGGLE_USERNAME}"
+          echo "KAGGLE_KEY length: ${#KAGGLE_KEY}"
           OUTPUT=$(uv run --with kaggle kaggle kernels list --mine 2>&1) || {
             echo "$OUTPUT" >&2
             echo "Real 'kaggle kernels list --mine' call failed - see the output above for the actual reason." >&2
