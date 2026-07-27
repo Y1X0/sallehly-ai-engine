@@ -96,7 +96,13 @@ jobs:
       - name: Set image ref
         id: image-ref
         run: |
-          IMAGE="ghcr.io/${{ github.repository }}/wan22-worker"
+          # GHCR (and OCI registries in general) reject any uppercase in
+          # a repository/image name - github.repository preserves the
+          # owner's real casing (e.g. "Y1X0/sallehly-ai-engine"), which
+          # broke the build below with "repository name must be
+          # lowercase" until this was lowercased explicitly.
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/$REPO_LOWER/wan22-worker"
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
