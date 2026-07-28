@@ -415,6 +415,10 @@ def generate_video(
     callers can always tell smoke-scale output from real output."""
     _require_torch()
     resolved_seed = seed if seed is not None else int(job_input.get("seed") or 0)
+    gpu_name: str | None = None
+    torch_version: str | None = None
+    diffusers_version: str | None = None
+    pipeline_dtype_str: str | None = None
 
     if smoke_test:
         pipeline = build_smoke_test_pipeline(seed=resolved_seed)
@@ -437,6 +441,28 @@ def generate_video(
         note = f"Real Wan inference from model_id={model_id!r}."
         resolved_model_id = model_id
         resolved_device = _resolve_device(device)
+
+        # eval/reports/0014: the whole investigation had been assuming
+        # fp16 was the active dtype on Kaggle's T4 (per the comment in
+        # build_real_pipeline above) without ever directly confirming
+        # it - reading torch.cuda.is_bf16_supported()'s real source
+        # showed it returns True on a T4 via software emulation, so
+        # bf16 was almost certainly the real dtype all along. Printed
+        # directly (not just inferred from a comment) so every future
+        # run settles this with hard evidence instead of a guess.
+        import diffusers as _diffusers_module
+
+        gpu_name = torch.cuda.get_device_name(0) if resolved_device == "cuda" else "cpu"
+        torch_version = torch.__version__
+        diffusers_version = _diffusers_module.__version__
+        pipeline_dtype_str = str(pipeline.dtype)
+        print(f"[wan_inference] GPU: {gpu_name}")
+        print(f"[wan_inference] torch: {torch_version}")
+        print(f"[wan_inference] diffusers: {diffusers_version}")
+        print(f"[wan_inference] pipeline.dtype: {pipeline_dtype_str}")
+        print(f"[wan_inference] transformer.dtype: {pipeline.transformer.dtype}")
+        print(f"[wan_inference] vae.dtype: {pipeline.vae.dtype}")
+        print(f"[wan_inference] text_encoder.dtype: {pipeline.text_encoder.dtype}")
 
     resolved_prompt = job_input["prompt"]
     resolved_negative_prompt = job_input.get("negative_prompt")
@@ -559,4 +585,11 @@ def generate_video(
         "transformer_dtype": str(pipeline.transformer.dtype) if getattr(pipeline, "transformer", None) is not None else None,
         "vae_dtype": str(pipeline.vae.dtype) if getattr(pipeline, "vae", None) is not None else None,
         "text_encoder_dtype": str(pipeline.text_encoder.dtype) if getattr(pipeline, "text_encoder", None) is not None else None,
+        # Added per eval/reports/0014's request: direct evidence of the
+        # real GPU/library versions in play, instead of inferring them
+        # from a comment or a same-code-path assumption.
+        "gpu_name": gpu_name,
+        "torch_version": torch_version,
+        "diffusers_version": diffusers_version,
+        "pipeline_dtype": pipeline_dtype_str,
     }
