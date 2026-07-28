@@ -351,6 +351,21 @@ def build_real_pipeline(model_id: str, *, device: str = "cuda") -> Any:
         # here would itself be diagnostic, confirming tiling really is
         # needed for memory and pointing toward a different mitigation
         # (e.g. lower resolution/frame count) instead of tiling.
+        #
+        # eval/reports/0011: with tiling disabled at a *smaller*
+        # resolution/frame count (480x272, 9 frames - specifically to
+        # dodge the OOM), every one of the 20 `step_latent_norms` came
+        # back NaN (not random, not degenerate-but-real - a complete
+        # numerical failure from the very first denoising step).
+        # Iteration 0007 (tiling ENABLED, 960x544, 17 frames) produced
+        # real, non-NaN, monotonically-converging latent norms with the
+        # exact same model-loading code - this re-enables tiling, at
+        # the *same* reduced 480x272/9-frame configuration 0011 used,
+        # changing only this one variable, to test directly whether
+        # tiling itself is what prevents the NaN (not just a memory
+        # convenience) rather than assuming it from the OOM-blocked
+        # non-tiled attempts in 0008-0010.
+        pipeline.vae.enable_tiling()
         pipeline.vae.enable_slicing()
         return pipeline
     return pipeline.to(resolved_device)
