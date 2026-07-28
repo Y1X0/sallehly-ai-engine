@@ -77,6 +77,11 @@ on:
         description: "Frame height - see width's note"
         required: true
         default: "544"
+      disable_cpu_offload:
+        description: "Diagnostic-only (eval/reports/0018): skip enable_sequential_cpu_offload() for this one run to isolate whether it's implicated in the all-zero text encoder output - never enable for a normal run, real OOM risk is accepted as itself diagnostic"
+        required: true
+        default: false
+        type: boolean
 
 concurrency:
   group: kaggle-free-inference
@@ -142,6 +147,8 @@ jobs:
         # already falls back to the KAGGLE_USERNAME env var (set above from
         # the repo secret) when the flag isn't passed, so this never asks
         # for the same value twice.
+        env:
+          DISABLE_CPU_OFFLOAD_FLAG: ${{ github.event.inputs.disable_cpu_offload == 'true' && '--disable-cpu-offload' || '' }}
         run: |
           OUTPUT=$(uv run --with kaggle python infra/kaggle/dispatch_inference.py \
             --prompt "${{ github.event.inputs.prompt }}" \
@@ -151,7 +158,8 @@ jobs:
             --width "${{ github.event.inputs.width }}" \
             --height "${{ github.event.inputs.height }}" \
             --git-ref "${{ github.ref_name }}" \
-            --kernel-slug "wan-inference-${{ github.run_id }}")
+            --kernel-slug "wan-inference-${{ github.run_id }}" \
+            $DISABLE_CPU_OFFLOAD_FLAG)
           echo "$OUTPUT"
           KERNEL_REF=$(echo "$OUTPUT" | grep "^Kernel dispatched:" | sed 's/^Kernel dispatched: //')
           if [ -z "$KERNEL_REF" ]; then

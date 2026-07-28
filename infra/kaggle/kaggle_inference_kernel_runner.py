@@ -161,6 +161,12 @@ def main(
         model_id=request["model_id"],
         device="cuda",
         seed=request.get("seed"),
+        # eval/reports/0018: diagnostic-only opt-in (default False, so
+        # every dispatch that doesn't set it behaves exactly as before)
+        # to isolate whether enable_sequential_cpu_offload() is
+        # implicated in the all-zero text encoder output found in
+        # eval/reports/0017.
+        disable_sequential_cpu_offload=bool(request.get("disable_sequential_cpu_offload", False)),
     )
 
     output_dir.mkdir(parents=True, exist_ok=True)

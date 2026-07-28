@@ -151,6 +151,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Defaults to a timestamped slug (wan-inference-<unix-ts>) so repeated runs never collide",
     )
     parser.add_argument("--job-store-dir", default=".kaggle-inference-jobs", help="Where to write this dispatch's input files before upload")
+    parser.add_argument(
+        "--disable-cpu-offload", action="store_true",
+        help="Diagnostic-only opt-in (eval/reports/0018): skips build_real_pipeline()'s "
+        "enable_sequential_cpu_offload() call for this one run, all else unchanged - used to "
+        "isolate whether offload is implicated in the all-zero text encoder output found in "
+        "eval/reports/0017. Never set for a normal generation run - real OOM risk is accepted "
+        "as itself diagnostic here.",
+    )
     return parser
 
 
@@ -176,7 +184,12 @@ def main(argv: list[str] | None = None) -> int:
         "sampling_steps": args.sampling_steps,
         "guidance_scale": args.guidance_scale,
     }
-    request = {"model_id": args.model_id, "seed": args.seed, "job_input": job_input}
+    request = {
+        "model_id": args.model_id,
+        "seed": args.seed,
+        "job_input": job_input,
+        "disable_sequential_cpu_offload": args.disable_cpu_offload,
+    }
     (job_store / "inference_request.json").write_text(json.dumps(request, indent=2))
     (job_store / "git_ref.txt").write_text(args.git_ref)
 

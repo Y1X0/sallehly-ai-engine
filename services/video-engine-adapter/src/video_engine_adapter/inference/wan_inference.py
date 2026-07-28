@@ -201,7 +201,7 @@ def build_smoke_test_pipeline(seed: int = 0) -> Any:
     return pipeline.to("cpu")
 
 
-def build_real_pipeline(model_id: str, *, device: str = "cuda") -> Any:
+def build_real_pipeline(model_id: str, *, device: str = "cuda", disable_sequential_cpu_offload: bool = False) -> Any:
     """Loads a real, full-scale Wan2.1/2.2 `WanPipeline` from real HF
     Hub weights (or a local directory already populated by
     `training.hf_download`). Requires real network access the first
@@ -322,7 +322,19 @@ def build_real_pipeline(model_id: str, *, device: str = "cuda") -> Any:
         # memory attention computation itself needs. Neither changes
         # precision, resolution, or output - both are standard diffusers
         # memory-management options, not new capabilities of this engine.
-        pipeline.enable_sequential_cpu_offload()
+        #
+        # eval/reports/0018 found text_encoder's first parameter reading
+        # as a meta tensor (no materialized data) at a static, outside-
+        # of-forward-pass check - ambiguous between "weights never
+        # loaded" and "enable_sequential_cpu_offload()'s normal resting
+        # representation between forward calls". `disable_sequential_cpu_offload`
+        # is a diagnostic-only opt-in (default False, so every other
+        # call site's behavior is completely unchanged) to isolate that
+        # ambiguity with a real, one-variable A/B: this exact same
+        # config with only this one call skipped. Real OOM risk is
+        # accepted as itself diagnostic here, same as eval/reports/0008/0011.
+        if not disable_sequential_cpu_offload:
+            pipeline.enable_sequential_cpu_offload()
         pipeline.enable_attention_slicing()
         # Sequential offload fixed the resident-weight footprint (run
         # 30301127047 confirmed only 5.43GB in use at failure time, well
@@ -404,6 +416,7 @@ def generate_video(
     model_id: str | None = None,
     device: str = "cpu",
     seed: int | None = None,
+    disable_sequential_cpu_offload: bool = False,
 ) -> dict[str, Any]:
     """Runs one real Wan text-to-video generation from an
     `EngineJobPayload.input` dict (the shape `Wan21Adapter.build_job_payload`
@@ -435,7 +448,7 @@ def generate_video(
                 "Real (non-smoke) Wan inference requires a model_id (e.g. a real HF Hub Wan2.1/2.2 "
                 "repo id, or a local directory from training.hf_download.resolve_local_weights)."
             )
-        pipeline = build_real_pipeline(model_id, device=device)
+        pipeline = build_real_pipeline(model_id, device=device, disable_sequential_cpu_offload=disable_sequential_cpu_offload)
         height, width, num_frames = int(job_input["height"]), int(job_input["width"]), int(job_input["num_frames"])
         num_inference_steps = int(job_input.get("sampling_steps", 40))
         mode = "real"
@@ -780,6 +793,11 @@ def generate_video(
         "torch_version": torch_version,
         "diffusers_version": diffusers_version,
         "pipeline_dtype": pipeline_dtype_str,
+        # eval/reports/0018/0019: echoes back whether this run's
+        # enable_sequential_cpu_offload() call was skipped - a
+        # diagnostic-only opt-in (default False) used for exactly one
+        # A/B comparison against eval/reports/0017's offload=ON baseline.
+        "disable_sequential_cpu_offload": disable_sequential_cpu_offload,
         # eval/reports/0015: a direct, non-callback call to
         # pipeline.encode_prompt() (the same real method __call__ uses
         # internally) made once before the denoising loop, to check
