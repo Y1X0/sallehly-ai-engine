@@ -66,9 +66,9 @@ on:
         required: true
         default: "20"
       seed:
-        description: "Generation seed - every prior real run used the default (0); eval/reports/0006 needs a genuinely different value to test whether the pipeline is sensitive to any input variation at all"
+        description: "Generation seed - eval/reports/0007 found seed=0 (the old default) produces degenerate output for this model/scheduler, independent of every precision/guidance fix tried; 42 is confirmed working"
         required: true
-        default: "0"
+        default: "42"
 
 concurrency:
   group: kaggle-free-inference

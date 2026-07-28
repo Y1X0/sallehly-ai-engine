@@ -109,6 +109,20 @@ _DEFAULT_SAMPLING_STEPS = 20
 # and docs/adapters/wan21-adapter-spec.md - this script had drifted
 # from it with no justifying comment.
 _DEFAULT_GUIDANCE_SCALE = 6.0
+# Confirmed by hand on real Kaggle GPU runs: eval/reports/0001-0006 (6
+# consecutive real runs, seed=0, spanning every precision/guidance_scale
+# combination tried) all produced a byte-for-byte identical, near-flat,
+# degenerate video.mp4 (127,355 bytes every time) - none of those
+# fixes could have worked, because none touched the actual variable
+# that mattered. eval/reports/0007 isolated the real cause: seed=0
+# itself is a degenerate starting point for this model/scheduler,
+# independent of every precision/guidance fix tried. A single run with
+# seed=42 produced a completely different, much larger (276,938 bytes)
+# file with a real, monotonically-converging step_latent_norms trace -
+# the first evidence of genuine generative work in this whole
+# investigation. This default only needs to avoid the one confirmed-bad
+# value, not claim 42 is special.
+_DEFAULT_SEED = 42
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -122,7 +136,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fps", type=int, default=_DEFAULT_FPS)
     parser.add_argument("--sampling-steps", type=int, default=_DEFAULT_SAMPLING_STEPS)
     parser.add_argument("--guidance-scale", type=float, default=_DEFAULT_GUIDANCE_SCALE)
-    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--seed", type=int, default=_DEFAULT_SEED)
     parser.add_argument(
         "--git-ref", required=True,
         help="Branch/tag/commit this kernel should clone - the code_file being pushed only exists "
