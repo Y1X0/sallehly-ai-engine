@@ -419,6 +419,7 @@ def generate_video(
     torch_version: str | None = None
     diffusers_version: str | None = None
     pipeline_dtype_str: str | None = None
+    weight_diagnostics: dict[str, Any] = {}
 
     if smoke_test:
         pipeline = build_smoke_test_pipeline(seed=resolved_seed)
@@ -463,6 +464,47 @@ def generate_video(
         print(f"[wan_inference] transformer.dtype: {pipeline.transformer.dtype}")
         print(f"[wan_inference] vae.dtype: {pipeline.vae.dtype}")
         print(f"[wan_inference] text_encoder.dtype: {pipeline.text_encoder.dtype}")
+
+        # eval/reports/0017 pinpointed the flat/muddy output's cause to
+        # text_encoder's own forward pass returning an all-zero
+        # last_hidden_state, despite healthy tokenization and a healthy
+        # attention mask. Per the user's own next-step plan: inspect the
+        # encoder's actual weights directly (not its output) to check
+        # whether the problem is upstream of the forward pass entirely -
+        # unloaded/meta/zero weights - before considering
+        # enable_sequential_cpu_offload() or the forward computation
+        # itself as the cause. Read-only: no weight is modified, no
+        # model/scheduler/seed/resolution/dtype/tiling setting changed.
+        with torch.no_grad():
+            first_param_name, first_param = next(pipeline.text_encoder.named_parameters())
+            text_encoder_num_parameter_tensors = sum(1 for _ in pipeline.text_encoder.parameters())
+            text_encoder_total_numel = sum(p.numel() for p in pipeline.text_encoder.parameters())
+            text_encoder_any_meta_tensor = any(p.is_meta for p in pipeline.text_encoder.parameters())
+            weight_diagnostics.update({
+                "text_encoder_training_mode": pipeline.text_encoder.training,
+                "text_encoder_num_parameter_tensors": text_encoder_num_parameter_tensors,
+                "text_encoder_total_numel": text_encoder_total_numel,
+                "text_encoder_any_meta_tensor": text_encoder_any_meta_tensor,
+                "text_encoder_first_param_name": first_param_name,
+                "text_encoder_first_param_shape": list(first_param.shape),
+                "text_encoder_first_param_dtype": str(first_param.dtype),
+                "text_encoder_first_param_device": str(first_param.device),
+                "text_encoder_first_param_is_meta": bool(first_param.is_meta),
+            })
+            if not first_param.is_meta:
+                first_param_float = first_param.detach().float()
+                weight_diagnostics.update(
+                    {
+                        "text_encoder_first_param_min": float(first_param_float.min().item()),
+                        "text_encoder_first_param_max": float(first_param_float.max().item()),
+                        "text_encoder_first_param_mean": float(first_param_float.mean().item()),
+                        "text_encoder_first_param_std": float(first_param_float.std().item()),
+                        "text_encoder_first_param_norm": float(first_param_float.norm().item()),
+                        "text_encoder_first_param_nonzero_count": int((first_param_float != 0).sum().item()),
+                    }
+                )
+        for _key, _value in weight_diagnostics.items():
+            print(f"[wan_inference][weights] {_key} = {_value}")
 
     resolved_prompt = job_input["prompt"]
     resolved_negative_prompt = job_input.get("negative_prompt")
@@ -746,4 +788,13 @@ def generate_video(
         # tensors through the callback while enable_sequential_cpu_offload
         # is active.
         **direct_embed_diagnostics,
+        # eval/reports/0018: inspects text_encoder's own weights
+        # directly (training mode, parameter count, meta-tensor check,
+        # and the first parameter's shape/dtype/device/min/max/mean/
+        # std/norm/nonzero-count) to check whether the all-zero
+        # last_hidden_state found in eval/reports/0017 traces back to
+        # unloaded/zero weights, before considering
+        # enable_sequential_cpu_offload() or the forward computation
+        # itself.
+        **weight_diagnostics,
     }
