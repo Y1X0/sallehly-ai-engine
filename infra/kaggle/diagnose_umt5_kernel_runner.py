@@ -85,6 +85,15 @@ def main(*, kaggle_input_root: Path = Path("/kaggle/input"), kaggle_working_root
         # change this result?), without needing a second script.
         _run([sys.executable, "-m", "pip", "install", "--quiet", f"transformers=={transformers_version_override}"])
 
+    import importlib.util
+
+    if importlib.util.find_spec("accelerate") is None:
+        # Needed for from_pretrained(..., device_map=...) below - a real
+        # Kaggle run (30408569026) got this far without it being
+        # explicitly checked (diffusers/transformers were already
+        # importable), but device_map support specifically requires it.
+        _run([sys.executable, "-m", "pip", "install", "--quiet", "accelerate>=0.30"])
+
     import diffusers
     import transformers
     from transformers import AutoTokenizer, UMT5EncoderModel
@@ -97,8 +106,24 @@ def main(*, kaggle_input_root: Path = Path("/kaggle/input"), kaggle_working_root
     print(f"max_sequence_length: {max_sequence_length}")
 
     tokenizer = AutoTokenizer.from_pretrained(model_id, subfolder="tokenizer")
-    text_encoder = UMT5EncoderModel.from_pretrained(model_id, subfolder="text_encoder", torch_dtype=torch.bfloat16)
-    text_encoder = text_encoder.to("cuda").eval()
+    # A real Kaggle run (30408569026) hit CUBLAS_STATUS_ALLOC_FAILED
+    # here: text_encoder alone is ~6.73B params (~12.5 GiB in bf16),
+    # already close to the T4's ~14.56 GiB usable capacity (see
+    # eval/reports/0002-era comments in wan_inference.py for that same
+    # real ceiling) - a plain `.to("cuda")` after `from_pretrained`
+    # briefly holds a CPU copy and a GPU copy simultaneously during the
+    # transfer, and that transient spike (not the steady-state forward
+    # pass) is what exhausted the margin cuBLAS needed for its own
+    # workspace. `device_map={"": "cuda:0"}` loads each weight tensor
+    # directly onto the target device as it streams in (accelerate's
+    # low_cpu_mem_usage path), avoiding that double-materialization
+    # entirely - a loading-mechanics fix, not a change to the model,
+    # dtype, or the actual forward computation being tested.
+    text_encoder = UMT5EncoderModel.from_pretrained(
+        model_id, subfolder="text_encoder", torch_dtype=torch.bfloat16, device_map={"": "cuda:0"},
+    )
+    text_encoder = text_encoder.eval()
+    torch.cuda.empty_cache()
 
     # Mirrors WanPipeline._get_t5_prompt_embeds's own real tokenizer
     # call exactly (confirmed by reading diffusers 0.37.1's source in
