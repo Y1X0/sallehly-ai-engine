@@ -337,15 +337,19 @@ def generate_video(
         resolved_model_id = model_id
         resolved_device = _resolve_device(device)
 
+    resolved_prompt = job_input["prompt"]
+    resolved_negative_prompt = job_input.get("negative_prompt")
+    resolved_guidance_scale = float(job_input.get("guidance_scale", 1.0))
+
     generator = torch.Generator(device="cpu").manual_seed(resolved_seed)
     result = pipeline(
-        prompt=job_input["prompt"],
-        negative_prompt=job_input.get("negative_prompt"),
+        prompt=resolved_prompt,
+        negative_prompt=resolved_negative_prompt,
         height=height,
         width=width,
         num_frames=num_frames,
         num_inference_steps=num_inference_steps,
-        guidance_scale=float(job_input.get("guidance_scale", 1.0)),
+        guidance_scale=resolved_guidance_scale,
         generator=generator,
     )
     frames = result.frames[0]
@@ -367,4 +371,14 @@ def generate_video(
         "num_frames": num_frames,
         "fps": fps,
         "num_inference_steps": num_inference_steps,
+        # Added after eval/reports/0003 found guidance_scale=1.0->6.0
+        # made zero measurable difference to real Kaggle output (a
+        # byte-for-byte identical video.mp4 - see that report) - this
+        # closes the "did the fix even reach pipeline()" ambiguity by
+        # echoing back the exact values the real call actually used,
+        # directly in every future run's metadata.json, instead of
+        # having to infer them from dispatch_inference.py's CLI args.
+        "prompt": resolved_prompt,
+        "negative_prompt": resolved_negative_prompt,
+        "guidance_scale": resolved_guidance_scale,
     }

@@ -10,4 +10,4 @@ next iteration says so explicitly rather than rewriting history.
 |---|---|---|---|
 | 0001 | First real video, fp16 VAE decode | [30303715804](https://github.com/Y1X0/sallehly-ai-engine/actions/runs/30303715804) | FAIL - flat/muddy garbage frames |
 | 0002 | fp32 VAE upcast fix | [30316220351](https://github.com/Y1X0/sallehly-ai-engine/actions/runs/30316220351) | FAIL - byte-identical to 0001, fix had no measurable effect |
-| 0003 | guidance_scale 1.0 -> 6.0 fix | [30327666233](https://github.com/Y1X0/sallehly-ai-engine/actions/runs/30327666233) | PENDING - real compute-time signal (+26% duration) suggests the fix activated, but pixel verification is blocked pending the video artifact (see report) |
+| 0003 | guidance_scale 1.0 -> 6.0 fix | [30327666233](https://github.com/Y1X0/sallehly-ai-engine/actions/runs/30327666233) | FAIL - confirmed via SHA256 + direct visual inspection: byte-for-byte identical output to iteration 0001, despite +26% run duration. Fix had zero measurable effect; root cause still unknown. |
