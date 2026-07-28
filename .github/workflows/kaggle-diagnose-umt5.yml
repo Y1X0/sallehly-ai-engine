@@ -1,0 +1,115 @@
+name: Kaggle - Diagnose UMT5 text encoder in isolation ($0, human-gated)
+
+# eval/reports/0019 decisively ruled out enable_sequential_cpu_offload()
+# and checkpoint-loading as the cause of the all-zero text conditioning
+# found in eval/reports/0015-0018 (with offload disabled, text_encoder's
+# own weights are confirmed real/non-meta/healthy - but its forward
+# output is still exactly zero). Per the user's own instruction: stop
+# experimenting on the full WanPipeline (a >1 hour round trip) and
+# isolate `transformers.UMT5EncoderModel` completely instead - no
+# WanTransformer3DModel, no AutoencoderKLWan, no offload staging - a
+# real, non-mocked test of the same real HF Hub checkpoint that should
+# complete in minutes. Also supports pinning a different `transformers`
+# version, the user's own explicit follow-up question.
+#
+# Required repository secrets: same KAGGLE_USERNAME/KAGGLE_API_TOKEN as
+# kaggle-free-inference.yml - see infra/kaggle/README.md.
+
+on:
+  push:
+    branches:
+      - claude/sallehly-engine-audit-vnxs4f
+  workflow_dispatch:
+    inputs:
+      confirm_run:
+        description: "Actually dispatch a real Kaggle GPU diagnostic run (free, but a real external action under your Kaggle account) - required"
+        required: true
+        default: false
+        type: boolean
+      model_id:
+        description: "Real HF Hub Wan2.1/2.2 diffusers repo id to load text_encoder/tokenizer from"
+        required: true
+        default: "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
+      prompt:
+        description: "Text prompt to encode - the same prompt used throughout eval/reports/0013-0019"
+        required: true
+        default: "A cinematic sunset over a futuristic city, high quality"
+      max_sequence_length:
+        description: "Matches WanPipeline.encode_prompt()'s own default (see eval/reports/0016/0017)"
+        required: true
+        default: "226"
+      transformers_version:
+        description: "Optional: pin a specific transformers version (e.g. 4.48.0, matching Wan2.2's text_encoder/config.json declared transformers_version) to test whether a different version changes the result. Leave blank to use Kaggle's installed version."
+        required: false
+        default: ""
+
+concurrency:
+  group: kaggle-diagnose-umt5
+  cancel-in-progress: false
+
+jobs:
+  dispatch-and-fetch:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.confirm_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Sync workspace (base deps only, no torch/diffusers)
+        run: uv sync --all-packages
+
+      - name: Verify Kaggle authentication (fails fast, before any real work below)
+        run: |
+          if [ -z "$KAGGLE_USERNAME" ] || [ -z "$KAGGLE_API_TOKEN" ]; then
+            echo "KAGGLE_USERNAME / KAGGLE_API_TOKEN repo secrets are not set - see infra/kaggle/README.md" >&2
+            exit 1
+          fi
+          OUTPUT=$(uv run --with kaggle kaggle kernels list --mine 2>&1) || {
+            echo "$OUTPUT" >&2
+            echo "Real 'kaggle kernels list --mine' call failed - see the output above for the actual reason." >&2
+            exit 1
+          }
+          echo "$OUTPUT"
+
+      - name: Dispatch the real Kaggle GPU UMT5 diagnostic kernel
+        id: dispatch
+        env:
+          TRANSFORMERS_VERSION_FLAG: ${{ github.event.inputs.transformers_version != '' && format('--transformers-version {0}', github.event.inputs.transformers_version) || '' }}
+        run: |
+          OUTPUT=$(uv run --with kaggle python infra/kaggle/dispatch_diagnose_umt5.py \
+            --model-id "${{ github.event.inputs.model_id }}" \
+            --prompt "${{ github.event.inputs.prompt }}" \
+            --max-sequence-length "${{ github.event.inputs.max_sequence_length }}" \
+            --kernel-slug "diagnose-umt5-${{ github.run_id }}" \
+            $TRANSFORMERS_VERSION_FLAG)
+          echo "$OUTPUT"
+          KERNEL_REF=$(echo "$OUTPUT" | grep "^Kernel dispatched:" | sed 's/^Kernel dispatched: //')
+          if [ -z "$KERNEL_REF" ]; then
+            echo "Could not parse kernel_ref from dispatch_diagnose_umt5.py output - see the log above" >&2
+            exit 1
+          fi
+          echo "kernel_ref=$KERNEL_REF" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the Kaggle kernel and fetch its real output (metadata.json or error.json)
+        run: >
+          uv run --with kaggle python infra/kaggle/fetch_diagnose_umt5_result.py
+          --kernel-ref "${{ steps.dispatch.outputs.kernel_ref }}"
+          --output-dir ./kaggle-diagnose-umt5-output
+          --timeout-sec 1200
+
+      - name: Upload the real result (metadata.json or error.json) as a workflow artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kaggle-diagnose-umt5-${{ github.run_id }}
+          path: kaggle-diagnose-umt5-output
+          if-no-files-found: warn
+          retention-days: 30
