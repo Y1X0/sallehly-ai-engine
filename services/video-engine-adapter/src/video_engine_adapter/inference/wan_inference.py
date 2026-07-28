@@ -490,53 +490,127 @@ def generate_video(
     # tiling setting.
     diag_do_cfg = resolved_guidance_scale > 1.0
     if mode == "real":
-        # Real Kaggle run 30371065702 (this iteration's first attempt)
-        # hit a real CUDA OOM here: "Tried to allocate 1.96 GiB ... 36.81
-        # MiB is free" - confirmed by hand to be this diagnostic call's
-        # own fault, not the real generation's: WanPipeline.__call__ is
-        # decorated `@torch.no_grad()` (confirmed by reading
-        # diffusers.pipelines.wan.pipeline_wan's real source directly),
-        # but this standalone `encode_prompt()` call was not wrapped the
-        # same way - it built a full autograd graph for the T5 encoder's
-        # forward pass, retaining every intermediate activation for a
-        # backward pass that never happens, on top of the already-tight
-        # T4 memory budget. `torch.no_grad()` here matches how the real
-        # pipeline always runs this same call internally - a correctness
-        # fix to this diagnostic call itself, not a change to any real
-        # generation setting (model/scheduler/seed/resolution/dtype/
-        # tiling all remain untouched).
-        with torch.no_grad():
-            diag_prompt_embeds, diag_negative_prompt_embeds = pipeline.encode_prompt(
-                prompt=resolved_prompt,
-                negative_prompt=resolved_negative_prompt,
-                do_classifier_free_guidance=diag_do_cfg,
-                num_videos_per_prompt=1,
+        # eval/reports/0016 confirmed (via a direct, no-grad,
+        # non-callback call to encode_prompt()) that prompt_embeds is
+        # genuinely all-zero - min/max/abs_mean/norm all exactly 0.0,
+        # not a callback/enable_sequential_cpu_offload artifact. This
+        # replaces that call with a manual, step-by-step walk through
+        # `WanPipeline._get_t5_prompt_embeds`'s own real logic (read
+        # directly from diffusers 0.37.1's source), printing every
+        # intermediate the user asked for, to find exactly which stage
+        # first produces/discards real values: tokenizer output, the
+        # attention mask, the raw (pre-slicing) text encoder output,
+        # the computed seq_lens, and whether the zero-padding branch
+        # (`u[:v]` with `v=seq_lens`, then zero-padded to
+        # max_sequence_length) is what erases everything. Deliberately
+        # replaces rather than adds to iteration 0016's call so this
+        # still costs only one extra encoder forward pass per prompt
+        # string, same memory footprint as the already-fixed,
+        # non-OOMing prior run - not two. Read-only: no model,
+        # scheduler, seed, resolution, dtype, or tiling setting is
+        # touched, and the actual generation call below still runs its
+        # own separate, untouched, real encode_prompt() exactly as it
+        # always has.
+        from diffusers.pipelines.wan.pipeline_wan import prompt_clean
+
+        trace_max_sequence_length = 226  # WanPipeline.encode_prompt()'s own default
+        trace_device = pipeline._execution_device
+        trace_dtype = pipeline.text_encoder.dtype
+        pad_token_id = pipeline.tokenizer.pad_token_id
+
+        def _trace_t5_encoding(label: str, raw_prompt: str) -> dict[str, Any]:
+            cleaned_prompt = prompt_clean(raw_prompt)
+            print(f"[wan_inference][trace:{label}] raw_prompt = {raw_prompt!r}")
+            print(f"[wan_inference][trace:{label}] cleaned_prompt = {cleaned_prompt!r}")
+
+            text_inputs = pipeline.tokenizer(
+                [cleaned_prompt],
+                padding="max_length",
+                max_length=trace_max_sequence_length,
+                truncation=True,
+                add_special_tokens=True,
+                return_attention_mask=True,
+                return_tensors="pt",
             )
+            input_ids = text_inputs.input_ids
+            mask = text_inputs.attention_mask
+            non_pad_token_count = int((input_ids != pad_token_id).sum().item())
 
-            def _direct_embed_stats(name: str, tensor: Any) -> dict[str, Any]:
-                stats = {
-                    f"direct_{name}_shape": list(tensor.shape),
-                    f"direct_{name}_dtype": str(tensor.dtype),
-                    f"direct_{name}_min": float(tensor.float().min().item()),
-                    f"direct_{name}_max": float(tensor.float().max().item()),
-                    f"direct_{name}_abs_mean": float(tensor.float().abs().mean().item()),
-                    f"direct_{name}_norm": float(tensor.float().norm().item()),
-                }
-                for key, value in stats.items():
-                    print(f"[wan_inference][direct] {key} = {value}")
-                return stats
+            print(f"[wan_inference][trace:{label}] input_ids.shape = {list(input_ids.shape)}")
+            print(f"[wan_inference][trace:{label}] input_ids[:20] = {input_ids[0, :20].tolist()}")
+            print(f"[wan_inference][trace:{label}] pad_token_id = {pad_token_id}")
+            print(f"[wan_inference][trace:{label}] non_pad_token_count = {non_pad_token_count}")
+            print(f"[wan_inference][trace:{label}] attention_mask.shape = {list(mask.shape)}")
+            print(f"[wan_inference][trace:{label}] attention_mask.sum() = {int(mask.sum().item())}")
+            print(f"[wan_inference][trace:{label}] attention_mask.unique() = {mask.unique().tolist()}")
 
-            direct_embed_diagnostics: dict[str, Any] = {}
-            direct_embed_diagnostics.update(_direct_embed_stats("prompt_embeds", diag_prompt_embeds))
-            if diag_negative_prompt_embeds is not None:
-                direct_embed_diagnostics.update(_direct_embed_stats("negative_prompt_embeds", diag_negative_prompt_embeds))
-        # Freed explicitly (rather than left to Python's own GC timing)
-        # so this diagnostic call's memory is reliably reclaimed before
-        # the real generation call below runs - the real generation
-        # already runs at the edge of the T4's memory budget without
-        # this extra, deliberately temporary measurement.
-        del diag_prompt_embeds, diag_negative_prompt_embeds
-        torch.cuda.empty_cache()
+            with torch.no_grad():
+                raw_output = pipeline.text_encoder(input_ids.to(trace_device), mask.to(trace_device)).last_hidden_state
+
+            raw_shape = list(raw_output.shape)
+            raw_min = float(raw_output.float().min().item())
+            raw_max = float(raw_output.float().max().item())
+            raw_abs_mean = float(raw_output.float().abs().mean().item())
+            raw_norm = float(raw_output.float().norm().item())
+            print(f"[wan_inference][trace:{label}] raw_encoder_output.shape = {raw_shape}")
+            print(f"[wan_inference][trace:{label}] raw_encoder_output.dtype = {raw_output.dtype}")
+            print(f"[wan_inference][trace:{label}] raw_encoder_output.min = {raw_min}")
+            print(f"[wan_inference][trace:{label}] raw_encoder_output.max = {raw_max}")
+            print(f"[wan_inference][trace:{label}] raw_encoder_output.abs_mean = {raw_abs_mean}")
+            print(f"[wan_inference][trace:{label}] raw_encoder_output.norm = {raw_norm}")
+
+            seq_lens = mask.gt(0).sum(dim=1).long()
+            zero_pad_condition_triggered = bool(seq_lens[0].item() == 0)
+            print(f"[wan_inference][trace:{label}] seq_lens = {seq_lens.tolist()}")
+            print(f"[wan_inference][trace:{label}] zero_pad_condition_triggered (seq_lens==0) = {zero_pad_condition_triggered}")
+
+            # Reproduces _get_t5_prompt_embeds's own final slicing/
+            # zero-padding step exactly, to see the same final tensor
+            # the real pipeline call would produce.
+            final_output = raw_output.to(dtype=trace_dtype, device=trace_device)
+            sliced = [u[:v] for u, v in zip(final_output, seq_lens)]
+            final_embeds = torch.stack(
+                [torch.cat([u, u.new_zeros(trace_max_sequence_length - u.size(0), u.size(1))]) for u in sliced], dim=0
+            )
+            final_min = float(final_embeds.float().min().item())
+            final_max = float(final_embeds.float().max().item())
+            final_abs_mean = float(final_embeds.float().abs().mean().item())
+            final_norm = float(final_embeds.float().norm().item())
+            print(f"[wan_inference][trace:{label}] final_embeds (post slice+zero-pad).min = {final_min}")
+            print(f"[wan_inference][trace:{label}] final_embeds (post slice+zero-pad).max = {final_max}")
+            print(f"[wan_inference][trace:{label}] final_embeds (post slice+zero-pad).abs_mean = {final_abs_mean}")
+            print(f"[wan_inference][trace:{label}] final_embeds (post slice+zero-pad).norm = {final_norm}")
+
+            del raw_output, final_output, sliced, final_embeds
+            torch.cuda.empty_cache()
+
+            return {
+                f"trace_{label}_raw_prompt": raw_prompt,
+                f"trace_{label}_cleaned_prompt": cleaned_prompt,
+                f"trace_{label}_input_ids_shape": list(input_ids.shape),
+                f"trace_{label}_input_ids_first20": input_ids[0, :20].tolist(),
+                f"trace_{label}_pad_token_id": pad_token_id,
+                f"trace_{label}_non_pad_token_count": non_pad_token_count,
+                f"trace_{label}_attention_mask_shape": list(mask.shape),
+                f"trace_{label}_attention_mask_sum": int(mask.sum().item()),
+                f"trace_{label}_attention_mask_unique": mask.unique().tolist(),
+                f"trace_{label}_raw_encoder_output_shape": raw_shape,
+                f"trace_{label}_raw_encoder_output_min": raw_min,
+                f"trace_{label}_raw_encoder_output_max": raw_max,
+                f"trace_{label}_raw_encoder_output_abs_mean": raw_abs_mean,
+                f"trace_{label}_raw_encoder_output_norm": raw_norm,
+                f"trace_{label}_seq_lens": seq_lens.tolist(),
+                f"trace_{label}_zero_pad_condition_triggered": zero_pad_condition_triggered,
+                f"trace_{label}_final_embeds_min": final_min,
+                f"trace_{label}_final_embeds_max": final_max,
+                f"trace_{label}_final_embeds_abs_mean": final_abs_mean,
+                f"trace_{label}_final_embeds_norm": final_norm,
+            }
+
+        direct_embed_diagnostics: dict[str, Any] = {}
+        direct_embed_diagnostics.update(_trace_t5_encoding("prompt", resolved_prompt))
+        if diag_do_cfg:
+            direct_embed_diagnostics.update(_trace_t5_encoding("negative_prompt", resolved_negative_prompt or ""))
     else:
         direct_embed_diagnostics = {}
 
