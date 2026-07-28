@@ -432,10 +432,50 @@ def generate_video(
     # diffusers' own official, non-invasive hook for observing
     # intermediate tensors during generation - not a reimplementation
     # of the pipeline's internals.
-    step_latent_norms: list[float] = []
+    # eval/reports/0011 found step_latent_norms all came back NaN, from
+    # the very first denoising step, at a reduced resolution with
+    # tiling disabled - a real numerical failure, not just a
+    # checkerboard artifact. A single scalar norm-per-step can't say
+    # *where* the corruption first appears. `prompt_embeds`/
+    # `negative_prompt_embeds` (the real text-encoder output, requested
+    # alongside `latents`) are the only other tensors WanPipeline's own
+    # `_callback_tensor_inputs` whitelist allows through this official,
+    # non-invasive callback mechanism (`noise_pred` is not in that
+    # whitelist - confirmed by a real `ValueError` when requesting it
+    # against the actual diffusers class, not assumed) - but checking
+    # them directly answers the "does the text encoder's own output
+    # already look broken before any denoising step runs" question
+    # (eval/reports/0004's still-unconfirmed hypothesis) more precisely
+    # than an empty-prompt trial would.
+    step_diagnostics: list[dict[str, Any]] = []
 
-    def _record_step_latent_norm(_pipe: Any, _step: int, _timestep: Any, callback_kwargs: dict) -> dict:
-        step_latent_norms.append(float(callback_kwargs["latents"].float().norm().item()))
+    def _tensor_report(name: str, tensor: Any) -> dict[str, Any]:
+        if tensor is None:
+            return {}
+        is_nan = bool(torch.isnan(tensor).any().item())
+        is_inf = bool(torch.isinf(tensor).any().item())
+        report: dict[str, Any] = {
+            f"{name}_dtype": str(tensor.dtype),
+            f"{name}_shape": list(tensor.shape),
+            f"{name}_isnan": is_nan,
+            f"{name}_isinf": is_inf,
+        }
+        if not is_nan and not is_inf:
+            report[f"{name}_norm"] = float(tensor.float().norm().item())
+        return report
+
+    def _record_step_diagnostics(pipe: Any, step: int, timestep: Any, callback_kwargs: dict) -> dict:
+        entry: dict[str, Any] = {
+            "step": step,
+            "timestep": float(timestep.item()) if hasattr(timestep, "item") else timestep,
+        }
+        entry.update(_tensor_report("latents", callback_kwargs.get("latents")))
+        entry.update(_tensor_report("prompt_embeds", callback_kwargs.get("prompt_embeds")))
+        entry.update(_tensor_report("negative_prompt_embeds", callback_kwargs.get("negative_prompt_embeds")))
+        sigmas = getattr(pipe.scheduler, "sigmas", None)
+        if sigmas is not None and step < len(sigmas):
+            entry["sigma"] = float(sigmas[step].item())
+        step_diagnostics.append(entry)
         return callback_kwargs
 
     generator = torch.Generator(device="cpu").manual_seed(resolved_seed)
@@ -448,8 +488,8 @@ def generate_video(
         num_inference_steps=num_inference_steps,
         guidance_scale=resolved_guidance_scale,
         generator=generator,
-        callback_on_step_end=_record_step_latent_norm,
-        callback_on_step_end_tensor_inputs=["latents"],
+        callback_on_step_end=_record_step_diagnostics,
+        callback_on_step_end_tensor_inputs=["latents", "prompt_embeds", "negative_prompt_embeds"],
     )
     frames = result.frames[0]
 
@@ -480,16 +520,18 @@ def generate_video(
         "prompt": resolved_prompt,
         "negative_prompt": resolved_negative_prompt,
         "guidance_scale": resolved_guidance_scale,
-        # Added after eval/reports/0006 ruled out fp16 overflow in every
-        # model submodule (VAE, text encoder, transformer all
-        # individually upcast to fp32, all measured zero effect across
-        # 6 consecutive real Kaggle runs) - see the comment above this
-        # function's `pipeline(...)` call. A step-by-step latent norm
-        # that stays essentially flat directly proves the denoising
-        # loop isn't meaningfully updating `latents` regardless of
-        # precision/guidance_scale/prompt, meaning the output is
-        # dominated by the initial random noise instead of real
-        # generation - the next concrete, evidence-based fact this
-        # project needs, not another guess.
-        "step_latent_norms": step_latent_norms,
+        # Added after eval/reports/0011 found step_latent_norms all NaN
+        # from the first denoising step at a reduced resolution with
+        # tiling disabled - replaced by the richer step_diagnostics
+        # above (per-tensor NaN/Inf/dtype/shape/sigma at every step)
+        # to pinpoint exactly which tensor first breaks, instead of
+        # just knowing that something did.
+        "step_diagnostics": step_diagnostics,
+        # Submodule dtypes, logged directly rather than inferred - a
+        # real fp16/fp32 mismatch between any two of these could
+        # explain a NaN on its own (e.g. a fp16 tensor overflowing when
+        # multiplied against an fp32 one, or vice versa).
+        "transformer_dtype": str(pipeline.transformer.dtype) if getattr(pipeline, "transformer", None) is not None else None,
+        "vae_dtype": str(pipeline.vae.dtype) if getattr(pipeline, "vae", None) is not None else None,
+        "text_encoder_dtype": str(pipeline.text_encoder.dtype) if getattr(pipeline, "text_encoder", None) is not None else None,
     }

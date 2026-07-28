@@ -57,11 +57,20 @@ class TestGenerateVideo:
         assert result["mode"] == "smoke_test"
         assert result["requested_resolution"] == "1280x720"
         assert result["actual_resolution"] != "1280x720"  # clamped to smoke scale, documented in the result
-        # Added per eval/reports/0006 - a real per-step latent-norm
-        # trace, one entry per denoising step, used to diagnose whether
-        # `latents` actually changes meaningfully during generation.
-        assert len(result["step_latent_norms"]) == result["num_inference_steps"]
-        assert all(isinstance(v, float) for v in result["step_latent_norms"])
+        # Added per eval/reports/0011 - a real per-step, per-tensor
+        # diagnostic trace (latents/noise_pred dtype, shape, NaN/Inf,
+        # norm, sigma), used to pinpoint exactly where numerical
+        # corruption first appears rather than just that it happened.
+        step_diagnostics = result["step_diagnostics"]
+        assert len(step_diagnostics) == result["num_inference_steps"]
+        for entry in step_diagnostics:
+            assert entry["latents_isnan"] is False
+            assert entry["latents_isinf"] is False
+            assert isinstance(entry["latents_norm"], float)
+            assert entry["prompt_embeds_isnan"] is False
+        assert result["transformer_dtype"] is not None
+        assert result["vae_dtype"] is not None
+        assert result["text_encoder_dtype"] is not None
 
     def test_same_seed_produces_identical_output(self, tmp_path):
         path_a = tmp_path / "a.mp4"
