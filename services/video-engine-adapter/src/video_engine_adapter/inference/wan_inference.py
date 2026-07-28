@@ -490,30 +490,53 @@ def generate_video(
     # tiling setting.
     diag_do_cfg = resolved_guidance_scale > 1.0
     if mode == "real":
-        diag_prompt_embeds, diag_negative_prompt_embeds = pipeline.encode_prompt(
-            prompt=resolved_prompt,
-            negative_prompt=resolved_negative_prompt,
-            do_classifier_free_guidance=diag_do_cfg,
-            num_videos_per_prompt=1,
-        )
+        # Real Kaggle run 30371065702 (this iteration's first attempt)
+        # hit a real CUDA OOM here: "Tried to allocate 1.96 GiB ... 36.81
+        # MiB is free" - confirmed by hand to be this diagnostic call's
+        # own fault, not the real generation's: WanPipeline.__call__ is
+        # decorated `@torch.no_grad()` (confirmed by reading
+        # diffusers.pipelines.wan.pipeline_wan's real source directly),
+        # but this standalone `encode_prompt()` call was not wrapped the
+        # same way - it built a full autograd graph for the T5 encoder's
+        # forward pass, retaining every intermediate activation for a
+        # backward pass that never happens, on top of the already-tight
+        # T4 memory budget. `torch.no_grad()` here matches how the real
+        # pipeline always runs this same call internally - a correctness
+        # fix to this diagnostic call itself, not a change to any real
+        # generation setting (model/scheduler/seed/resolution/dtype/
+        # tiling all remain untouched).
+        with torch.no_grad():
+            diag_prompt_embeds, diag_negative_prompt_embeds = pipeline.encode_prompt(
+                prompt=resolved_prompt,
+                negative_prompt=resolved_negative_prompt,
+                do_classifier_free_guidance=diag_do_cfg,
+                num_videos_per_prompt=1,
+            )
 
-        def _direct_embed_stats(name: str, tensor: Any) -> dict[str, Any]:
-            stats = {
-                f"direct_{name}_shape": list(tensor.shape),
-                f"direct_{name}_dtype": str(tensor.dtype),
-                f"direct_{name}_min": float(tensor.float().min().item()),
-                f"direct_{name}_max": float(tensor.float().max().item()),
-                f"direct_{name}_abs_mean": float(tensor.float().abs().mean().item()),
-                f"direct_{name}_norm": float(tensor.float().norm().item()),
-            }
-            for key, value in stats.items():
-                print(f"[wan_inference][direct] {key} = {value}")
-            return stats
+            def _direct_embed_stats(name: str, tensor: Any) -> dict[str, Any]:
+                stats = {
+                    f"direct_{name}_shape": list(tensor.shape),
+                    f"direct_{name}_dtype": str(tensor.dtype),
+                    f"direct_{name}_min": float(tensor.float().min().item()),
+                    f"direct_{name}_max": float(tensor.float().max().item()),
+                    f"direct_{name}_abs_mean": float(tensor.float().abs().mean().item()),
+                    f"direct_{name}_norm": float(tensor.float().norm().item()),
+                }
+                for key, value in stats.items():
+                    print(f"[wan_inference][direct] {key} = {value}")
+                return stats
 
-        direct_embed_diagnostics: dict[str, Any] = {}
-        direct_embed_diagnostics.update(_direct_embed_stats("prompt_embeds", diag_prompt_embeds))
-        if diag_negative_prompt_embeds is not None:
-            direct_embed_diagnostics.update(_direct_embed_stats("negative_prompt_embeds", diag_negative_prompt_embeds))
+            direct_embed_diagnostics: dict[str, Any] = {}
+            direct_embed_diagnostics.update(_direct_embed_stats("prompt_embeds", diag_prompt_embeds))
+            if diag_negative_prompt_embeds is not None:
+                direct_embed_diagnostics.update(_direct_embed_stats("negative_prompt_embeds", diag_negative_prompt_embeds))
+        # Freed explicitly (rather than left to Python's own GC timing)
+        # so this diagnostic call's memory is reliably reclaimed before
+        # the real generation call below runs - the real generation
+        # already runs at the edge of the T4's memory budget without
+        # this extra, deliberately temporary measurement.
+        del diag_prompt_embeds, diag_negative_prompt_embeds
+        torch.cuda.empty_cache()
     else:
         direct_embed_diagnostics = {}
 
