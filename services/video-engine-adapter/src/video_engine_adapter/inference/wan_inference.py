@@ -232,6 +232,27 @@ def build_real_pipeline(model_id: str, *, device: str = "cuda") -> Any:
         # not a quality choice).
         pipeline_dtype = torch.float16
     pipeline = WanPipeline.from_pretrained(model_id, torch_dtype=pipeline_dtype)
+    if pipeline_dtype == torch.float16:
+        # Confirmed by hand on a real Kaggle GPU run (30303715804): the
+        # kernel completed and wrote a real video.mp4 with no crash, but
+        # every frame decoded to near-flat, muddy, low-contrast noise
+        # (checked by hand: RGB channel means ~90/85/78, std ~10-14,
+        # pixel range compressed to roughly 34-130 out of 0-255) instead
+        # of the requested scene - not a crash, a silent numerical
+        # failure. This is the well-documented diffusers/Stable-Diffusion
+        # failure mode where decoding the VAE in fp16 overflows its
+        # narrow exponent range inside GroupNorm/attention layers,
+        # producing garbage pixels; bf16 has fp32's exponent range and
+        # does not have this problem, but bf16 itself isn't supported on
+        # this GPU (see the fp16 fallback above). WanPipeline's own
+        # decode step (`latents.to(self.vae.dtype)` in
+        # WanPipeline.__call__) already casts whatever dtype the VAE
+        # module is in, so upcasting only the VAE submodule to fp32
+        # keeps the transformer/text-encoder in fp16 (preserving the
+        # memory savings above) while decoding numerically correctly -
+        # the same "upcast just the VAE" pattern diffusers' own SDXL
+        # pipeline uses.
+        pipeline.vae = pipeline.vae.to(torch.float32)
     if resolved_device == "cuda":
         # A full bf16 Wan2.2-TI2V-5B pipeline (transformer + text encoder +
         # VAE) left resident on GPU via a plain .to("cuda") consumes ~15.6GB
