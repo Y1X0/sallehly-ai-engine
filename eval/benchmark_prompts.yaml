@@ -1,0 +1,175 @@
+# Benchmark prompt suite for the ongoing Kaggle-only quality-improvement
+# loop (see eval/REPORT_TEMPLATE.md and eval/reports/). Every category
+# the mission asked for gets at least one real prompt, a real negative
+# prompt (this engine's own established convention -
+# video_engine_adapter.adapters.wan21_adapter._DEFAULT_GUIDANCE_SCALE's
+# neighboring negative-prompt words already exercised by
+# wan_inference._TINY_VOCAB_WORDS), and a plain-language expected
+# behavior a human (or a future automated critic) can judge the real
+# output against.
+#
+# This file feeds infra/kaggle/dispatch_inference.py --prompt (one at a
+# time, manually, since each real Kaggle GPU run costs ~15-25 real
+# minutes of free quota) and eval/quality_metrics.py inspects the
+# result. Do not add mocked/simulated entries - every row here must be
+# run for real before its pass/fail is filled in.
+
+negative_prompt_default: >-
+  blurry, low quality, distorted, extra limbs, bad anatomy, deformed
+  hands, deformed face, watermark, text, static, flickering,
+  inconsistent, warped geometry
+
+categories:
+  - id: cars
+    prompt: "A red sports car driving fast down a coastal highway at sunset, cinematic"
+    expected_behavior: >-
+      A single recognizable car with correct proportions (4 wheels,
+      intact body panels), consistent color across frames, road and
+      coastline visible in the background, motion blur only on
+      fast-moving parts (wheels/background), not the car's body.
+
+  - id: buildings
+    prompt: "A futuristic glass skyscraper city skyline at dusk, cinematic wide shot"
+    expected_behavior: >-
+      Distinct vertical structures with straight, non-warping edges,
+      consistent skyline silhouette across frames, plausible window/
+      facade detail, no melting or drifting geometry.
+
+  - id: people
+    prompt: "A woman walking through a busy city street, cinematic close-up"
+    expected_behavior: >-
+      One consistent subject with a recognizable, stable face across
+      frames, correct limb count and proportions, no merging with
+      background pedestrians, natural walking motion.
+
+  - id: animals
+    prompt: "A golden retriever running through a field of tall grass, slow motion"
+    expected_behavior: >-
+      A single recognizable dog with correct anatomy (4 legs, one
+      head, one tail), consistent fur color, natural running gait,
+      grass motion reacting plausibly to the animal's movement.
+
+  - id: nature
+    prompt: "A calm forest river with sunlight filtering through the trees, cinematic"
+    expected_behavior: >-
+      Coherent water flow direction, consistent tree/foliage
+      structure across frames, natural light shafts, no flickering
+      texture in the water or leaves.
+
+  - id: food
+    prompt: "A close-up of a chef plating a gourmet dish in a professional kitchen"
+    expected_behavior: >-
+      Recognizable food items keeping their shape/color across
+      frames, plausible hand/utensil interaction, no object
+      deformation or hallucinated extra utensils.
+
+  - id: night_scenes
+    prompt: "A neon-lit city street at night in the rain, cinematic reflections"
+    expected_behavior: >-
+      Correct low-light exposure (not just a dark/flat frame),
+      visible neon color variety, plausible wet-ground reflections,
+      no crushed blacks hiding all detail.
+
+  - id: action_scenes
+    prompt: "Two martial artists sparring in a dojo, dynamic camera angle"
+    expected_behavior: >-
+      Two distinguishable human subjects with correct anatomy
+      throughout fast motion, no limb merging or duplication,
+      background stays spatially consistent despite dynamic motion.
+
+  - id: dialogue
+    prompt: "Two people having a conversation at a cafe table, medium shot, natural lighting"
+    expected_behavior: >-
+      Stable subject identity and facial consistency across frames
+      (this is a static/low-motion scene - flickering here is
+      especially diagnostic), natural framing, no identity swap
+      between the two people.
+
+  - id: cinematic_trailers
+    prompt: "An epic movie trailer shot of a lone hero standing on a cliff at sunrise, dramatic lighting"
+    expected_behavior: >-
+      Strong, deliberate lighting/color grading (not muddy or flat),
+      clear single subject silhouette, dramatic but coherent
+      composition matching typical trailer framing.
+
+  - id: advertisements
+    prompt: "A product shot of a perfume bottle rotating on a reflective surface, studio lighting"
+    expected_behavior: >-
+      Clean, bright studio lighting (not desaturated), consistent
+      product shape/label across frames, smooth rotation without
+      warping the bottle's geometry.
+
+  - id: fashion
+    prompt: "A model walking down a runway in an elegant dress, fashion show lighting"
+    expected_behavior: >-
+      Consistent garment shape/color/texture across frames, correct
+      human anatomy during walking motion, runway lighting readable
+      (not flat/muddy).
+
+  - id: fantasy
+    prompt: "A glowing magical forest with floating lights and an ancient stone archway"
+    expected_behavior: >-
+      Vivid, saturated fantasy color palette (a muddy/desaturated
+      result here is an especially strong regression signal), coherent
+      light-source glow, stable archway geometry.
+
+  - id: scifi
+    prompt: "A spaceship cockpit with holographic control panels, sci-fi lighting"
+    expected_behavior: >-
+      Believable holographic glow/color, consistent cockpit geometry
+      across frames, no flickering panel textures.
+
+  - id: horror
+    prompt: "A dark abandoned hallway with flickering lights, horror atmosphere"
+    expected_behavior: >-
+      Deliberate darkness with readable shapes (not just a flat black/
+      gray frame - this category is easy to confuse with the known
+      garbage-frame failure mode, so verify with eval/quality_metrics.py
+      that low mean brightness still has real stddev/contrast).
+
+  - id: anime
+    prompt: "An anime-style character standing in a cherry blossom garden, vibrant colors"
+    expected_behavior: >-
+      Flat-shaded anime aesthetic maintained consistently (not drifting
+      toward photorealism mid-clip), vibrant saturated colors, stable
+      character design across frames.
+
+  - id: documentary
+    prompt: "A wildlife documentary shot of an eagle soaring over mountains, natural lighting"
+    expected_behavior: >-
+      Naturalistic, desaturated-but-not-muddy color grading, correct
+      bird anatomy during flight, stable mountain background.
+
+  - id: drone_shots
+    prompt: "An aerial drone shot flying over a winding river through a canyon"
+    expected_behavior: >-
+      Consistent camera altitude/motion (no sudden warping of the
+      landscape), coherent river path across frames, wide-angle
+      perspective maintained.
+
+  - id: close_ups
+    prompt: "An extreme close-up of a hand holding a steaming cup of coffee"
+    expected_behavior: >-
+      Correct hand anatomy (5 fingers, no fusion/extra digits - close-
+      ups make hand deformation especially visible), steam motion
+      plausible, cup shape stable.
+
+  - id: fast_motion
+    prompt: "A high-speed motorcycle chase through city streets, fast motion, motion blur"
+    expected_behavior: >-
+      Directional motion blur consistent with the described speed, no
+      loss of subject identity between frames, background streaks
+      matching camera-relative motion.
+
+  - id: slow_motion
+    prompt: "A droplet of water hitting a still pond surface, extreme slow motion"
+    expected_behavior: >-
+      Fine-grained, smooth inter-frame motion (slow motion is the
+      hardest test of temporal coherence at only 17 frames/~1s - expect
+      this category to need a frame-count/fps improvement before it can
+      pass), physically plausible ripple formation.
+
+# Filled in per real Kaggle run - see eval/REPORT_TEMPLATE.md for the
+# full per-run report this summarizes. Never mark `pass` without a real
+# run's evidence (video artifact + eval/quality_metrics.py output).
+results: []
