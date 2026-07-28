@@ -69,6 +69,14 @@ on:
         description: "Generation seed - eval/reports/0007 found seed=0 (the old default) produces degenerate output for this model/scheduler, independent of every precision/guidance fix tried; 42 is confirmed working"
         required: true
         default: "42"
+      width:
+        description: "Frame width - eval/reports/0010 found the VAE-decode OOM (13.45 GiB) is identical regardless of num_frames, pointing at resolution instead; lower this to test that"
+        required: true
+        default: "960"
+      height:
+        description: "Frame height - see width's note"
+        required: true
+        default: "544"
 
 concurrency:
   group: kaggle-free-inference
@@ -140,6 +148,8 @@ jobs:
             --num-frames "${{ github.event.inputs.num_frames }}" \
             --sampling-steps "${{ github.event.inputs.sampling_steps }}" \
             --seed "${{ github.event.inputs.seed }}" \
+            --width "${{ github.event.inputs.width }}" \
+            --height "${{ github.event.inputs.height }}" \
             --git-ref "${{ github.ref_name }}" \
             --kernel-slug "wan-inference-${{ github.run_id }}")
           echo "$OUTPUT"
