@@ -65,6 +65,10 @@ on:
         description: "Denoising steps (kept low for the first trial run - this engine's real default is ~40)"
         required: true
         default: "20"
+      seed:
+        description: "Generation seed - every prior real run used the default (0); eval/reports/0006 needs a genuinely different value to test whether the pipeline is sensitive to any input variation at all"
+        required: true
+        default: "0"
 
 concurrency:
   group: kaggle-free-inference
@@ -135,6 +139,7 @@ jobs:
             --prompt "${{ github.event.inputs.prompt }}" \
             --num-frames "${{ github.event.inputs.num_frames }}" \
             --sampling-steps "${{ github.event.inputs.sampling_steps }}" \
+            --seed "${{ github.event.inputs.seed }}" \
             --git-ref "${{ github.ref_name }}" \
             --kernel-slug "wan-inference-${{ github.run_id }}")
           echo "$OUTPUT"

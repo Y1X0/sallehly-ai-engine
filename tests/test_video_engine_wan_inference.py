@@ -57,6 +57,11 @@ class TestGenerateVideo:
         assert result["mode"] == "smoke_test"
         assert result["requested_resolution"] == "1280x720"
         assert result["actual_resolution"] != "1280x720"  # clamped to smoke scale, documented in the result
+        # Added per eval/reports/0006 - a real per-step latent-norm
+        # trace, one entry per denoising step, used to diagnose whether
+        # `latents` actually changes meaningfully during generation.
+        assert len(result["step_latent_norms"]) == result["num_inference_steps"]
+        assert all(isinstance(v, float) for v in result["step_latent_norms"])
 
     def test_same_seed_produces_identical_output(self, tmp_path):
         path_a = tmp_path / "a.mp4"

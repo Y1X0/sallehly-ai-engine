@@ -387,6 +387,27 @@ def generate_video(
     resolved_negative_prompt = job_input.get("negative_prompt")
     resolved_guidance_scale = float(job_input.get("guidance_scale", 1.0))
 
+    # eval/reports/0001-0006 ruled out fp16 overflow in the VAE, text
+    # encoder, and transformer (all individually upcast to fp32, all
+    # measured zero effect on 6 consecutive real Kaggle runs - every
+    # one producing a byte-for-byte identical video.mp4) and confirmed
+    # guidance_scale/prompt genuinely reach pipeline() correctly. The
+    # remaining, untested question is whether the denoising loop is
+    # actually updating `latents` at all - if `scheduler.step()`'s
+    # effective per-step update is negligible, the final decoded video
+    # would be dominated almost entirely by the initial random noise
+    # (always the same for seed=0, used in every prior iteration),
+    # which would explain byte-identical output regardless of
+    # precision, guidance_scale, or prompt. `callback_on_step_end` is
+    # diffusers' own official, non-invasive hook for observing
+    # intermediate tensors during generation - not a reimplementation
+    # of the pipeline's internals.
+    step_latent_norms: list[float] = []
+
+    def _record_step_latent_norm(_pipe: Any, _step: int, _timestep: Any, callback_kwargs: dict) -> dict:
+        step_latent_norms.append(float(callback_kwargs["latents"].float().norm().item()))
+        return callback_kwargs
+
     generator = torch.Generator(device="cpu").manual_seed(resolved_seed)
     result = pipeline(
         prompt=resolved_prompt,
@@ -397,6 +418,8 @@ def generate_video(
         num_inference_steps=num_inference_steps,
         guidance_scale=resolved_guidance_scale,
         generator=generator,
+        callback_on_step_end=_record_step_latent_norm,
+        callback_on_step_end_tensor_inputs=["latents"],
     )
     frames = result.frames[0]
 
@@ -427,4 +450,16 @@ def generate_video(
         "prompt": resolved_prompt,
         "negative_prompt": resolved_negative_prompt,
         "guidance_scale": resolved_guidance_scale,
+        # Added after eval/reports/0006 ruled out fp16 overflow in every
+        # model submodule (VAE, text encoder, transformer all
+        # individually upcast to fp32, all measured zero effect across
+        # 6 consecutive real Kaggle runs) - see the comment above this
+        # function's `pipeline(...)` call. A step-by-step latent norm
+        # that stays essentially flat directly proves the denoising
+        # loop isn't meaningfully updating `latents` regardless of
+        # precision/guidance_scale/prompt, meaning the output is
+        # dominated by the initial random noise instead of real
+        # generation - the next concrete, evidence-based fact this
+        # project needs, not another guess.
+        "step_latent_norms": step_latent_norms,
     }
