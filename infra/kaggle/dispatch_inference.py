@@ -94,7 +94,21 @@ _DEFAULT_HEIGHT = 544
 _DEFAULT_NUM_FRAMES = 17
 _DEFAULT_FPS = 16
 _DEFAULT_SAMPLING_STEPS = 20
-_DEFAULT_GUIDANCE_SCALE = 1.0
+# Confirmed by hand on real Kaggle GPU runs (30303715804, 30316220351):
+# guidance_scale=1.0 (this constant's old value) produced a real,
+# crash-free video.mp4 whose every frame decoded to near-flat, muddy,
+# desaturated noise (checked by hand: RGB channel means ~90/85/78, std
+# ~10-14, pixel range compressed to ~34-130 of 0-255) - not a VAE
+# precision bug (upcasting the VAE to fp32 between those two runs made
+# no visible difference), but the classic symptom of running a
+# non-distilled diffusion model with classifier-free guidance nearly
+# disabled (guidance_scale must be > 1.0 for CFG to apply any real
+# pull toward the prompt). This engine's own tested default for the
+# Wan model family is 6.0 - see
+# video_engine_adapter.adapters.wan21_adapter._DEFAULT_GUIDANCE_SCALE
+# and docs/adapters/wan21-adapter-spec.md - this script had drifted
+# from it with no justifying comment.
+_DEFAULT_GUIDANCE_SCALE = 6.0
 
 
 def build_parser() -> argparse.ArgumentParser:
