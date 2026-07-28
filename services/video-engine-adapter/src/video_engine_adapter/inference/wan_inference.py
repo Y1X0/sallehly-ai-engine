@@ -468,6 +468,55 @@ def generate_video(
     resolved_negative_prompt = job_input.get("negative_prompt")
     resolved_guidance_scale = float(job_input.get("guidance_scale", 1.0))
 
+    # eval/reports/0015: callback_on_step_end reported prompt_embeds/
+    # negative_prompt_embeds with an exact 0.0 norm in every one of 4
+    # real Kaggle runs (3 different prompts + a control re-run of
+    # iteration 0013's own prompt, which had a real 41.77 norm in 0013
+    # itself) - proving the zero result isn't prompt-dependent, but
+    # leaving open whether it's a real text-encoding bug or an artifact
+    # of reading these specific tensors through the callback while
+    # enable_sequential_cpu_offload() is active (its device-transfer
+    # hooks could plausibly race the callback's read of the same
+    # tensor). This calls WanPipeline's own real `encode_prompt()`
+    # directly, once, before the denoising loop and its callback exist
+    # at all - the exact same method `pipeline.__call__` itself invokes
+    # internally (confirmed by reading diffusers 0.37.1's real source:
+    # `prompt_embeds, negative_prompt_embeds = self.encode_prompt(...)`)
+    # - to get an independent, non-callback reading of the same
+    # encoder output. Deliberately not wired into the actual generation
+    # call below (that still runs its own separate, real encode_prompt
+    # call exactly as it always has) - this is a read-only, additional
+    # measurement changing no model/scheduler/seed/resolution/dtype/
+    # tiling setting.
+    diag_do_cfg = resolved_guidance_scale > 1.0
+    if mode == "real":
+        diag_prompt_embeds, diag_negative_prompt_embeds = pipeline.encode_prompt(
+            prompt=resolved_prompt,
+            negative_prompt=resolved_negative_prompt,
+            do_classifier_free_guidance=diag_do_cfg,
+            num_videos_per_prompt=1,
+        )
+
+        def _direct_embed_stats(name: str, tensor: Any) -> dict[str, Any]:
+            stats = {
+                f"direct_{name}_shape": list(tensor.shape),
+                f"direct_{name}_dtype": str(tensor.dtype),
+                f"direct_{name}_min": float(tensor.float().min().item()),
+                f"direct_{name}_max": float(tensor.float().max().item()),
+                f"direct_{name}_abs_mean": float(tensor.float().abs().mean().item()),
+                f"direct_{name}_norm": float(tensor.float().norm().item()),
+            }
+            for key, value in stats.items():
+                print(f"[wan_inference][direct] {key} = {value}")
+            return stats
+
+        direct_embed_diagnostics: dict[str, Any] = {}
+        direct_embed_diagnostics.update(_direct_embed_stats("prompt_embeds", diag_prompt_embeds))
+        if diag_negative_prompt_embeds is not None:
+            direct_embed_diagnostics.update(_direct_embed_stats("negative_prompt_embeds", diag_negative_prompt_embeds))
+    else:
+        direct_embed_diagnostics = {}
+
     # eval/reports/0001-0006 ruled out fp16 overflow in the VAE, text
     # encoder, and transformer (all individually upcast to fp32, all
     # measured zero effect on 6 consecutive real Kaggle runs - every
@@ -592,4 +641,12 @@ def generate_video(
         "torch_version": torch_version,
         "diffusers_version": diffusers_version,
         "pipeline_dtype": pipeline_dtype_str,
+        # eval/reports/0015: a direct, non-callback call to
+        # pipeline.encode_prompt() (the same real method __call__ uses
+        # internally) made once before the denoising loop, to check
+        # whether callback_on_step_end's exact-0.0 embedding norm is a
+        # real text-encoding result or an artifact of reading these
+        # tensors through the callback while enable_sequential_cpu_offload
+        # is active.
+        **direct_embed_diagnostics,
     }
