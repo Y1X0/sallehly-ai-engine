@@ -277,6 +277,28 @@ def build_real_pipeline(model_id: str, *, device: str = "cuda") -> Any:
         # pass runs at, not memory footprint downstream - same pattern
         # as the VAE fix above.
         pipeline.text_encoder = pipeline.text_encoder.to(torch.float32)
+        # eval/reports/0005: upcasting text_encoder also measured as
+        # having zero effect on real Kaggle output (5th consecutive
+        # byte-identical result, run 30333553288) - ruling it out the
+        # same way the VAE was ruled out in 0002. VAE and text_encoder
+        # are now both confirmed not to be the cause; `transformer`
+        # (`WanTransformer3DModel`, 5B params) is the only fp16
+        # submodule left untested, and by far the largest/most central
+        # to the model's actual computation - if its own fp16 forward
+        # pass overflows, that would explain every prior observation at
+        # once (degenerate output regardless of VAE/text-encoder
+        # precision, and CFG being a no-op regardless of guidance_scale,
+        # since a saturated transformer output would swamp out whatever
+        # conditioning it's given). This does carry real OOM risk (fp32
+        # roughly doubles the transformer's ~10GB fp16 weight footprint
+        # plus per-step activation memory, on a T4 that already needed
+        # sequential offload + VAE tiling to fit) - an OOM here would
+        # itself be diagnostic, not a wasted run, since it would
+        # confirm the transformer is where memory/numerical pressure
+        # concentrates.
+        pipeline.transformer = pipeline.transformer.to(torch.float32)
+        if pipeline.transformer_2 is not None:
+            pipeline.transformer_2 = pipeline.transformer_2.to(torch.float32)
     if resolved_device == "cuda":
         # A full bf16 Wan2.2-TI2V-5B pipeline (transformer + text encoder +
         # VAE) left resident on GPU via a plain .to("cuda") consumes ~15.6GB
