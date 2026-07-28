@@ -365,7 +365,32 @@ def build_real_pipeline(model_id: str, *, device: str = "cuda") -> Any:
         # tiling itself is what prevents the NaN (not just a memory
         # convenience) rather than assuming it from the OOM-blocked
         # non-tiled attempts in 0008-0010.
-        pipeline.vae.enable_tiling()
+        #
+        # eval/reports/0012: confirmed by a clean, single-variable A/B
+        # test - tiling ON produced all-finite step_latent_norms at the
+        # *same* 480x272/9-frame config that produced all-NaN with
+        # tiling off. But visual inspection of the real video showed a
+        # different real artifact: regular vertical blue banding, not
+        # random noise, not the earlier checkerboard - consistent with
+        # AutoencoderKLWan.tiled_decode()'s own tile-blending seams
+        # (default tile_sample_min_width=256 against our 480px-wide
+        # frame produces exactly ~2 overlapping tiles with visible
+        # blend boundaries, confirmed by reading tiled_decode()'s real
+        # source: `for j in range(0, width, tile_latent_stride_width)`).
+        # Setting tile_sample_min_height/width (and matching strides)
+        # larger than the actual frame dimensions makes that same loop
+        # produce exactly ONE tile - still going through the "tiled"
+        # code path (whatever in it avoids the NaN), but decoding the
+        # whole frame in one pass with no real splitting or blending,
+        # to test directly whether NaN-avoidance depends on which
+        # function is called (tiled_decode vs decode) or on genuinely
+        # splitting into >=2 tiles.
+        pipeline.vae.enable_tiling(
+            tile_sample_min_height=608,
+            tile_sample_min_width=1024,
+            tile_sample_stride_height=608,
+            tile_sample_stride_width=1024,
+        )
         pipeline.vae.enable_slicing()
         return pipeline
     return pipeline.to(resolved_device)
