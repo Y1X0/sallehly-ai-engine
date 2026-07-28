@@ -253,6 +253,30 @@ def build_real_pipeline(model_id: str, *, device: str = "cuda") -> Any:
         # the same "upcast just the VAE" pattern diffusers' own SDXL
         # pipeline uses.
         pipeline.vae = pipeline.vae.to(torch.float32)
+        # eval/reports/0001-0004 traced the flat/muddy output through 4
+        # real Kaggle runs: the VAE upcast above (0002) and a
+        # guidance_scale 1.0->6.0 fix (0003) both measured as having
+        # zero effect on the output - 0004 confirmed via metadata.json
+        # that guidance_scale=6.0 genuinely reaches pipeline() and
+        # reading the installed diffusers WanPipeline source confirmed
+        # its CFG formula (`noise_uncond + scale*(noise_pred -
+        # noise_uncond)`) is standard/correct. For CFG to be a no-op
+        # despite executing for real (a real, measured +26-38% run
+        # duration each time), the conditional and unconditional
+        # (empty-string) prompt embeddings must be coming out nearly
+        # identical - i.e. numerically degenerate regardless of input
+        # text. `text_encoder` (UMT5EncoderModel, a T5-family model)
+        # was never upcast in any prior fix - only the VAE was - and
+        # T5-family encoders are a separately well-documented case of
+        # fp16 numerical instability, the same overflow failure mode
+        # already found and fixed once for the VAE, just in a
+        # different submodule. `_get_t5_prompt_embeds` already casts
+        # its output down to the transformer's dtype before use
+        # (`prompt_embeds.to(transformer_dtype)` in WanPipeline.__call__),
+        # so this only changes the precision the encoder's own forward
+        # pass runs at, not memory footprint downstream - same pattern
+        # as the VAE fix above.
+        pipeline.text_encoder = pipeline.text_encoder.to(torch.float32)
     if resolved_device == "cuda":
         # A full bf16 Wan2.2-TI2V-5B pipeline (transformer + text encoder +
         # VAE) left resident on GPU via a plain .to("cuda") consumes ~15.6GB
