@@ -335,7 +335,22 @@ def build_real_pipeline(model_id: str, *, device: str = "cuda") -> Any:
         # tiling splits a large decode into smaller spatial tiles, and
         # slicing decodes one frame group at a time, instead of one
         # huge tensor. Neither changes precision, resolution, or output.
-        pipeline.vae.enable_tiling()
+        #
+        # eval/reports/0007-0008: every real Kaggle run since tiling
+        # was enabled here (iterations 0002-0007 - 7 consecutive real
+        # runs, spanning every precision/guidance_scale/seed
+        # combination tried) produced a video whose every frame showed
+        # the same fine, regular checkerboard/basket-weave texture,
+        # confirmed by zooming into individual frames - not random
+        # noise, a well-documented deconvolution/tiling artifact
+        # signature. `enable_slicing()` (splits along the batch/frame
+        # dimension) is kept - it isn't implicated in a *spatial*
+        # checkerboard the way tile blending is. Disabling tiling
+        # carries real OOM risk (this is exactly the option that fixed
+        # the earlier "Tried to allocate 13.45 GiB" failure) - an OOM
+        # here would itself be diagnostic, confirming tiling really is
+        # needed for memory and pointing toward a different mitigation
+        # (e.g. lower resolution/frame count) instead of tiling.
         pipeline.vae.enable_slicing()
         return pipeline
     return pipeline.to(resolved_device)

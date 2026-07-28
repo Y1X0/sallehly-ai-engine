@@ -118,3 +118,23 @@ Pending pixel confirmation from the user's upload:
    statistics for this specific run directly (this report's evidence
    is strong but indirect - byte count and latent norms are proxies,
    not the ground truth `eval/quality_metrics.py` gives).
+
+### 10. Correction (post-pixel-inspection)
+
+The user uploaded the real video. `eval/quality_metrics.py` still
+flagged it as flat (avg_stddev 12.46, improved from 9.21 but still
+under the 20.0 threshold), and direct visual inspection of 5 sampled
+frames confirmed it: **still the same class of contentless, textured
+output as every prior iteration - no sunset, no city, no recognizable
+scene - just a different color cast (warmer/tan vs the earlier
+gray-brown) and a wider pixel range.**
+
+This means §3's conclusion was wrong: `seed=0` was not a uniquely
+degenerate input. Both `seed=0` and `seed=42` produce the same
+fundamental defect - a real, measurable, seed-sensitive change in the
+numbers (byte count, latent norms) is not the same thing as a fix, and
+this report should have said "pending" more forcefully instead of
+"likely fixed" before the visual check came back. See iteration 0008
+for the corrected root-cause hypothesis (a checkerboard/tiling
+artifact, found by zooming into these same frames) and what's actually
+being tested next.
