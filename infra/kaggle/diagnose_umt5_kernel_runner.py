@@ -69,6 +69,18 @@ def main(*, kaggle_input_root: Path = Path("/kaggle/input"), kaggle_working_root
     max_sequence_length = int(request.get("max_sequence_length", _DEFAULT_MAX_SEQUENCE_LENGTH))
     transformers_version_override = request.get("transformers_version")
 
+    import os
+
+    # Must be set before torch creates its CUDA context (i.e. before
+    # `import torch` and before any CUDA call) to take effect. A real
+    # Kaggle run (30408930821) hit "Tried to allocate 1.96 GiB ... 1.92
+    # GiB is free" with "reserved but unallocated" memory present -
+    # exactly the fragmentation condition PyTorch's own OOM message
+    # names this setting as the fix for. Does not change the model,
+    # dtype, or the real computation being tested - only how the CUDA
+    # allocator manages memory blocks.
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
     import torch
 
     if not torch.cuda.is_available():
@@ -123,6 +135,24 @@ def main(*, kaggle_input_root: Path = Path("/kaggle/input"), kaggle_working_root
         model_id, subfolder="text_encoder", torch_dtype=torch.bfloat16, device_map={"": "cuda:0"},
     )
     text_encoder = text_encoder.eval()
+    device_map_used = dict(getattr(text_encoder, "hf_device_map", {}) or {})
+
+    # A second real Kaggle run (30408930821), after the device_map fix
+    # above got past loading, hit a real CUDA OOM inside the forward
+    # pass itself: "Tried to allocate 1.96 GiB ... 1.92 GiB is free" -
+    # a margin of only ~40 MiB, real fragmentation, not a fundamentally
+    # oversized request. `attn_implementation="sdpa"` was tried first
+    # but transformers reports UMT5EncoderModel._supports_sdpa == False
+    # (checked directly), so it is not an option here. gc.collect() +
+    # empty_cache() right before the forward call frees any transient
+    # allocator fragmentation left over from loading; PYTORCH_CUDA_ALLOC_CONF
+    # (set at the very top of main(), before torch's own CUDA context
+    # exists) is the exact env var the real OOM error message itself
+    # named as the fix for "reserved but unallocated" fragmentation.
+    # Neither changes the model, dtype, or the real computation tested.
+    import gc
+
+    gc.collect()
     torch.cuda.empty_cache()
 
     # Mirrors WanPipeline._get_t5_prompt_embeds's own real tokenizer
@@ -144,6 +174,7 @@ def main(*, kaggle_input_root: Path = Path("/kaggle/input"), kaggle_working_root
     with torch.no_grad():
         outputs = text_encoder(input_ids=input_ids, attention_mask=attention_mask)
     last_hidden_state = outputs.last_hidden_state
+    last_hidden_state_float = last_hidden_state.float()
 
     result = {
         "torch_version": torch.__version__,
@@ -152,12 +183,21 @@ def main(*, kaggle_input_root: Path = Path("/kaggle/input"), kaggle_working_root
         "model_id": model_id,
         "prompt": prompt,
         "max_sequence_length": max_sequence_length,
+        # Per the user's explicit request: the exact classes involved,
+        # not just version strings - confirms this really is UMT5EncoderModel/
+        # its real tokenizer, not some fallback/generic class.
+        "tokenizer_class": type(tokenizer).__name__,
+        "text_encoder_class": type(text_encoder).__name__,
+        "device_map_used": {str(k): str(v) for k, v in device_map_used.items()},
+        "text_encoder_dtype": str(next(text_encoder.parameters()).dtype),
         "last_hidden_state_shape": list(last_hidden_state.shape),
         "last_hidden_state_dtype": str(last_hidden_state.dtype),
-        "last_hidden_state_min": float(last_hidden_state.float().min().item()),
-        "last_hidden_state_max": float(last_hidden_state.float().max().item()),
-        "last_hidden_state_mean": float(last_hidden_state.float().mean().item()),
-        "last_hidden_state_norm": float(last_hidden_state.float().norm().item()),
+        "last_hidden_state_min": float(last_hidden_state_float.min().item()),
+        "last_hidden_state_max": float(last_hidden_state_float.max().item()),
+        "last_hidden_state_mean": float(last_hidden_state_float.mean().item()),
+        "last_hidden_state_norm": float(last_hidden_state_float.norm().item()),
+        "last_hidden_state_has_nan": bool(torch.isnan(last_hidden_state_float).any().item()),
+        "last_hidden_state_has_inf": bool(torch.isinf(last_hidden_state_float).any().item()),
     }
 
     output_dir = kaggle_working_root / "output"
