@@ -110,7 +110,11 @@ class TestKaggleKernelRunner:
     def test_install_missing_packages_never_touches_torch(self, tmp_path, monkeypatch):
         # Core of the fix: pip must never be asked to resolve `torch` at
         # all here, since that risks replacing Kaggle's preinstalled
-        # CUDA-enabled build with an unrelated one from PyPI.
+        # CUDA-enabled build with an unrelated one from PyPI. This holds
+        # even for the forced transformers==4.48.0 install (eval/reports/
+        # 0016-0021), which deliberately omits --no-deps so pip can
+        # resolve a compatible tokenizers - transformers has no
+        # dependency on torch, so this still can't touch it.
         module = _load_module()
         calls: list[list[str]] = []
         monkeypatch.setattr(module.subprocess, "run", lambda args, check=True: calls.append(args))
@@ -118,10 +122,17 @@ class TestKaggleKernelRunner:
 
         module._install_missing_packages(tmp_path / "repo")
 
-        assert len(calls) == 2
+        assert len(calls) == 3
         for call in calls:
-            assert "--no-deps" in call
             assert not any("torch" in arg.lower() for arg in call)
+
+        transformers_call = next(c for c in calls if any("transformers==" in arg for arg in c))
+        assert f"transformers=={module._PINNED_TRANSFORMERS_VERSION}" in transformers_call
+        assert "--no-deps" not in transformers_call
+
+        no_deps_calls = [c for c in calls if c is not transformers_call]
+        for call in no_deps_calls:
+            assert "--no-deps" in call
 
     def test_wan22_lora_train_invocation_passes_device_auto(self, tmp_path, monkeypatch):
         # Fix #1's other half: the wrapper must explicitly pass --device

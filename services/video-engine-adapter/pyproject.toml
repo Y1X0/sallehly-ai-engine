@@ -19,7 +19,14 @@ dependencies = [
 real-inference = [
   "torch>=2.3",
   "diffusers>=0.31",
-  "transformers>=4.44",
+  # Exact pin, not >=: eval/reports/0016-0021 traced every real Wan2.2
+  # video since iteration 0001 back to an all-zero UMT5EncoderModel
+  # forward output, then proved via a clean single-variable A/B (0021)
+  # that transformers==5.0.0 is the cause (all-zero) and ==4.48.0 (the
+  # version Wan2.2's own text_encoder/config.json declares) is not
+  # (real, healthy embeddings). Do not loosen this back to a range
+  # without re-running that isolated UMT5 forward-pass test first.
+  "transformers==4.48.0",
   "tokenizers>=0.19",
   "imageio>=2.34",
   "imageio-ffmpeg>=0.5",

@@ -66,9 +66,11 @@ _ENGINE_ID = "wan2.2-ti2v-5b"
 # torch itself: Kaggle's kernel image ships its own CUDA-enabled torch
 # build preinstalled, and this list exists specifically so it is never
 # reinstalled (see _install_missing_packages's docstring below).
+# `transformers` is deliberately NOT in this dict - see
+# _PINNED_TRANSFORMERS_VERSION below, it needs a forced (not
+# missing-only) install.
 _GPU_TRAINING_EXTRA_PACKAGES: dict[str, str] = {
     "diffusers": "diffusers>=0.31",
-    "transformers": "transformers>=4.44",
     "accelerate": "accelerate>=0.33",
     "peft": "peft>=0.12",
     "safetensors": "safetensors>=0.4",
@@ -76,6 +78,20 @@ _GPU_TRAINING_EXTRA_PACKAGES: dict[str, str] = {
     "imageio": "imageio>=2.34",
     "imageio_ffmpeg": "imageio-ffmpeg>=0.5",
 }
+
+# eval/reports/0016-0021 (infra/kaggle/kaggle_inference_kernel_runner.py's
+# real Wan2.2 inference path has the full story): Kaggle's kernel image
+# ships transformers preinstalled at a version (5.0.0) proven, via a
+# clean single-variable A/B, to produce an exact all-zero
+# UMT5EncoderModel forward output for this checkpoint; 4.48.0 (the
+# version Wan2.2's own text_encoder/config.json declares) does not. The
+# "only install if missing" strategy below would never install this
+# version since Kaggle's image already has *a* transformers - forced
+# unconditionally instead, deliberately without --no-deps so pip
+# resolves a compatible tokenizers build itself (transformers has no
+# dependency on torch, so this cannot disturb Kaggle's preinstalled
+# CUDA-enabled torch build).
+_PINNED_TRANSFORMERS_VERSION = "4.48.0"
 
 
 def _run(args: list[str]) -> None:
@@ -123,6 +139,10 @@ def _install_missing_packages(repo_dir: Path) -> None:
         "-e", str(repo_dir / "packages" / "video-engine-sdk"),
         "-e", str(repo_dir / "services" / "training"),
     ])
+
+    # Forced, unconditional, and deliberately not --no-deps - see
+    # _PINNED_TRANSFORMERS_VERSION's own comment above for why.
+    _run([sys.executable, "-m", "pip", "install", "--quiet", f"transformers=={_PINNED_TRANSFORMERS_VERSION}"])
 
     missing = [
         requirement

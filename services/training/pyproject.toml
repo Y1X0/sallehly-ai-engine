@@ -20,7 +20,12 @@ dependencies = [
 gpu-training = [
   "torch>=2.3",
   "diffusers>=0.31",
-  "transformers>=4.44",
+  # Exact pin, not >=: eval/reports/0016-0021 proved transformers==5.0.0
+  # produces an all-zero UMT5EncoderModel forward output for the Wan2.2
+  # checkpoint (video-engine-adapter's real-inference extra has the
+  # full story) while ==4.48.0 does not. Kept in sync with that extra's
+  # pin so a training run never resolves the confirmed-broken version.
+  "transformers==4.48.0",
   "accelerate>=0.33",
   "peft>=0.12",
   "safetensors>=0.4",

@@ -7,8 +7,9 @@ downloads after the kernel finishes).
 This is the inference counterpart to
 services/training/entrypoints/kaggle_kernel_runner.py - same real
 mechanics (verify CUDA, clone this repo at a pinned git ref, install
-only what's missing, never touch Kaggle's preinstalled CUDA-enabled
-torch build), but calls the platform's own, already-real
+only what's missing (except transformers, which is force-pinned - see
+_PINNED_TRANSFORMERS_VERSION below), never touch Kaggle's preinstalled
+CUDA-enabled torch build), but calls the platform's own, already-real
 video_engine_adapter.inference.wan_inference.generate_video() instead
 of a training loop. Nothing here is a new inference implementation -
 it is the exact same function LocalInferenceProvider and
@@ -54,9 +55,11 @@ _REPO_URL = "https://github.com/y1x0/sallehly-ai-engine.git"
 # (imported transitively via video_engine_adapter.compute.RunPodProvider
 # at package-import time, even though this script never uses it) -
 # included here so `--no-deps` installs below don't leave it missing.
+# `transformers` is deliberately NOT in this dict - see
+# _PINNED_TRANSFORMERS_VERSION below, it needs a forced (not
+# missing-only) install.
 _MISSING_OK_PACKAGES: dict[str, str] = {
     "diffusers": "diffusers>=0.31",
-    "transformers": "transformers>=4.44",
     "tokenizers": "tokenizers>=0.19",
     "imageio": "imageio>=2.34",
     "imageio_ffmpeg": "imageio-ffmpeg>=0.5",
@@ -67,6 +70,26 @@ _MISSING_OK_PACKAGES: dict[str, str] = {
     # room for generation on a 16GB card.
     "accelerate": "accelerate>=0.30",
 }
+
+# eval/reports/0016-0021: every real Wan2.2 video since iteration 0001
+# had all-zero text conditioning (flat/muddy output, unresponsive to
+# prompt). Root-caused via a clean single-variable A/B (0021) to
+# Kaggle's preinstalled `transformers` version, 5.0.0, producing an
+# exact all-zero `UMT5EncoderModel` forward output for this checkpoint;
+# `transformers==4.48.0` (the version Wan2.2's own
+# text_encoder/config.json declares) produces real, healthy embeddings
+# from the identical checkpoint/tokenizer/forward pass. Because Kaggle's
+# base image ships transformers preinstalled, the "only install if
+# missing" strategy `_MISSING_OK_PACKAGES` uses below NEVER installed
+# this version - every past run silently used whatever Kaggle's image
+# happened to have. This is force-installed unconditionally instead,
+# deliberately WITHOUT --no-deps so pip resolves a compatible
+# `tokenizers` build itself (transformers has no dependency on `torch`,
+# so this cannot disturb Kaggle's preinstalled CUDA-enabled torch build
+# - confirmed by eval/reports/0021's own isolated test, which pinned
+# this exact version the same way and still reported Kaggle's
+# unmodified torch build).
+_PINNED_TRANSFORMERS_VERSION = "4.48.0"
 
 
 def _run(args: list[str]) -> None:
@@ -93,6 +116,9 @@ def _install_missing_packages(repo_dir: Path) -> None:
         "-e", str(repo_dir / "packages" / "config-sdk"),
         "-e", str(repo_dir / "services" / "video-engine-adapter"),
     ])
+    # Forced, unconditional, and deliberately not --no-deps - see
+    # _PINNED_TRANSFORMERS_VERSION's own comment above for why.
+    _run([sys.executable, "-m", "pip", "install", "--quiet", f"transformers=={_PINNED_TRANSFORMERS_VERSION}"])
     missing = [
         requirement
         for module_name, requirement in _MISSING_OK_PACKAGES.items()
