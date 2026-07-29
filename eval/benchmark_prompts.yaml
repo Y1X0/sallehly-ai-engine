@@ -169,6 +169,79 @@ categories:
       this category to need a frame-count/fps improvement before it can
       pass), physically plausible ripple formation.
 
+  - id: mountains
+    prompt: "A snowy mountain landscape at sunrise, realistic documentary style"
+    expected_behavior: >-
+      Recognizable jagged peak silhouettes with consistent snow
+      coverage across frames, a real photographic/documentary color
+      grading (eval/reports/0022 found this style prompt drifted
+      toward an abstract/painterly result at the golden-baseline
+      settings - the weakest-scoring category so far), stable ridge
+      geometry, no melting or warping terrain.
+
+  - id: indoor
+    prompt: "A cozy living room with a fireplace and warm lamplight, static camera"
+    expected_behavior: >-
+      Stable interior geometry (walls/furniture do not drift or warp
+      across frames - a static-camera indoor scene is a strong
+      diagnostic for geometric consistency, similar to dialogue),
+      warm, plausible lamp/firelight color temperature, no flat/muddy
+      collapse in the dim-lit areas.
+
+  - id: outdoor
+    prompt: "A wide open meadow under a clear blue sky, gentle breeze, wide shot"
+    expected_behavior: >-
+      Coherent horizon line and sky gradient across frames, grass
+      motion consistent with a gentle breeze (not static, not
+      chaotic), natural daylight color grading.
+
+  - id: rain
+    prompt: "Heavy rain falling on a city street at night, reflections on wet pavement"
+    expected_behavior: >-
+      Visible rain streaks/motion (not just a uniformly dark/flat
+      frame), plausible wet-pavement reflections that track the scene's
+      light sources, real per-frame stddev despite low overall
+      brightness (same flat-frame-vs-deliberate-darkness check as the
+      horror category).
+
+  - id: snow
+    prompt: "Snow falling gently over a quiet pine forest, soft winter light"
+    expected_behavior: >-
+      Individually distinguishable falling snowflakes/particles (not a
+      uniform white haze), consistent tree silhouettes across frames,
+      soft, desaturated-but-not-muddy winter color grading.
+
+  - id: fire
+    prompt: "A campfire crackling at night with sparks rising, close-up"
+    expected_behavior: >-
+      Believable flame motion and color (orange/yellow gradient, not a
+      flat orange blob), visible spark particles, warm light cast on
+      any nearby surfaces, no flickering that reads as a rendering
+      artifact rather than real fire motion.
+
+  - id: ocean
+    prompt: "Ocean waves crashing against rocky cliffs, aerial view, golden hour"
+    expected_behavior: >-
+      Coherent wave direction and foam patterns across frames, stable
+      cliff/rock geometry, golden-hour color grading (warm highlights,
+      not muddy), consistent aerial camera altitude.
+
+  - id: city
+    prompt: "A busy downtown city intersection with traffic and pedestrians, wide shot"
+    expected_behavior: >-
+      Multiple distinguishable vehicles/pedestrians without merging
+      into each other, straight non-warping building edges, plausible
+      traffic motion direction, no flat/muddy collapse of the dense
+      scene detail.
+
+  - id: luxury
+    prompt: "A luxury sports car parked in front of a modern glass mansion at sunset, cinematic"
+    expected_behavior: >-
+      Clean, high-contrast "premium" color grading (not muddy/flat -
+      luxury/commercial content is especially sensitive to a washed-out
+      result), recognizable car and building geometry both stable
+      across frames, warm sunset lighting consistent on both subjects.
+
 # Filled in per real Kaggle run - see eval/REPORT_TEMPLATE.md for the
 # full per-run report this summarizes. Never mark `pass` without a real
 # run's evidence (video artifact + eval/quality_metrics.py output).

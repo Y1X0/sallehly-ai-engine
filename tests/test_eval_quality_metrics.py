@@ -39,6 +39,13 @@ def test_solid_color_clip_is_flagged_as_flat(tmp_path: Path) -> None:
         assert frame["stddev_r"] == 0.0
         assert frame["stddev_g"] == 0.0
         assert frame["stddev_b"] == 0.0
+    # A perfectly flat, unmoving, colorless clip is also the real
+    # negative control for the newer sharpness/saturation/frame-delta
+    # metrics - all must read exactly zero, not just "low".
+    assert result["avg_sharpness"] == 0.0
+    assert result["avg_saturation"] == 0.0
+    assert result["avg_frame_delta"] == 0.0
+    assert all(delta == 0.0 for delta in result["frame_deltas"])
 
 
 def test_varied_testsrc_clip_is_not_flagged_as_flat(tmp_path: Path) -> None:
@@ -62,6 +69,14 @@ def test_varied_testsrc_clip_is_not_flagged_as_flat(tmp_path: Path) -> None:
 
     assert result["flat_frame_suspected"] is False
     assert result["avg_stddev"] >= FLAT_FRAME_STDDEV_THRESHOLD
+    # Positive control for the newer metrics: a real, detailed, moving
+    # pattern must score meaningfully above zero on all three, unlike
+    # the flat clip's exact-zero negative control above.
+    assert result["avg_sharpness"] > 0.0
+    assert result["avg_saturation"] > 0.0
+    assert result["avg_frame_delta"] > 0.0
+    assert result["width"] == 64
+    assert result["height"] == 64
 
 
 def test_analyze_video_rejects_a_nonexistent_path(tmp_path: Path) -> None:
