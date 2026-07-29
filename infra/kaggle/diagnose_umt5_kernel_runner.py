@@ -20,10 +20,16 @@ directly from the same real HF Hub checkpoint
 `diffusers`/`WanPipeline`, runs one real forward pass, and reports the
 result - a real, non-mocked test, but small enough (just the ~6.7B
 encoder, no 5B transformer, no VAE, no offload staging) to complete in
-minutes instead of the >1 hour a full `WanPipeline` run takes. No
-video is produced - the only output is `output/metadata.json` (or
-`output/error.json` on a real exception), matching the failure-mode
-convention `kaggle_inference_kernel_runner.py` already uses.
+minutes instead of the >1 hour a full `WanPipeline` run takes. Runs on
+CPU, not GPU: three consecutive real Kaggle GPU runs each hit a
+different real CUDA memory-boundary failure loading/running this
+encoder alone on a T4 (it is right at that GPU's edge of feasibility),
+so this uses Kaggle's much larger, deterministic system RAM instead -
+a loading/device choice, not a change to the model, dtype, or the
+real forward computation being tested. No video is produced - the
+only output is `output/metadata.json` (or `output/error.json` on a
+real exception), matching the failure-mode convention
+`kaggle_inference_kernel_runner.py` already uses.
 
 Optionally accepts a mounted dataset with `request.json` -
 `{"model_id": ..., "prompt": ..., "max_sequence_length": ...,
@@ -69,25 +75,7 @@ def main(*, kaggle_input_root: Path = Path("/kaggle/input"), kaggle_working_root
     max_sequence_length = int(request.get("max_sequence_length", _DEFAULT_MAX_SEQUENCE_LENGTH))
     transformers_version_override = request.get("transformers_version")
 
-    import os
-
-    # Must be set before torch creates its CUDA context (i.e. before
-    # `import torch` and before any CUDA call) to take effect. A real
-    # Kaggle run (30408930821) hit "Tried to allocate 1.96 GiB ... 1.92
-    # GiB is free" with "reserved but unallocated" memory present -
-    # exactly the fragmentation condition PyTorch's own OOM message
-    # names this setting as the fix for. Does not change the model,
-    # dtype, or the real computation being tested - only how the CUDA
-    # allocator manages memory blocks.
-    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-
     import torch
-
-    if not torch.cuda.is_available():
-        raise RuntimeError(
-            "torch.cuda.is_available() is False on this Kaggle kernel - no CUDA GPU is attached. "
-            "Check this kernel's Settings -> Accelerator (must be GPU T4x2 or P100) and re-push."
-        )
 
     if transformers_version_override:
         # Installed *before* transformers is ever imported, so this
@@ -96,15 +84,6 @@ def main(*, kaggle_input_root: Path = Path("/kaggle/input"), kaggle_working_root
         # follow-up question (does a different transformers version
         # change this result?), without needing a second script.
         _run([sys.executable, "-m", "pip", "install", "--quiet", f"transformers=={transformers_version_override}"])
-
-    import importlib.util
-
-    if importlib.util.find_spec("accelerate") is None:
-        # Needed for from_pretrained(..., device_map=...) below - a real
-        # Kaggle run (30408569026) got this far without it being
-        # explicitly checked (diffusers/transformers were already
-        # importable), but device_map support specifically requires it.
-        _run([sys.executable, "-m", "pip", "install", "--quiet", "accelerate>=0.30"])
 
     import diffusers
     import transformers
@@ -118,42 +97,23 @@ def main(*, kaggle_input_root: Path = Path("/kaggle/input"), kaggle_working_root
     print(f"max_sequence_length: {max_sequence_length}")
 
     tokenizer = AutoTokenizer.from_pretrained(model_id, subfolder="tokenizer")
-    # A real Kaggle run (30408569026) hit CUBLAS_STATUS_ALLOC_FAILED
-    # here: text_encoder alone is ~6.73B params (~12.5 GiB in bf16),
-    # already close to the T4's ~14.56 GiB usable capacity (see
-    # eval/reports/0002-era comments in wan_inference.py for that same
-    # real ceiling) - a plain `.to("cuda")` after `from_pretrained`
-    # briefly holds a CPU copy and a GPU copy simultaneously during the
-    # transfer, and that transient spike (not the steady-state forward
-    # pass) is what exhausted the margin cuBLAS needed for its own
-    # workspace. `device_map={"": "cuda:0"}` loads each weight tensor
-    # directly onto the target device as it streams in (accelerate's
-    # low_cpu_mem_usage path), avoiding that double-materialization
-    # entirely - a loading-mechanics fix, not a change to the model,
-    # dtype, or the actual forward computation being tested.
-    text_encoder = UMT5EncoderModel.from_pretrained(
-        model_id, subfolder="text_encoder", torch_dtype=torch.bfloat16, device_map={"": "cuda:0"},
-    )
+    # Three consecutive real Kaggle GPU runs (30408569026, 30408930821,
+    # 30409683202) each hit a different real CUDA memory-boundary
+    # failure loading/running this ~6.73B-param (~12.5 GiB in bf16)
+    # encoder alone on a T4 (~14.56 GiB usable): CUBLAS_STATUS_ALLOC_FAILED
+    # at load, then a ~40 MiB-short OOM inside the forward pass after a
+    # device_map fix, then CUBLAS_STATUS_ALLOC_FAILED at load again even
+    # with an allocator-fragmentation fix applied. That pattern itself is
+    # informative - this encoder alone is right at this GPU's edge of
+    # feasibility, non-deterministically so. Runs entirely on CPU
+    # instead: Kaggle's ~30 GB system RAM has a wide, deterministic
+    # margin over this model's ~13 GB footprint, and this sidesteps the
+    # GPU memory question entirely rather than continuing to chase
+    # allocator tuning - a loading/device fix, not a change to the
+    # model, dtype, or the real forward computation being tested.
+    text_encoder = UMT5EncoderModel.from_pretrained(model_id, subfolder="text_encoder", torch_dtype=torch.bfloat16)
     text_encoder = text_encoder.eval()
-    device_map_used = dict(getattr(text_encoder, "hf_device_map", {}) or {})
-
-    # A second real Kaggle run (30408930821), after the device_map fix
-    # above got past loading, hit a real CUDA OOM inside the forward
-    # pass itself: "Tried to allocate 1.96 GiB ... 1.92 GiB is free" -
-    # a margin of only ~40 MiB, real fragmentation, not a fundamentally
-    # oversized request. `attn_implementation="sdpa"` was tried first
-    # but transformers reports UMT5EncoderModel._supports_sdpa == False
-    # (checked directly), so it is not an option here. gc.collect() +
-    # empty_cache() right before the forward call frees any transient
-    # allocator fragmentation left over from loading; PYTORCH_CUDA_ALLOC_CONF
-    # (set at the very top of main(), before torch's own CUDA context
-    # exists) is the exact env var the real OOM error message itself
-    # named as the fix for "reserved but unallocated" fragmentation.
-    # Neither changes the model, dtype, or the real computation tested.
-    import gc
-
-    gc.collect()
-    torch.cuda.empty_cache()
+    device_map_used = {"": "cpu"}
 
     # Mirrors WanPipeline._get_t5_prompt_embeds's own real tokenizer
     # call exactly (confirmed by reading diffusers 0.37.1's source in
@@ -168,8 +128,8 @@ def main(*, kaggle_input_root: Path = Path("/kaggle/input"), kaggle_working_root
         return_attention_mask=True,
         return_tensors="pt",
     )
-    input_ids = text_inputs.input_ids.to("cuda")
-    attention_mask = text_inputs.attention_mask.to("cuda")
+    input_ids = text_inputs.input_ids
+    attention_mask = text_inputs.attention_mask
 
     with torch.no_grad():
         outputs = text_encoder(input_ids=input_ids, attention_mask=attention_mask)

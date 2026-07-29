@@ -129,7 +129,12 @@ def main(argv: list[str] | None = None) -> int:
         title=kernel_slug,
         code_file=_KERNEL_RUNNER_FILENAME,
         dataset_sources=(dataset_ref,),
-        machine_shape="NvidiaTeslaT4",
+        # diagnose_umt5_kernel_runner.py runs on CPU only (three
+        # consecutive real GPU runs each hit a different CUDA
+        # memory-boundary failure loading this encoder alone on a T4 -
+        # see that script's own module docstring) - no GPU is requested,
+        # so this doesn't consume any of the account's free GPU quota.
+        enable_gpu=False,
     )
     print(f"Pushing kernel {kernel_ref.full_ref!r} ...")
     client.push_kernel(runner_dir, push_config)
