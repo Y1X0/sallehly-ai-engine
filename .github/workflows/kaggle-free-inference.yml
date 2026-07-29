@@ -192,8 +192,14 @@ jobs:
       # the one place that can both reach it and see the file. `|| true`:
       # a flat/muddy verdict is diagnostic output to record, not a reason
       # to fail this job and lose the video artifact.
+      - name: Install ffmpeg (not preinstalled on this runner image)
+        if: always()
+        continue-on-error: true
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
       - name: Run real per-frame quality metrics on the generated video
         if: always()
+        continue-on-error: true
         run: |
           if [ -f ./kaggle-inference-output/output/video.mp4 ]; then
             uv run python eval/quality_metrics.py ./kaggle-inference-output/output/video.mp4 || true
@@ -209,13 +215,18 @@ jobs:
       # to actually see a real frame rather than just its statistics.
       - name: Extract a visual-inspection thumbnail into this job's own log
         if: always()
+        continue-on-error: true
         run: |
           if [ -f ./kaggle-inference-output/output/video.mp4 ]; then
-            ffmpeg -y -hide_banner -loglevel error -ss 00:00:00.2 -i ./kaggle-inference-output/output/video.mp4 -vframes 1 -vf scale=320:-1 /tmp/thumb.jpg
-            echo "===THUMBNAIL_JPEG_BASE64_START==="
-            base64 -w0 /tmp/thumb.jpg
-            echo ""
-            echo "===THUMBNAIL_JPEG_BASE64_END==="
+            ffmpeg -y -hide_banner -loglevel error -ss 00:00:00.2 -i ./kaggle-inference-output/output/video.mp4 -vframes 1 -vf scale=320:-1 /tmp/thumb.jpg || true
+            if [ -f /tmp/thumb.jpg ]; then
+              echo "===THUMBNAIL_JPEG_BASE64_START==="
+              base64 -w0 /tmp/thumb.jpg
+              echo ""
+              echo "===THUMBNAIL_JPEG_BASE64_END==="
+            else
+              echo "ffmpeg did not produce a thumbnail - see the error above"
+            fi
           else
             echo "No video.mp4 produced (see error.json above) - skipping thumbnail extraction"
           fi
