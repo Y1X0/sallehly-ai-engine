@@ -77,6 +77,10 @@ on:
         description: "Frame height - see width's note"
         required: true
         default: "544"
+      guidance_scale:
+        description: "Classifier-free guidance scale - dispatch_inference.py's own --guidance-scale flag already existed but was never exposed as a workflow input until the post-eval/reports/0022 CFG sweep needed it"
+        required: true
+        default: "6.0"
       disable_cpu_offload:
         description: "Diagnostic-only (eval/reports/0018): skip enable_sequential_cpu_offload() for this one run to isolate whether it's implicated in the all-zero text encoder output - never enable for a normal run, real OOM risk is accepted as itself diagnostic"
         required: true
@@ -157,6 +161,7 @@ jobs:
             --seed "${{ github.event.inputs.seed }}" \
             --width "${{ github.event.inputs.width }}" \
             --height "${{ github.event.inputs.height }}" \
+            --guidance-scale "${{ github.event.inputs.guidance_scale }}" \
             --git-ref "${{ github.ref_name }}" \
             --kernel-slug "wan-inference-${{ github.run_id }}" \
             $DISABLE_CPU_OFFLOAD_FLAG)
