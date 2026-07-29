@@ -150,14 +150,18 @@ def main(*, kaggle_input_root: Path = Path("/kaggle/input"), kaggle_working_root
         "text_encoder_class": type(text_encoder).__name__,
         "device_map_used": {str(k): str(v) for k, v in device_map_used.items()},
         "text_encoder_dtype": str(next(text_encoder.parameters()).dtype),
+        "input_ids_shape": list(input_ids.shape),
+        "attention_mask_sum": int(attention_mask.sum().item()),
         "last_hidden_state_shape": list(last_hidden_state.shape),
         "last_hidden_state_dtype": str(last_hidden_state.dtype),
         "last_hidden_state_min": float(last_hidden_state_float.min().item()),
         "last_hidden_state_max": float(last_hidden_state_float.max().item()),
         "last_hidden_state_mean": float(last_hidden_state_float.mean().item()),
+        "last_hidden_state_std": float(last_hidden_state_float.std().item()),
         "last_hidden_state_norm": float(last_hidden_state_float.norm().item()),
         "last_hidden_state_has_nan": bool(torch.isnan(last_hidden_state_float).any().item()),
         "last_hidden_state_has_inf": bool(torch.isinf(last_hidden_state_float).any().item()),
+        "last_hidden_state_nonzero_count": int((last_hidden_state_float != 0).sum().item()),
     }
 
     output_dir = kaggle_working_root / "output"
