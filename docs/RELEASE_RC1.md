@@ -112,6 +112,27 @@ mode actually needs:
 
 See `.env.example` for the complete, commented list.
 
+## Known compatibility requirement
+
+Wan2.2 TI2V-5B requires `transformers==4.48.0`. `transformers==5.0.0` (the
+version Kaggle's kernel image ships by default) produces an exact
+all-zero `UMT5EncoderModel` forward output for this checkpoint - real,
+weights confirmed healthy, but the text encoder's own computation
+silently returns zeros under that version, which produced flat/muddy,
+prompt-independent video in every generation before this was found
+(eval/reports/0016-0021). `transformers==4.48.0` (the version this
+checkpoint's own `text_encoder/config.json` declares) produces real,
+healthy embeddings from the identical checkpoint and forward pass.
+This is pinned as an exact version (not a `>=` range) in both
+`services/video-engine-adapter/pyproject.toml`'s `real-inference` extra
+and `services/training/pyproject.toml`'s `gpu-training` extra, and
+force-installed (not "install if missing") in both Kaggle kernel
+runners, since Kaggle's base image ships a newer version by default -
+see `infra/kaggle/kaggle_inference_kernel_runner.py`'s own
+`_PINNED_TRANSFORMERS_VERSION` for the full rationale. Do not loosen
+this pin without re-running eval/reports/0021's isolated UMT5
+forward-pass test first.
+
 ## Deferred (explicitly out of scope for this release)
 
 - **Real RunPod endpoint / real full-scale Wan2.2 GPU inference** - code
