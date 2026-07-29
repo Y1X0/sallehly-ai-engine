@@ -138,6 +138,77 @@ def _require_torch() -> None:
         raise WanInferenceUnavailableError(_MISSING_DEPS_MESSAGE)
 
 
+# Real prompt-adherence metric (not a pixel-stat proxy like
+# eval/quality_metrics.py's sharpness/saturation/frame_delta): does the
+# generated video's own content actually match the text prompt that
+# produced it? A small, standard, HF Hub-hosted CLIP checkpoint - not a
+# new package, `transformers` is already this extra's own dependency -
+# computes real cosine similarity between the prompt's text embedding
+# and each generated frame's image embedding. Deliberately best-effort:
+# a real video is already written to disk by the time this runs (see
+# generate_video below), so a CLIP load/OOM/network failure must be
+# recorded, not allowed to discard an otherwise-successful generation.
+# Confirmed by hand that this raises a real ProxyError in this
+# sandbox's own network-blocked environment (huggingface.co is not
+# reachable here, same documented limitation as this module's own
+# real-mode Wan2.2 weight download) - generate_video's try/except
+# around this call correctly catches it; real validation of the CLIP
+# download/compute itself happens on the next real Kaggle GPU run,
+# same as the rest of this module's real (non-smoke) code path always has.
+_CLIP_MODEL_ID = "openai/clip-vit-base-patch32"
+
+
+def _compute_clip_similarity(frames: Any, prompt: str, device: str) -> dict[str, Any]:
+    """`frames` is `WanPipeline`'s own raw `result.frames[0]` - per
+    `WanPipeline.__call__`'s default `output_type='np'`, a numpy array
+    of float frames in `[0, 1]`, NOT ready-to-view `[0, 255]` uint8
+    images. `diffusers.utils.export_to_video`'s own source does exactly
+    this same `(frame * 255).astype(np.uint8)` conversion before
+    writing the real video file - repeated here so CLIPProcessor's
+    default `do_rescale=True` (which expects `[0, 255]` input and
+    divides by 255 itself) doesn't silently double-rescale an
+    already-`[0, 1]` frame into a near-black image and a meaningless
+    similarity score."""
+    import gc
+
+    import numpy as np
+    from PIL import Image
+    from transformers import CLIPModel, CLIPProcessor
+
+    pil_frames = [Image.fromarray((np.asarray(frame) * 255).astype(np.uint8)) for frame in frames]
+
+    gc.collect()
+    if device == "cuda":
+        torch.cuda.empty_cache()
+
+    clip_model = CLIPModel.from_pretrained(_CLIP_MODEL_ID).to(device).eval()
+    clip_processor = CLIPProcessor.from_pretrained(_CLIP_MODEL_ID)
+
+    inputs = clip_processor(text=[prompt], images=pil_frames, return_tensors="pt", padding=True)
+    inputs = {key: value.to(device) for key, value in inputs.items()}
+    with torch.no_grad():
+        outputs = clip_model(**inputs)
+
+    image_embeds = outputs.image_embeds / outputs.image_embeds.norm(dim=-1, keepdim=True)
+    text_embeds = outputs.text_embeds / outputs.text_embeds.norm(dim=-1, keepdim=True)
+    # Real cosine similarity in [-1, 1], not CLIP's own temperature-
+    # scaled logit_scale output (logits_per_image) - the raw cosine
+    # value is what's comparable across different prompts/runs.
+    similarities = (image_embeds @ text_embeds.T).squeeze(-1)
+    per_frame = [float(s) for s in similarities.detach().cpu()]
+
+    del clip_model, clip_processor
+    gc.collect()
+    if device == "cuda":
+        torch.cuda.empty_cache()
+
+    return {
+        "clip_model": _CLIP_MODEL_ID,
+        "clip_similarity_per_frame": per_frame,
+        "clip_similarity_mean": round(sum(per_frame) / len(per_frame), 4),
+    }
+
+
 def _resolve_device(device: str) -> str:
     """Same fail-fast, never-silently-CPU convention as
     services/training/entrypoints/wan22_lora_train.py's own
@@ -417,6 +488,7 @@ def generate_video(
     device: str = "cpu",
     seed: int | None = None,
     disable_sequential_cpu_offload: bool = False,
+    compute_clip_similarity: bool = True,
 ) -> dict[str, Any]:
     """Runs one real Wan text-to-video generation from an
     `EngineJobPayload.input` dict (the shape `Wan21Adapter.build_job_payload`
@@ -751,6 +823,19 @@ def generate_video(
     fps = int(job_input.get("fps", 16))
     export_to_video(list(frames), str(output_path), fps=fps)
 
+    # Real prompt-adherence metric (the user's own explicit request: "a
+    # number that says whether the video actually represents the text
+    # you wrote"), computed only after the real video is already
+    # written to disk - a CLIP load/OOM/network failure below must be
+    # recorded, never allowed to discard an otherwise-successful
+    # generation.
+    clip_diagnostics: dict[str, Any] = {}
+    if compute_clip_similarity and mode == "real":
+        try:
+            clip_diagnostics = _compute_clip_similarity(frames, resolved_prompt, resolved_device)
+        except Exception as exc:  # noqa: BLE001 - a CLIP eval failure must not discard a real video
+            clip_diagnostics = {"clip_similarity_error": f"{type(exc).__name__}: {exc}"}
+
     return {
         "mode": mode,
         "note": note,
@@ -815,4 +900,5 @@ def generate_video(
         # enable_sequential_cpu_offload() or the forward computation
         # itself.
         **weight_diagnostics,
+        **clip_diagnostics,
     }

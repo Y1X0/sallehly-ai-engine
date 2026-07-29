@@ -242,6 +242,37 @@ categories:
       result), recognizable car and building geometry both stable
       across frames, warm sunset lighting consistent on both subjects.
 
+# Fixed regression suite: exactly these 10 prompts, never edited once a
+# golden-baseline run exists against them. Every future single-variable
+# change (steps/guidance/resolution/frames/scheduler/etc.) gets
+# compared against its own prior result on this exact list - if a score
+# drops here, the change regressed something, independent of whatever
+# the `categories` list above (broader, exploratory, can grow) says.
+# The first four reuse eval/reports/0022's own exact prompts (real
+# baseline data already exists for them at the golden-baseline config);
+# the rest are new but held fixed from this point on.
+official_benchmark:
+  - id: official_red_sports_car
+    prompt: "A red sports car driving through a futuristic city at night, cinematic lighting"
+  - id: official_modern_house
+    prompt: "A modern white house surrounded by mountains during sunrise, cinematic drone shot"
+  - id: official_snowy_mountain
+    prompt: "A snowy mountain landscape at sunrise, realistic documentary style"
+  - id: official_robot
+    prompt: "A humanoid robot walking in a futuristic city, cinematic movie scene"
+  - id: official_cat
+    prompt: "A fluffy orange cat sitting on a windowsill, sunlight streaming in"
+  - id: official_dog
+    prompt: "A golden retriever playing fetch in a park, sunny day"
+  - id: official_ocean_sunset
+    prompt: "Ocean waves at sunset, golden light reflecting on the water"
+  - id: official_busy_street
+    prompt: "A busy city street with pedestrians and traffic, daytime"
+  - id: official_drone_city
+    prompt: "A drone shot flying over a city skyline at dusk"
+  - id: official_forest_waterfall
+    prompt: "A waterfall cascading through a lush green forest"
+
 # Filled in per real Kaggle run - see eval/REPORT_TEMPLATE.md for the
 # full per-run report this summarizes. Never mark `pass` without a real
 # run's evidence (video artifact + eval/quality_metrics.py output).
