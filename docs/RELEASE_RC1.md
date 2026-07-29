@@ -133,6 +133,18 @@ see `infra/kaggle/kaggle_inference_kernel_runner.py`'s own
 this pin without re-running eval/reports/0021's isolated UMT5
 forward-pass test first.
 
+Separately, `Wan-AI/Wan2.2-TI2V-5B-Diffusers` requires `height`/`width`
+to be exact multiples of 32, not just the 16 that `WanPipeline`'s own
+`check_inputs()` error message names (`16 x patch_size[1]`, where this
+checkpoint's `transformer/config.json` declares `patch_size=[1,2,2]`
+and its `vae/config.json` declares `scale_factor_spatial=16`). Passing
+a resolution divisible by 16 but not 32 does not raise an error - it
+gets silently rounded down (e.g. a requested `272` height silently
+becomes `256`) with only a `logger.warning()`, easy to miss. Confirmed
+by reading `WanPipeline.__call__`'s real source directly and verifying
+the exact arithmetic against real Kaggle runs (eval/reports/0025).
+Always request resolutions that are multiples of 32 for this checkpoint.
+
 ## Deferred (explicitly out of scope for this release)
 
 - **Real RunPod endpoint / real full-scale Wan2.2 GPU inference** - code
