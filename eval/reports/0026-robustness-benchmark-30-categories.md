@@ -128,3 +128,29 @@ The single most consistent, highest-confidence weak cluster across this benchmar
 **If prompt engineering does not close the gap:** a heavier follow-up would be LoRA fine-tuning specifically on architectural/urban scenes with correct window-grid and vanishing-point consistency, which is a real training investment (Kaggle-only, per the project's constraints) and should only be pursued after the cheaper prompt-engineering experiment has been tried and measured against this report's baseline numbers.
 
 This is a recommendation for the user to decide on - no prompt changes or training have been started as part of this report.
+
+## 6. Capability confidence summary (at-a-glance)
+
+A quick-read version of Sections 1-4 for anyone who doesn't want to read the full table. Stars reflect CLIP score *and* the direct visual verdict together, not CLIP alone (see the methodology caveat below).
+
+| Capability | Confidence | Representative categories |
+|---|---|---|
+| Close-framed single subject (animal/object) | ⭐⭐⭐⭐⭐ | animals (0.3513), advertisements (0.3395) |
+| Atmospheric enclosed/single-anchor scenes | ⭐⭐⭐⭐⭐ | horror (0.3403), fantasy (0.3296), scifi (0.304) |
+| Water/fire/motion phenomena | ⭐⭐⭐⭐⭐ | ocean (0.3312), fire (0.3232), fast_motion (0.328), slow_motion (0.3061) |
+| Food/product close-ups (structured subject) | ⭐⭐⭐⭐⭐ | food (0.3115), cars (0.3113) |
+| Portraits / faces | ⭐⭐⭐⭐ | people (0.3002) |
+| Landscapes with one compositional anchor | ⭐⭐⭐⭐ | nature (0.3081), drone_shots (0.2963) |
+| Two-person, low relative motion | ⭐⭐⭐⭐ | dialogue (0.2994) |
+| Non-photorealistic style transfer | ⭐⭐⭐⭐ | anime (0.2951) |
+| Indoor static scenes | ⭐⭐⭐⭐ | indoor (0.3006) |
+| Night/rain street scenes (soft facades) | ⭐⭐⭐ | night_scenes (0.2932), rain (0.2928) |
+| Fashion / single-object staged scenes | ⭐⭐⭐ | fashion (0.2878), luxury (0.2782) |
+| Cinematic/atmospheric trailer shots | ⭐⭐⭐ *(flagged - CLIP disagrees with visuals, see Section 1 row 10)* | cinematic_trailers (0.2722) |
+| Multi-entity interaction / complex relative motion | ⭐⭐ | action_scenes (0.2988) |
+| Repeated geometry + deep perspective (architecture) | ⭐⭐ | buildings (0.2915), city (0.2813) |
+| Diffuse wide vista, no compositional anchor | ⭐⭐ | mountains (0.2564), outdoor (0.2579) |
+| Small/distant subject in complex wide backdrop | ⭐⭐ | documentary (0.2705) |
+| Extreme macro close-up of complex organic texture | ⭐⭐ | close_ups (0.2508) |
+
+**Methodology caveat:** CLIP similarity is the primary quantitative signal in this report, but `cinematic_trailers` (Section 1, row 10) shows it can diverge from direct visual judgment - a legitimate, well-composed atmospheric shot still scored the lowest CLIP of the benchmark. Future reports should treat CLIP as one signal among several (alongside direct visual inspection, and where useful, temporal consistency across frames), not a sufficient metric on its own.
