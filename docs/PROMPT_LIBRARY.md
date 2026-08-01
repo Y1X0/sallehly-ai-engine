@@ -90,4 +90,13 @@ Best anchors (share the building's depth of field): a person looking up at it, a
 These 5 rules are prompt-only and require no changes to the frozen Baseline v1.0
 config. See `eval/reports/0028-phase3b-prompt-library-validation.md` for a
 direct test of whether rewriting failing prompts per this library closes the
-gap against the originals.
+gap against the originals - **validated in 4/5 cases** (average CLIP gain
++0.0353 among the validated cases).
+
+**Important note from validation (the one failed case, `buildings`):** when
+applying Rule 1, fully **replace** any complexity-inducing language from the
+original prompt ("city skyline," "hundreds of," multi-element lighting
+descriptions) rather than adding clean, concrete-subject phrasing on top of
+it. Layering the new wording over the old without dropping the old is not
+enough - the original complexity cues can still pull the model back toward
+the failure mode.
