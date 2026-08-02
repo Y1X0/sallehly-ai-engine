@@ -100,3 +100,26 @@ descriptions) rather than adding clean, concrete-subject phrasing on top of
 it. Layering the new wording over the old without dropping the old is not
 enough - the original complexity cues can still pull the model back toward
 the failure mode.
+
+## Prompt Library v2 - Additional Scenario Templates
+
+Five new templates, each combining multiple rules above, tested against
+**new subject matter** (not rewrites of already-known Phase 1 prompts) to
+check the rules generalize rather than just fixing the exact cases they were
+derived from. Full results and analysis in
+`eval/reports/0029-prompt-library-v2-templates.md`.
+
+| Category | Template | Rules combined | CLIP | Result |
+|---|---|---|---|---|
+| Architecture | "A single isolated glass skyscraper with a person standing in front of it for scale, aerial cinematic shot, clean facade, warm sunset lighting" | Rule 1 + Rule 2 + Rule 4 | **0.374** | **Success - highest CLIP of the entire project** |
+| City | "An ornate clock tower rising above a quiet city square, one dominant structure, cinematic aerial shot" | Rule 1 + Rule 3 + Rule 4 | 0.3056 | Success |
+| Action | "A single martial artist performing a dynamic spinning kick, dramatic motion blur, cinematic dojo lighting, one central figure" | Single-subject dynamic motion | **0.3565** | **Success - 2nd highest CLIP of the entire project** |
+| Landscapes | "A wide valley landscape with a single winding river as the central anchor, golden hour lighting, cinematic wide shot" | Rule 5 | 0.2895 | Partial - visually clean but CLIP just under the 0.2997 benchmark mean |
+| Documentary | "A single lion in close-up mid-roar, one dominant subject in frame, cinematic natural lighting, detailed fur texture" | Rule 1 + close framing | 0.2809 | Partial - lion clearly recognizable but textured; complex organic close-up remains a harder case |
+
+**Takeaway:** combining multiple rules at once (a concrete subject + an
+anchor at the same depth + a favorable camera angle) produced the two
+highest CLIP scores of the entire project (architecture, action) - the rules
+compound rather than compete. The two partial cases (wide landscape, extreme
+close-up on complex fur texture) are consistent with weaknesses already
+documented in `docs/KNOWN_LIMITATIONS.md`, not a flaw specific to v2.
