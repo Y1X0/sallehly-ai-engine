@@ -93,26 +93,53 @@ captioner alone. Every caption must explicitly state the real entity
 count in words ("three dancers," "four players") - the training signal
 this category exists for is the word-to-count mapping itself.
 
-### B. `distant_small_subject` - 150 clips (highest priority)
+### B. `distant_small_subject` v1.1 - 150-200 clips (highest priority)
 
-**Why:** Phase 4 Test C found the model never honored a "distant"/"small
-subject" framing instruction across 3 seeds - the subject rendered
-large/foreground every time regardless of wording. Also documented in
-`docs/KNOWN_LIMITATIONS.md` as a hard ceiling.
+**Why (revised, broader root cause - not just the one example that
+found it):** Phase 4 Test C found the model never honored a
+"distant"/"small subject" framing instruction across 3 seeds. The
+original v1.0 category was scoped too narrowly around that one example
+("a wolf in a distant valley"). The real underlying weakness is
+broader: **the model does not reliably respect subject-scale/framing
+in wide scenes** - the same root cause also explains Phase 1's
+`documentary` (eagle, weak), `outdoor`/`mountains` (weak, diffuse wide
+vistas), and parts of the drone-shot weaknesses. Redefining the
+category around the root cause, not the one triggering example, means
+this dataset addresses the actual failure mode instead of a single
+instance of it. Also documented in `docs/KNOWN_LIMITATIONS.md` as a
+hard ceiling.
 
-**Attribute tags:** `subject_human`, `subject_animal`, `distance_far`,
-`distance_mid`, `backdrop_mountain`, `backdrop_plain`, `backdrop_urban`,
-`day`, `dusk`.
+**Definition:** a wide shot containing a clearly identifiable subject
+occupying a small portion of the frame. Subject type is intentionally
+open - not restricted to animals, and not restricted to the exact
+"wolf in a valley" framing.
 
-**Composition target:** at least 100 of the 150 clips must have the
-main subject occupy a clearly small fraction of the frame (a rough
-guide: subject height under ~15% of frame height) against a wide
-backdrop - matching the exact "wolf in a distant valley" case that failed.
+- **Accepted examples:** a small person walking across a desert; a
+  small boat on open water; a distant car on a road; a small animal in
+  an open field; a climber on a mountainside.
+- **Not accepted:** a landscape/vista with no subject at all; a subject
+  framed close/large with only the background being wide (this is the
+  inverse of what the category targets); a subject too small/blurred
+  to be identifiable at all (that would test something else - image
+  quality at extreme distance, not scale/framing comprehension).
 
-**Captioning:** hand-verified. Every caption must contain explicit
-distance language ("in the distance," "far away," "a small figure
-against...") - same reasoning as category A, the word-to-spatial-scale
-mapping is the point.
+**Attribute tags:** `subject_human`, `subject_animal`, `subject_vehicle`,
+`subject_boat`, `distance_far`, `distance_mid`, `backdrop_mountain`,
+`backdrop_plain`, `backdrop_urban`, `backdrop_water`, `day`, `dusk`.
+
+**Composition target:** 150-200 clips total. Minimum 100+ clips with a
+clearly identifiable small subject; of those, at least 70% should have
+the subject occupying roughly under ~20-25% of frame area (a looser,
+more measurable bar than v1.0's "~15% of frame height," chosen because
+it's easier to eyeball consistently during manual curation across
+different subject types).
+
+**Captioning:** hand-verified, same reasoning as category A - the
+training signal depends on precise language, not just a correct image.
+Every caption must contain explicit scale/distance language: "far
+away," "in the distance," "a small figure," "a tiny boat/car/person" -
+matched to what's actually visible, not templated identically across
+every clip.
 
 ### C. `dense_architecture` - 100 clips
 
@@ -168,41 +195,37 @@ degrade a category the model already handles well.
 adversarial - the point is a stable, high-quality baseline the
 regression check can compare against after every checkpoint.
 
-### Total: 600 clips (150+150+100+100+100) - "Dataset v1"
+### Total: 600-650 clips (150+150-200+100+100+100) - "Dataset v1"
 
-## 4a. Two smaller stages come before Dataset v1 (do these first)
+## 4a. Stage 0 comes before Dataset v1 (do this first)
 
 Per explicit project decision, the 600-clip Dataset v1 is not built
-before the training path itself is proven to work at all. Two smaller,
-cheaper stages come first, each with a narrower question than the
-full dataset's:
+before the training path itself is proven to work at all. **Stage 0**
+is one combined step, 10-20 clips per category (50-100 total), same
+quality bar and tagging taxonomy as Section 4, scaled down:
 
-**Stage 0 - pipeline mechanics check (~10-20 clips, any mix of
-categories).** Question: does `ingest_dataset.py --rights-cleared`
-actually work on real files end to end? Inspect the real output:
-metadata (`ffprobe` fields sane?), captions produced, and confirm the
-train/val/test split is deterministic (re-running ingestion on the
-same clips must produce the identical split - `DatasetManager`'s own
-guarantee, worth confirming once on real data, not just trusting the
-unit tests). No training happens at this stage.
+1. Source and quality-check 10-20 clips per category (50-100 total)
+   from the sources verified in Section 5/6.
+2. Run `ingest_dataset.py --rights-cleared`.
+3. Check metadata (`ffprobe` fields sane?).
+4. Verify captions (do categories A/B's captions actually contain the
+   count/distance language Section 7 requires?).
+5. Confirm the train/val/test split is deterministic (re-running
+   ingestion on the same clips must produce the identical split -
+   `DatasetManager`'s own guarantee, worth confirming once on real
+   data, not just trusting the unit tests).
+6. Run the shortest real LoRA experiment (per
+   `docs/EXECUTION_PLAN_FIRST_GPU_RUN.md`, ~50-100 steps, free-tier
+   GPU), then run a small benchmark comparison via
+   `Wan22EvaluationHook` against the untrained baseline.
 
-**Stage 1 - first training proof (100-500 clips, proportionally
-sampled across all 5 categories from Section 4, same ratios, smaller
-scale).** Question: **does the training path (real weights -> real
-dataset -> real LoRA step -> real checkpoint) actually run, and does
-it measurably change the model's behavior at all, in either
-direction?** Not "is the model better" - just "is it learnable."
-Procedure: source and quality-check the proportional subset, ingest,
-then run the shortest possible real LoRA experiment (per
-`docs/EXECUTION_PLAN_FIRST_GPU_RUN.md`, ~50-500 steps, free-tier GPU)
-and check `Wan22EvaluationHook` output against the untrained baseline
-on at least the category A/B failure cases.
-
-This is the cheapest possible real signal before committing to
-sourcing the full 600. If Stage 1 fails or shows zero behavioral
-change, the problem is diagnosed at 100-500-clip cost, not 600-clip
-cost, and the fix might be training config (steps, LoRA rank), not
-"need more data."
+**The one question this answers:** does the training pipeline (real
+weights -> real dataset -> real LoRA step -> real checkpoint) actually
+run, and does it measurably change Wan2.2's behavior at all, in either
+direction? Not "is the model better yet" - just "is it learnable."
+This is the cheapest possible real signal before sourcing the full 600.
+No new categories, no new analysis phase - this is the step the whole
+project has been building toward.
 
 ## 5. Sources (free, openly-licensed only - multiple, each independently verified)
 
@@ -334,29 +357,27 @@ C/D/E can rely on the heuristic pass alone for Dataset v1.
 
 ## 9. Phase gates (staged, each gated on the previous one's real evidence)
 
-1. **Stage 0 mechanics check (~10-20 clips) -> Stage 1 first training
-   proof (100-500 clips, Section 4a).** Gate: `ingest_dataset.py` runs
-   cleanly end to end on real data (real metadata, real captions, a
-   real deterministic split confirmed by re-running ingestion).
-2. **Stage 1 (100-500 clips) -> Dataset v1 (600 clips, Section 4).**
-   Gate: a ~50-500-step LoRA run on the Stage 1 subset measurably
-   changes the model's behavior at all (any direction) versus the
-   untrained baseline, per `Wan22EvaluationHook`. If nothing changes,
-   diagnose why before sourcing the rest of the 600 - it may be too few
-   steps, too small a LoRA rank, or a real backend issue, not
-   necessarily "need more data."
-3. **Dataset v1 (600 clips) -> Phase 2 (5k-10k).** Gate: the Dataset v1
+1. **Stage 0 (50-100 clips, Section 4a) -> Dataset v1 (600 clips,
+   Section 4).** Gate: `ingest_dataset.py` runs cleanly end to end on
+   real data (real metadata, real captions, a real deterministic split
+   confirmed by re-running ingestion), AND a ~50-100-step LoRA run on
+   the Stage 0 clips measurably changes the model's behavior at all
+   (any direction) versus the untrained baseline, per
+   `Wan22EvaluationHook`. If nothing changes, diagnose why before
+   sourcing the rest of the 600 - it may be too few steps, too small a
+   LoRA rank, or a real backend issue, not necessarily "need more data."
+2. **Dataset v1 (600 clips) -> Phase 2 (5k-10k).** Gate: the Dataset v1
    LoRA shows a real, visually-confirmed improvement - not just a CLIP
    delta - on at least one of categories A or B's exact failure cases
-   (a 3-entity prompt rendering a real 3rd entity; a "distant" prompt
-   actually rendering the subject smaller/farther), checked via
+   (a 3-entity prompt rendering a real 3rd entity; a wide shot actually
+   rendering its subject small/distant), checked via
    `Wan22EvaluationHook` + `RegressionDetector` against the untrained
    baseline, with no regression on category E
    (`animals_regression_guard`).
-4. **Phase 2 -> Phase 3 (50k-100k).** Not designed yet - deliberately
-   out of scope until gate 3 is actually cleared with real evidence.
+3. **Phase 2 -> Phase 3 (50k-100k).** Not designed yet - deliberately
+   out of scope until gate 2 is actually cleared with real evidence.
 
 At every gate, "scale the dataset further" is not the automatic answer
-to a disappointing result - Stages 0/1 in particular exist so a
-pipeline or config problem gets caught at 10-500-clip cost, not
-diagnosed for the first time after 600 clips are already sourced.
+to a disappointing result - Stage 0 in particular exists so a pipeline
+or config problem gets caught at 50-100-clip cost, not diagnosed for
+the first time after 600 clips are already sourced.
