@@ -27,6 +27,8 @@ models/**/*.ckpt
 models/**/*.bin
 *.mp4
 *.mov
+*.mkv
+*.webm
 
 # Local training-automation / training-data artifacts (job records,
 # approvals, usage ledgers, ingested-dataset manifests, downloaded model
@@ -37,6 +39,12 @@ models/**/*.bin
 .training-data/
 .training-runs/
 .models-cache/
+
+# Raw sourced video clips for training datasets (Stage 0/Dataset v1, see
+# docs/DATASET_SPEC.md and dataset/sources/stage0_sources.md) - large
+# binary media, sourced on a machine with real network access, never
+# committed. Only the *.md sourcing docs under dataset/ are tracked.
+dataset/raw/
 
 # OS / editor
 .DS_Store

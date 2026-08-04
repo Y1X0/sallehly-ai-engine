@@ -94,3 +94,47 @@ class TestIngestDataset:
         exit_code = module.main(["--clips-dir", str(empty_dir), "--rights-cleared"])
 
         assert exit_code == 1
+
+    def test_tag_from_subdir_tags_each_clip_with_its_category_folder(self, tmp_path, capsys):
+        module = _load_ingest_module()
+        clips_dir = tmp_path / "clips"
+        (clips_dir / "multi_entity_interaction").mkdir(parents=True)
+        (clips_dir / "animals_regression_guard").mkdir(parents=True)
+        make_color_clip(clips_dir / "multi_entity_interaction" / "clip_0.mp4", "red", duration=1.0, size="854x480", rate=24)
+        make_color_clip(clips_dir / "animals_regression_guard" / "clip_0.mp4", "green", duration=1.0, size="854x480", rate=24)
+
+        exit_code = module.main([
+            "--clips-dir", str(clips_dir), "--rights-cleared", "--tag-from-subdir",
+            "--version-store-dir", str(tmp_path / "versions"),
+        ])
+
+        assert exit_code == 0
+        out = capsys.readouterr().out
+        assert "tags=['multi_entity_interaction']" in out
+        assert "tags=['animals_regression_guard']" in out
+
+    def test_tag_from_subdir_combines_with_explicit_tag(self, tmp_path, capsys):
+        module = _load_ingest_module()
+        clips_dir = tmp_path / "clips"
+        (clips_dir / "dense_architecture").mkdir(parents=True)
+        make_color_clip(clips_dir / "dense_architecture" / "clip_0.mp4", "blue", duration=1.0, size="854x480", rate=24)
+
+        exit_code = module.main([
+            "--clips-dir", str(clips_dir), "--rights-cleared", "--tag-from-subdir",
+            "--tag", "stage0", "--version-store-dir", str(tmp_path / "versions"),
+        ])
+
+        assert exit_code == 0
+        assert "tags=['stage0', 'dense_architecture']" in capsys.readouterr().out
+
+    def test_tag_from_subdir_ignores_clips_directly_under_clips_dir(self, tmp_path, capsys):
+        module = _load_ingest_module()
+        clips_dir = _make_clips_dir(tmp_path, n=1)
+
+        exit_code = module.main([
+            "--clips-dir", str(clips_dir), "--rights-cleared", "--tag-from-subdir",
+            "--version-store-dir", str(tmp_path / "versions"),
+        ])
+
+        assert exit_code == 0
+        assert "tags=" not in capsys.readouterr().out

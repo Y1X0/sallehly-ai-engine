@@ -47,6 +47,14 @@ def build_parser() -> argparse.ArgumentParser:
         "Required - there is no default. Do not pass this unless that is actually true.",
     )
     parser.add_argument("--tag", action="append", default=[], dest="tags", help="Repeatable; applied to every clip")
+    parser.add_argument(
+        "--tag-from-subdir", action="store_true",
+        help="Also tag each clip with its immediate parent directory name relative to --clips-dir "
+        "(e.g. <clips-dir>/multi_entity_interaction/clip1.mp4 gets an extra 'multi_entity_interaction' "
+        "tag). Lets one invocation ingest several category subfolders into a single dataset_version "
+        "with per-clip category tags, instead of running the script once per category. Clips directly "
+        "under --clips-dir (no subfolder) get no extra tag from this flag.",
+    )
     parser.add_argument("--val-fraction", type=float, default=0.1)
     parser.add_argument("--test-fraction", type=float, default=0.1)
     parser.add_argument("--split-seed", type=int, default=0)
@@ -85,8 +93,12 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"Ingesting {len(clip_paths)} clip(s) from {args.clips_dir} ...")
     for path in clip_paths:
-        record = manager.ingest(str(path), tags=list(args.tags), rights_cleared=args.rights_cleared)
-        print(f"  {record.clip_id}  {record.metadata.resolution}@{record.metadata.fps:g}fps  {path.name}")
+        clip_tags = list(args.tags)
+        if args.tag_from_subdir and path.parent.resolve() != args.clips_dir.resolve():
+            clip_tags.append(path.parent.name)
+        record = manager.ingest(str(path), tags=clip_tags, rights_cleared=args.rights_cleared)
+        tag_suffix = f" tags={clip_tags}" if clip_tags else ""
+        print(f"  {record.clip_id}  {record.metadata.resolution}@{record.metadata.fps:g}fps  {path.name}{tag_suffix}")
 
     manager.caption_all()
 
