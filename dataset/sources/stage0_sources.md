@@ -32,7 +32,36 @@ alongside this file) auto-tags every clip with its immediate parent
 folder name, so one ingest run covers all 5 categories with correct
 per-clip tags and one shared, deterministic train/val/test split.
 
-## One command (run on a machine with real network access)
+## Step 1: fetch clips (phone-friendly - a Kaggle notebook cell, no file management)
+
+`dataset/sources/fetch_stage0.py` is written to be pasted into one
+Kaggle notebook cell (or run as `python dataset/sources/fetch_stage0.py`
+in a notebook terminal). It does not need file uploads or a separate
+terminal - browsing and pasting URLs is the only manual step:
+
+1. Browse each category's Wikimedia Commons / NASA pages (table above)
+   in your phone's browser.
+2. For each clip that looks right, copy its normal page URL (the
+   Commons `File:...` page, or the NASA item/details page you're
+   already viewing - not a special "copy video address").
+3. Open `fetch_stage0.py`, paste 10 URLs per category into the
+   `CATEGORY_URLS` dict near the top (the only part you edit).
+4. Run it. It resolves each page URL to the real video file, downloads
+   into `dataset/raw/<category>/` (folders created automatically - no
+   `mkdir` step needed), and prints an `ffprobe` summary per file so
+   you can sanity-check duration/resolution immediately.
+5. Preview a few downloaded files in Kaggle's file browser and confirm
+   each one still meets its category's acceptance criteria above
+   (delete and re-source any that don't - the script fetches and
+   reports, it cannot judge composition for you).
+
+This was written without live network access to Wikimedia/NASA from
+this session (see the file's own header note) - correct per their
+documented API shapes and covered by `tests/test_dataset_fetch_stage0.py`
+(mocked responses, 10/10 passing), but run it on one URL first and
+check the printed output before pasting in all 50.
+
+## Step 2: ingest (same command as before)
 
 ```bash
 cd services/training
