@@ -167,31 +167,89 @@ regression check can compare against after every checkpoint.
 
 ### Total: 800 clips (200+200+150+100+150) - inside the 500-1,000 pilot range
 
+## 4a. Dataset Smoke Test (before the 800-clip pilot - do this first)
+
+Per explicit project decision, the 800-clip pilot is not the first
+real dataset built. A **50-clip smoke test** (10 per category, same 5
+categories, same quality bar, same tagging taxonomy) goes first, with a
+narrower goal than Section 0's: not "does training improve the model,"
+but the more basic **"does the pipeline itself work end to end"**:
+
+1. Source and quality-check exactly 10 clips per category (50 total)
+   from whichever source passes Section 6's verification.
+2. Run `ingest_dataset.py --rights-cleared` (only once a source is
+   actually `APPROVED FOR PILOT DATASET` in Section 6 - not before).
+3. Inspect the real output: metadata (`ffprobe` fields sane?), captions
+   (do categories A/B's captions actually contain the count/distance
+   language Section 7 requires?), and confirm the train/val/test split
+   is deterministic (re-running ingestion on the same 50 clips must
+   produce the identical split - `DatasetManager`'s own guarantee,
+   worth confirming for real once on real data, not just trusting the
+   unit tests).
+4. Only after step 3 passes cleanly: run the shortest possible real
+   LoRA experiment (per `docs/EXECUTION_PLAN_FIRST_GPU_RUN.md`, ~50-100
+   steps, free-tier GPU) against these 50 clips.
+
+**The question this answers is narrower than the full pilot's:** not
+"is the model better," but **"does the training path (real weights ->
+real dataset -> real LoRA step -> real checkpoint) actually run and
+actually change the model's behavior at all, in either direction?"**
+This is the cheapest possible real signal before committing to
+sourcing 750 more clips. If this step fails or shows zero behavioral
+change, the problem is diagnosed at 50-clip cost, not 800-clip cost.
+
 ## 5. Source (pilot: single source only)
 
-**Pexels**, for the reasons in Section 1.3: license terms allow broad
-reuse and the catalog quality/diversity is strong, and using one source
-keeps the pilot's variables down to one.
+**Pexels was the original candidate - REJECTED after real verification
+(Section 6).** Its terms explicitly ban automated collection for
+machine learning purposes. Pixabay, the obvious next "free stock"
+candidate, was checked for the same reason it's usually grouped with
+Pexels, and carries the identical prohibition. **Neither free-stock
+source is usable for this project without Pexels/Pixabay granting
+explicit, individual, documented permission** - which this project has
+not requested and should not assume.
 
-**Open item, blocking, not yet done:** Pexels' current license terms
-must be checked specifically for AI/ML **training** use - not just
-general reuse - before a single clip is downloaded. Stock-video
-licenses have been changing fast on this exact point industry-wide, so
-"Pexels is generally free to use" is not sufficient; the license page
-must be read fresh, dated, and the relevant clause quoted into this
-document (Section 6) before `rights_cleared=True` is set on any clip.
-This has **not** been done yet - it is the actual next task, not a
-formality to skip.
+**Current candidate, not yet verified, requires user budget decision
+before any real check is worth doing:** platforms that explicitly sell
+AI-training-cleared video datasets (a different market from general
+"royalty-free" stock) - **Wirestock** ("Stock Video Dataset for AI
+Training," markets per-asset AI training rights directly), plus
+Shutterstock's 2026-announced expanded licensed-training-dataset line,
+DepositPhotos, Troveo, and Versos. These are paid, so real per-source
+verification (Section 6's same rigor - exact clause, exact date,
+exact decision) should only happen once there's a real budget signal,
+not spent effort on a source that may be rejected on cost alone.
+
+**Open item, blocking:** pick and verify a real single source before
+any clip is downloaded. This has now failed twice (Section 6) - the
+single-source-first principle (Section 1.3) still holds, it just needs
+a source that actually survives verification.
 
 ## 6. License verification log
 
-*(Empty until Section 5's review happens. Every entry here must cite
-the specific license page/date/clause checked - not a general
-impression of the platform's reputation.)*
+Every entry cites the specific clause/date checked - not a general
+impression of the platform's reputation. `REJECTED` means this project
+does not use the source for pilot dataset clips; it does not mean the
+platform is bad, just that its terms do not cover this specific use.
 
-| Date checked | Source | Clause found (verbatim or close paraphrase) | Verdict |
-|---|---|---|---|
-| *(pending)* | Pexels | *(pending)* | *(pending)* |
+| Date checked | Source | Relevant clause (verbatim) | AI training explicitly allowed | Decision |
+|---|---|---|---|---|
+| 2026-08-04 | Pexels | "Data mining, extraction, scraping and the use of programs or robots for automatic data collection and/or extraction of digital data on the Service and/or the content available therein is strictly prohibited for all unauthorised purposes, including without limitation for machine learning purposes." (Pexels Terms of Service, via help.pexels.com's AI/ML FAQ and pexels.com/terms-of-service) | **NO** - explicitly prohibited for bulk/automated ML use without Pexels' prior explicit permission | **REJECTED** |
+| 2026-08-04 | Pixabay | "Data mining, extraction, scraping and the use of programs or robots for automatic data collection and/or extraction of digital data for machine learning purposes is strictly prohibited." Separately: "Pixabay content ... can't be used to train machine learning models or incorporated into AI generation tools ... redistribution for machine learning or database-building purposes isn't permitted under the license." (pixabay.com/service/terms/, pixabay.com/service/license-summary/) | **NO** - explicitly prohibited, applies to all content including AI-generated uploads | **REJECTED** |
+| *(pending - awaiting user budget decision)* | Wirestock | *(not yet verified - candidate only, markets itself specifically for AI training use)* | *(pending)* | **LEGAL REVIEW REQUIRED** |
+
+**Note on verification method:** both entries above were checked via
+direct web search of the platforms' own published terms pages
+(pexels.com/terms-of-service, help.pexels.com's dedicated AI/ML FAQ,
+pixabay.com/service/terms and license-summary) on 2026-08-04, not
+inferred from general reputation. Both platforms' own help centers
+have a page specifically about AI/ML use, which is itself a signal
+this exact question comes up often enough to need one - a real
+industry-wide 2026 trend, not a one-off obscure clause. This project's
+`rights_cleared` field is `False` for every clip from these two
+sources and will stay that way; per the config's own hard rule
+(`DatasetValidator` treats an unrights-cleared clip as a hard
+validation error), no clip from either source can be ingested as-is.
 
 ## 7. Captioning approach
 
@@ -216,17 +274,29 @@ C/D/E can rely on the heuristic pass alone for the pilot.
 - Not writing final captions by hand for all 800 clips - only the two
   categories where precision matters most for the training signal.
 
-## 9. Phase gate to scale beyond this pilot
+## 9. Phase gates (staged, each gated on the previous one's real evidence)
 
-Move to Phase 2 (5k-10k, `wan22_finetune.yaml`'s full `max_train_steps:
-1500` run) **only if** the pilot LoRA (a short run, ~50-100 steps per
-`docs/EXECUTION_PLAN_FIRST_GPU_RUN.md` Section 5 step 5) shows a real,
-visually-confirmed improvement - not just a CLIP delta - on at least
-one of categories A or B's exact failure cases (a 3-entity prompt
-rendering a real 3rd entity; a "distant" prompt actually rendering the
-subject smaller/farther), checked via `Wan22EvaluationHook` +
-`RegressionDetector` against the untrained baseline. If the pilot LoRA
-shows no real change on these cases, the next step is diagnosing why
-(dataset size, caption precision, LoRA rank, training steps) before
-scaling the dataset further - scaling a dataset that isn't working
-larger is not the fix by default.
+1. **Smoke test (50 clips, Section 4a) -> 800-clip pilot.** Gate: the
+   pipeline runs end to end on real data (real metadata, real captions
+   with the required count/distance language, a real deterministic
+   split) and a ~50-100-step LoRA run on these 50 clips measurably
+   changes the model's behavior at all (any direction) versus the
+   untrained baseline, per `Wan22EvaluationHook`. If nothing changes,
+   diagnose why before sourcing 750 more clips - it may be too few
+   steps, too small a LoRA rank, or a real backend issue, not
+   necessarily "need more data."
+2. **800-clip pilot -> Phase 2 (5k-10k).** Gate: the pilot LoRA
+   (trained on all 800 clips) shows a real, visually-confirmed
+   improvement - not just a CLIP delta - on at least one of categories
+   A or B's exact failure cases (a 3-entity prompt rendering a real 3rd
+   entity; a "distant" prompt actually rendering the subject
+   smaller/farther), checked via `Wan22EvaluationHook` +
+   `RegressionDetector` against the untrained baseline, with no
+   regression on category E (`animals_regression_guard`).
+3. **Phase 2 -> Phase 3 (50k-100k).** Not designed yet - deliberately
+   out of scope until gate 2 is actually cleared with real evidence.
+
+At every gate, "scale the dataset further" is not the automatic answer
+to a disappointing result - the smoke test in particular exists so a
+pipeline or config problem gets caught at 50-clip cost, not diagnosed
+for the first time after 800 clips are already sourced.
