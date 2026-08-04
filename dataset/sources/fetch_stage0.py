@@ -116,11 +116,15 @@ def download(url: str, dest_without_ext: Path) -> Path:
 
 
 def ffprobe_summary(path: Path) -> str:
+    """width/height come from the video stream; duration is read from the
+    container (format) level instead of the stream level - many webm/vp9
+    files (Wikimedia Commons' usual format) leave per-stream duration
+    unset even though the file has a real, playable length."""
     try:
         result = subprocess.run(
             [
                 "ffprobe", "-v", "error", "-select_streams", "v:0",
-                "-show_entries", "stream=width,height,duration",
+                "-show_entries", "stream=width,height:format=duration",
                 "-of", "default=noprint_wrappers=1", str(path),
             ],
             capture_output=True, text=True, timeout=30, check=True,
