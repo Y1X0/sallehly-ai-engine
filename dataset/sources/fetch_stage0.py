@@ -36,6 +36,7 @@ import argparse
 import json
 import re
 import subprocess
+import sys
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -170,5 +171,15 @@ def main(argv: list[str] | None = None) -> int:
     return 1 if failures else 0
 
 
+def _running_under_notebook_kernel() -> bool:
+    """True inside Jupyter/Colab/Kaggle notebook cells, where sys.argv holds
+    the kernel launcher's own flags (e.g. "-f .../kernel-xxx.json") instead
+    of being empty - argparse must not be handed those."""
+    return "ipykernel" in sys.modules or Path(sys.argv[0]).name in {
+        "colab_kernel_launcher.py",
+        "ipykernel_launcher.py",
+    }
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main([] if _running_under_notebook_kernel() else None))

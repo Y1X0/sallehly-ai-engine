@@ -118,6 +118,35 @@ class TestResolve:
         assert module.resolve(direct) == direct
 
 
+class TestRunningUnderNotebookKernel:
+    """Regression test: running this script's `if __name__ == "__main__"`
+    block inside a real Kaggle/Colab notebook cell used to crash with
+    "unrecognized arguments: -f .../kernel-xxx.json" because argparse
+    fell back to parsing sys.argv, which under a notebook kernel holds the
+    kernel launcher's own flags, not empty. `main` must be called with an
+    explicit `[]` in that case instead of `None`.
+    """
+
+    def test_true_when_ipykernel_module_is_loaded(self):
+        module = _load_module()
+        with patch.object(module.sys, "modules", {**module.sys.modules, "ipykernel": object()}):
+            assert module._running_under_notebook_kernel() is True
+
+    def test_true_for_colab_kernel_launcher_argv0(self):
+        module = _load_module()
+        modules_without_ipykernel = {k: v for k, v in module.sys.modules.items() if k != "ipykernel"}
+        with patch.object(module.sys, "modules", modules_without_ipykernel):
+            with patch.object(module.sys, "argv", ["/usr/local/bin/colab_kernel_launcher.py", "-f", "kernel.json"]):
+                assert module._running_under_notebook_kernel() is True
+
+    def test_false_for_a_plain_script_invocation(self):
+        module = _load_module()
+        modules_without_ipykernel = {k: v for k, v in module.sys.modules.items() if k != "ipykernel"}
+        with patch.object(module.sys, "modules", modules_without_ipykernel):
+            with patch.object(module.sys, "argv", ["fetch_stage0.py", "--urls", "urls.json"]):
+                assert module._running_under_notebook_kernel() is False
+
+
 @pytest.mark.skipif(not FFMPEG_AVAILABLE, reason="ffmpeg/ffprobe not installed")
 class TestFfprobeSummary:
     def test_reports_real_dimensions_for_a_real_clip(self, tmp_path):
