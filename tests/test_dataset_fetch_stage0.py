@@ -118,6 +118,58 @@ class TestResolve:
         assert module.resolve(direct) == direct
 
 
+class TestResolveAndDownloadRateLimitRetry:
+    """Regression test: 4 of 9 real Wikimedia Commons downloads failed in
+    live Kaggle testing with HTTP 429 Too many requests after several
+    back-to-back fetches with no delay. resolve_and_download must back off
+    and retry on 429, but must not retry (or sleep needlessly) on other
+    errors, and must not retry forever.
+    """
+
+    def test_retries_and_succeeds_after_a_429(self, tmp_path):
+        module = _load_module()
+        call_count = {"n": 0}
+
+        def fake_resolve(url):
+            return "https://example.com/clip.mp4"
+
+        def fake_download(url, dest_without_ext):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise module.urllib.error.HTTPError(url, 429, "Too many requests", {}, None)
+            return dest_without_ext.with_suffix(".mp4")
+
+        with patch.object(module, "resolve", fake_resolve), patch.object(module, "download", fake_download), patch.object(module.time, "sleep"):
+            result = module.resolve_and_download("https://commons.wikimedia.org/wiki/File:X.webm", tmp_path / "x")
+
+        assert call_count["n"] == 2  # failed once, succeeded on retry
+        assert result == (tmp_path / "x").with_suffix(".mp4")
+
+    def test_gives_up_after_max_retries_on_persistent_429(self):
+        module = _load_module()
+
+        def fake_download(url, dest_without_ext):
+            raise module.urllib.error.HTTPError(url, 429, "Too many requests", {}, None)
+
+        with patch.object(module, "resolve", lambda url: url), patch.object(module, "download", fake_download), patch.object(module.time, "sleep"):
+            with pytest.raises(module.urllib.error.HTTPError):
+                module.resolve_and_download("https://example.com/clip.mp4", Path("/tmp/x"))
+
+    def test_does_not_retry_a_non_429_http_error(self):
+        module = _load_module()
+        call_count = {"n": 0}
+
+        def fake_download(url, dest_without_ext):
+            call_count["n"] += 1
+            raise module.urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+
+        with patch.object(module, "resolve", lambda url: url), patch.object(module, "download", fake_download), patch.object(module.time, "sleep"):
+            with pytest.raises(module.urllib.error.HTTPError):
+                module.resolve_and_download("https://example.com/clip.mp4", Path("/tmp/x"))
+
+        assert call_count["n"] == 1  # no retry for a 404 - only 429 is retried
+
+
 class TestRunningUnderNotebookKernel:
     """Regression test: running this script's `if __name__ == "__main__"`
     block inside a real Kaggle/Colab notebook cell used to crash with

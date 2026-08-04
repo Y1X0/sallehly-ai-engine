@@ -37,6 +37,8 @@ import json
 import re
 import subprocess
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -105,6 +107,30 @@ def resolve(url: str) -> str:
     return url  # assume it's already a direct file URL
 
 
+_REQUEST_DELAY_SECONDS = 3.0  # politeness delay before every item, avoids tripping Commons' rate limiter
+_RATE_LIMIT_RETRIES = 3
+_RATE_LIMIT_BACKOFF_SECONDS = 20.0
+
+
+def resolve_and_download(url: str, dest_without_ext: Path) -> Path:
+    """resolve() + download() with a fixed politeness delay plus retry-with-
+    backoff specifically for HTTP 429 (Too many requests) - real, observed
+    behavior from Wikimedia Commons when several files are fetched back to
+    back with no pause. Other errors (bad URL, 404, etc.) are not retried -
+    only 429 is a "wait and it'll work" case."""
+    time.sleep(_REQUEST_DELAY_SECONDS)
+    for attempt in range(1, _RATE_LIMIT_RETRIES + 1):
+        try:
+            return download(resolve(url), dest_without_ext)
+        except urllib.error.HTTPError as exc:
+            if exc.code != 429 or attempt == _RATE_LIMIT_RETRIES:
+                raise
+            wait = _RATE_LIMIT_BACKOFF_SECONDS * attempt
+            print(f"    (429 Too many requests - waiting {wait:.0f}s before retry {attempt + 1}/{_RATE_LIMIT_RETRIES})")
+            time.sleep(wait)
+    raise AssertionError("unreachable")  # loop always returns or raises
+
+
 def download(url: str, dest_without_ext: Path) -> Path:
     ext = Path(urllib.parse.urlparse(url).path).suffix or ".mp4"
     dest = dest_without_ext.with_suffix(ext)
@@ -154,8 +180,7 @@ def main(argv: list[str] | None = None) -> int:
         for i, url in enumerate(urls):
             dest_stub = args.out_dir / category / f"{category}_{i:02d}"
             try:
-                direct_url = resolve(url)
-                dest = download(direct_url, dest_stub)
+                dest = resolve_and_download(url, dest_stub)
                 info = ffprobe_summary(dest)
                 print(f"{category:<28} {i:<3} OK    {dest.name}  {info}")
             except Exception as exc:  # noqa: BLE001 - one bad URL must not kill the whole batch
