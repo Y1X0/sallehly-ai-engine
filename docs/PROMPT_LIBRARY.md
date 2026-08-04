@@ -123,3 +123,17 @@ highest CLIP scores of the entire project (architecture, action) - the rules
 compound rather than compete. The two partial cases (wide landscape, extreme
 close-up on complex fur texture) are consistent with weaknesses already
 documented in `docs/KNOWN_LIMITATIONS.md`, not a flaw specific to v2.
+
+## Known hard ceilings - do not attempt to prompt-fix these
+
+Phase 4 (`eval/reports/0030-phase4-adversarial-stability-test.md`) tested two
+more weaknesses across 3 different seeds each to separate a real capability
+ceiling from one unlucky seed. Both held up as hard ceilings, not prompting
+issues - don't spend time rewriting prompts to fix these; see
+`docs/KNOWN_LIMITATIONS.md` for the practical guidance instead:
+
+- **More than 2 active entities in complex physical interaction** (e.g. a
+  3-person fight) - capped at 2 rendered entities across all 3 tested seeds.
+- **"Distant"/"small subject" framing instructions** (e.g. "a wolf in a
+  distant mountain valley") - the subject rendered large/foreground across
+  all 3 tested seeds regardless of wording.
