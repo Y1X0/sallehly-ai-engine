@@ -118,6 +118,42 @@ class TestResolve:
         assert module.resolve(direct) == direct
 
 
+class TestSlugForUrl:
+    """Regression test: naming downloaded files by list position
+    ("<category>_00", "_01", ...) meant a fresh run (e.g. retrying just
+    the URLs that failed) restarted at index 0 and silently overwrote a
+    previous run's already-downloaded clip - a real clip was lost this
+    way during live testing. The slug must be derived from the URL
+    itself so re-running never collides with a different source's file.
+    """
+
+    def test_derives_a_stable_slug_from_a_commons_title(self):
+        module = _load_module()
+        slug = module.slug_for_url("https://commons.wikimedia.org/wiki/File:Some_Video.webm")
+        assert slug == "Some_Video"
+
+    def test_is_stable_across_repeated_calls_for_the_same_url(self):
+        module = _load_module()
+        url = "https://commons.wikimedia.org/wiki/File:Repeat_Me.webm"
+        assert module.slug_for_url(url) == module.slug_for_url(url)
+
+    def test_different_commons_titles_do_not_collide(self):
+        module = _load_module()
+        a = module.slug_for_url("https://commons.wikimedia.org/wiki/File:Video_A.webm")
+        b = module.slug_for_url("https://commons.wikimedia.org/wiki/File:Video_B.webm")
+        assert a != b
+
+    def test_falls_back_to_the_url_path_stem_for_a_direct_url(self):
+        module = _load_module()
+        slug = module.slug_for_url("https://images-assets.nasa.gov/video/PIA12345/PIA12345~orig.mp4")
+        assert "PIA12345" in slug
+
+    def test_sanitizes_unsafe_filesystem_characters(self):
+        module = _load_module()
+        slug = module.slug_for_url("https://commons.wikimedia.org/wiki/File:Weird%20%26%20Name%3F.webm")
+        assert all(c.isalnum() or c in "._-" for c in slug)
+
+
 class TestResolveAndDownloadRateLimitRetry:
     """Regression test: 4 of 9 real Wikimedia Commons downloads failed in
     live Kaggle testing with HTTP 429 Too many requests after several

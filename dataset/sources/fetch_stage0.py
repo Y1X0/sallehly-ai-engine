@@ -107,6 +107,26 @@ def resolve(url: str) -> str:
     return url  # assume it's already a direct file URL
 
 
+def slug_for_url(url: str) -> str:
+    """A stable filename slug derived from the source URL itself, not a
+    per-run positional index. Real bug found in live testing: naming files
+    "<category>_00", "<category>_01", ... by list position meant every
+    fresh run (e.g. retrying just the failed URLs) restarted at index 0
+    and silently overwrote whatever a previous run had already saved there
+    - a real clip (the first Can-Can test download) was lost this way.
+    Deriving the name from the URL instead means the same source always
+    maps to the same file (safe to re-run) and different sources almost
+    never collide."""
+    match = re.search(r"File:([^?#]+)", url)
+    if match:
+        title = urllib.parse.unquote(match.group(1))
+        title = re.sub(r"\.[A-Za-z0-9]+$", "", title)  # drop the extension, download() adds the real one
+    else:
+        title = Path(urllib.parse.urlparse(url).path).stem or url
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "_", title).strip("_")
+    return slug[:80] or "clip"
+
+
 _REQUEST_DELAY_SECONDS = 3.0  # politeness delay before every item, avoids tripping Commons' rate limiter
 _RATE_LIMIT_RETRIES = 3
 _RATE_LIMIT_BACKOFF_SECONDS = 20.0
@@ -178,7 +198,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{'category':<28} {'#':<3} status")
     for category, urls in categories.items():
         for i, url in enumerate(urls):
-            dest_stub = args.out_dir / category / f"{category}_{i:02d}"
+            dest_stub = args.out_dir / category / f"{category}__{slug_for_url(url)}"
             try:
                 dest = resolve_and_download(url, dest_stub)
                 info = ffprobe_summary(dest)
