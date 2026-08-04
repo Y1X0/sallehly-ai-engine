@@ -23,22 +23,25 @@ in this dataset.
 
 ## 1. Design principles
 
-1. **Quality over quantity.** 150 excellent buildings clips beats 5,000
+1. **Quality over quantity.** 100 excellent buildings clips beats 5,000
    average ones. Every clip must individually clear the quality bar in
    Section 4 - no bulk-download-then-filter-later.
 2. **Targeted, not random.** Every category exists because it maps to a
    real diagnosed weakness (or, for one category, a real strength worth
    protecting from regression). No "diverse for diversity's sake" filler.
-3. **One source for the pilot.** Pexels only (Section 5) - reduces the
-   number of simultaneous unknowns (license terms, quality baseline,
-   metadata conventions) to one, so if the pilot LoRA underperforms, the
-   cause is easier to isolate. Academic multi-source datasets
-   (WebVid/HD-VILA/Panda-70M/etc.) are explicitly deferred to Phase 2/3
-   scale-up (Section 7), not used here.
-4. **Small first, scale only on evidence.** This spec covers Phase 1
-   (pilot) only. Phase 2 (5k-10k) and Phase 3 (50k-100k) are gated on
-   the pilot LoRA showing a real, visually-confirmed improvement on the
-   target failure cases - not scheduled in advance.
+3. **Free, openly-licensed sources only - no paid stock, no general
+   "royalty-free" stock sites.** Section 5/6 rejected Pexels and Pixabay
+   (both explicitly ban ML training use) and deliberately does not
+   pursue a paid AI-training-licensed marketplace (Wirestock etc.) -
+   this project is improving an existing model, not building a
+   commercial data-licensing relationship. The real sources are
+   openly-licensed collections: Wikimedia Commons, NASA's public-domain
+   media, curated public-domain/CC subcollections of the Internet
+   Archive, and individually CC-licensed Vimeo uploads (Section 5/6).
+4. **Small first, scale only on evidence.** This spec covers the first
+   proof stage and Dataset v1 (Section 4) only. Phase 2 (5k-10k) and
+   Phase 3 (50k-100k) are gated on real, visually-confirmed improvement
+   on the target failure cases - not scheduled in advance (Section 9).
 
 ## 2. Training-config constraints this dataset must satisfy
 
@@ -61,7 +64,7 @@ are a real, auditable query against the manifest, not a claim in a
 spreadsheet. Every clip gets exactly one **category tag** (below) plus
 0+ **attribute tags** from that category's list.
 
-## 4. Category breakdown (pilot target: 800 clips)
+## 4. Category breakdown (Dataset v1 target: 600 clips)
 
 Minimum quality bar for **every** clip, all categories: source
 resolution >=1280x720, duration >=6s, single continuous shot (no hard
@@ -69,7 +72,7 @@ cuts mid-clip - the VAE/temporal path assumes continuous motion), no
 visible watermark/logo burn-in, no heavy compression artifacts, mp4/h264
 container preferred.
 
-### A. `multi_entity_interaction` - 200 clips (highest priority)
+### A. `multi_entity_interaction` - 150 clips (highest priority)
 
 **Why:** Phase 4 Test A (`eval/reports/0030`) found a real, seed-independent
 ceiling - a 3-person combat prompt rendered exactly 2 clear entities
@@ -80,7 +83,7 @@ across all 3 tested seeds, never 3. This is the single most decisive
 `dance`, `team_sport`, `coordinated_crowd`, `camera_close`, `camera_wide`,
 `day`, `night`.
 
-**Composition target:** at least 120 of the 200 clips must show 3+
+**Composition target:** at least 90 of the 150 clips must show 3+
 clearly distinguishable people in simultaneous active interaction
 (not just present in frame - actually interacting) - this is the exact
 gap being targeted, so it cannot be the minority of the category.
@@ -90,7 +93,7 @@ captioner alone. Every caption must explicitly state the real entity
 count in words ("three dancers," "four players") - the training signal
 this category exists for is the word-to-count mapping itself.
 
-### B. `distant_small_subject` - 200 clips (highest priority)
+### B. `distant_small_subject` - 150 clips (highest priority)
 
 **Why:** Phase 4 Test C found the model never honored a "distant"/"small
 subject" framing instruction across 3 seeds - the subject rendered
@@ -101,7 +104,7 @@ large/foreground every time regardless of wording. Also documented in
 `distance_mid`, `backdrop_mountain`, `backdrop_plain`, `backdrop_urban`,
 `day`, `dusk`.
 
-**Composition target:** at least 140 of the 200 clips must have the
+**Composition target:** at least 100 of the 150 clips must have the
 main subject occupy a clearly small fraction of the frame (a rough
 guide: subject height under ~15% of frame height) against a wide
 backdrop - matching the exact "wolf in a distant valley" case that failed.
@@ -111,7 +114,7 @@ distance language ("in the distance," "far away," "a small figure
 against...") - same reasoning as category A, the word-to-spatial-scale
 mapping is the point.
 
-### C. `dense_architecture` - 150 clips
+### C. `dense_architecture` - 100 clips
 
 **Why:** Phase 1 (`eval/reports/0026`) found buildings (0.2915) and
 city (0.2813) among the weakest categories; Phase 4 Test B
@@ -127,7 +130,7 @@ architecture from zero.
 
 **Composition target:** matches the user's own worked example - a mix
 across angle (aerial/street/oblique), time of day, and weather, rather
-than 150 near-identical daytime skyscraper shots. Bias toward aerial
+than 100 near-identical daytime skyscraper shots. Bias toward aerial
 and single-building framing (Phase 2's Group D found these most
 reliable) but keep enough street-level/skyline examples that the model
 sees the harder cases too, not only the easy ones.
@@ -149,7 +152,7 @@ compositional anchor (a river, a single structure, a light source) -
 diffuse, anchor-less wide shots are exactly what this category should
 *not* contain, since the goal is reinforcing the anchored pattern.
 
-### E. `animals_regression_guard` - 150 clips
+### E. `animals_regression_guard` - 100 clips
 
 **Why:** animals scored highest of the entire Phase 1 benchmark (0.3513).
 This category is not fixing a weakness - it exists to give
@@ -165,65 +168,114 @@ degrade a category the model already handles well.
 adversarial - the point is a stable, high-quality baseline the
 regression check can compare against after every checkpoint.
 
-### Total: 800 clips (200+200+150+100+150) - inside the 500-1,000 pilot range
+### Total: 600 clips (150+150+100+100+100) - "Dataset v1"
 
-## 4a. Dataset Smoke Test (before the 800-clip pilot - do this first)
+## 4a. Two smaller stages come before Dataset v1 (do these first)
 
-Per explicit project decision, the 800-clip pilot is not the first
-real dataset built. A **50-clip smoke test** (10 per category, same 5
-categories, same quality bar, same tagging taxonomy) goes first, with a
-narrower goal than Section 0's: not "does training improve the model,"
-but the more basic **"does the pipeline itself work end to end"**:
+Per explicit project decision, the 600-clip Dataset v1 is not built
+before the training path itself is proven to work at all. Two smaller,
+cheaper stages come first, each with a narrower question than the
+full dataset's:
 
-1. Source and quality-check exactly 10 clips per category (50 total)
-   from whichever source passes Section 6's verification.
-2. Run `ingest_dataset.py --rights-cleared` (only once a source is
-   actually `APPROVED FOR PILOT DATASET` in Section 6 - not before).
-3. Inspect the real output: metadata (`ffprobe` fields sane?), captions
-   (do categories A/B's captions actually contain the count/distance
-   language Section 7 requires?), and confirm the train/val/test split
-   is deterministic (re-running ingestion on the same 50 clips must
-   produce the identical split - `DatasetManager`'s own guarantee,
-   worth confirming for real once on real data, not just trusting the
-   unit tests).
-4. Only after step 3 passes cleanly: run the shortest possible real
-   LoRA experiment (per `docs/EXECUTION_PLAN_FIRST_GPU_RUN.md`, ~50-100
-   steps, free-tier GPU) against these 50 clips.
+**Stage 0 - pipeline mechanics check (~10-20 clips, any mix of
+categories).** Question: does `ingest_dataset.py --rights-cleared`
+actually work on real files end to end? Inspect the real output:
+metadata (`ffprobe` fields sane?), captions produced, and confirm the
+train/val/test split is deterministic (re-running ingestion on the
+same clips must produce the identical split - `DatasetManager`'s own
+guarantee, worth confirming once on real data, not just trusting the
+unit tests). No training happens at this stage.
 
-**The question this answers is narrower than the full pilot's:** not
-"is the model better," but **"does the training path (real weights ->
-real dataset -> real LoRA step -> real checkpoint) actually run and
-actually change the model's behavior at all, in either direction?"**
+**Stage 1 - first training proof (100-500 clips, proportionally
+sampled across all 5 categories from Section 4, same ratios, smaller
+scale).** Question: **does the training path (real weights -> real
+dataset -> real LoRA step -> real checkpoint) actually run, and does
+it measurably change the model's behavior at all, in either
+direction?** Not "is the model better" - just "is it learnable."
+Procedure: source and quality-check the proportional subset, ingest,
+then run the shortest possible real LoRA experiment (per
+`docs/EXECUTION_PLAN_FIRST_GPU_RUN.md`, ~50-500 steps, free-tier GPU)
+and check `Wan22EvaluationHook` output against the untrained baseline
+on at least the category A/B failure cases.
+
 This is the cheapest possible real signal before committing to
-sourcing 750 more clips. If this step fails or shows zero behavioral
-change, the problem is diagnosed at 50-clip cost, not 800-clip cost.
+sourcing the full 600. If Stage 1 fails or shows zero behavioral
+change, the problem is diagnosed at 100-500-clip cost, not 600-clip
+cost, and the fix might be training config (steps, LoRA rank), not
+"need more data."
 
-## 5. Source (pilot: single source only)
+## 5. Sources (free, openly-licensed only - multiple, each independently verified)
 
-**Pexels was the original candidate - REJECTED after real verification
-(Section 6).** Its terms explicitly ban automated collection for
-machine learning purposes. Pixabay, the obvious next "free stock"
-candidate, was checked for the same reason it's usually grouped with
-Pexels, and carries the identical prohibition. **Neither free-stock
-source is usable for this project without Pexels/Pixabay granting
-explicit, individual, documented permission** - which this project has
-not requested and should not assume.
+Pexels and Pixabay are REJECTED (Section 6) - both explicitly ban
+automated collection for machine learning purposes. A paid
+AI-training-licensed marketplace (Wirestock etc.) was considered and
+deliberately **not** pursued - this project improves an existing model
+for internal use, it is not building a commercial dataset-licensing
+relationship, so "free and openly-licensed" is the right constraint,
+not "whichever paid vendor's terms are cleanest."
 
-**Current candidate, not yet verified, requires user budget decision
-before any real check is worth doing:** platforms that explicitly sell
-AI-training-cleared video datasets (a different market from general
-"royalty-free" stock) - **Wirestock** ("Stock Video Dataset for AI
-Training," markets per-asset AI training rights directly), plus
-Shutterstock's 2026-announced expanded licensed-training-dataset line,
-DepositPhotos, Troveo, and Versos. These are paid, so real per-source
-verification (Section 6's same rigor - exact clause, exact date,
-exact decision) should only happen once there's a real budget signal,
-not spent effort on a source that may be rejected on cost alone.
+Four real candidates, each with a genuinely different license
+mechanism - not five near-identical general stock sites, since two of
+those already failed for the same reason:
 
-**Open item, blocking:** pick and verify a real single source before
-any clip is downloaded. This has now failed twice (Section 6) - the
-single-source-first principle (Section 1.3) still holds, it just needs
-a source that actually survives verification.
+1. **Wikimedia Commons (video).** Site-wide upload policy accepts only
+   CC-BY, CC-BY-SA, CC0/public-domain, or GFDL - Non-Commercial (NC) and
+   No-Derivatives (ND) licenses are not allowed to be uploaded at all.
+   Per Creative Commons' own May 2025 official guidance, CC-BY and CC0
+   works generally permit AI/ML training (CC-BY needs attribution
+   recorded, satisfiable by keeping a per-clip source-credit list).
+   CC-BY-SA carries a real, still-debated legal question (do
+   share-alike obligations propagate to a trained model's weights?) -
+   treat CC-BY-SA clips as lower priority until that's resolved, prefer
+   CC-BY/CC0-tagged files. Each file's exact license is on its own
+   description page and must be recorded per-clip (not assumed from
+   the site-wide policy). Practical caveat, not a legal one: Commons'
+   video collection is much smaller than its image collection - actual
+   availability per category (Section 4) needs a real scoping check,
+   not just a legal green light.
+2. **NASA Image and Video Library.** NASA content is generally not
+   copyrightable in the US (work of the US federal government) - broad
+   reuse, including commercial, is explicitly permitted. Two real
+   carve-outs: the NASA insignia/logo may not be used, and any footage
+   with an identifiable person needs that person's own permission for
+   commercial use (rare in NASA's own launch/facility/Earth-observation
+   footage). No ML-specific restriction found. Good fit for
+   `wide_anchor_camera` (Category D) and parts of `dense_architecture`
+   (facility/aerial shots) - not useful for `multi_entity_interaction`
+   or `animals_regression_guard`.
+3. **Internet Archive - public-domain/CC subcollections only, not the
+   whole site.** Internet Archive hosts a huge mix of content with
+   wildly varying rights (including plenty of unclear/uncleared
+   uploads) - it is **not** blanket-clean the way Wikimedia Commons'
+   upload policy is. The safe subset is its curated public-domain and
+   Creative-Commons-tagged film collections (e.g. `archive.org/details/
+   public-domain`, `publicmovies212`) - every clip's individual license
+   tag still needs recording per-clip, same as Wikimedia Commons.
+4. **Vimeo - individually CC-licensed creator uploads via Vimeo's own
+   Creative Commons filter, NOT Vimeo Stock Footage.** Important
+   distinction found during verification: Vimeo's paid "Stock Footage"
+   marketplace explicitly **prohibits** ML/AI use in its own terms -
+   that marketplace is out. Separately, individual creators on regular
+   Vimeo can opt into a CC license for their own uploads, searchable via
+   Vimeo's CC filter; those clips are governed by the CC license itself
+   (point 1's CC-BY/CC0 reasoning applies), not Vimeo's stock-footage
+   terms. Must verify per-video which license the specific uploader
+   chose - CC filter search surfaces the license type but each clip's
+   actual page should be checked before use.
+
+**Explicitly not pursued further (checked, ruled out):** Videvo -
+inconclusive from search, and given it's a general "free stock" site in
+the same category as Pexels/Pixabay (both of which turned out to
+restrict ML use), not worth a direct-fetch attempt without a stronger
+signal it differs. Vevo and Vimeo Stock Footage - explicitly checked
+and explicitly prohibit AI/ML use (Section 6).
+
+**Open item, not yet done:** per-category availability scoping (can we
+actually find ~100-150 clips per Section 4 category on these 4 sources
+combined?) is a real research task, separate from the legal check
+above - a source can be perfectly legal and still not have enough
+"three people fighting" footage. Recommended before any real download
+starts.
 
 ## 6. License verification log
 
@@ -231,25 +283,30 @@ Every entry cites the specific clause/date checked - not a general
 impression of the platform's reputation. `REJECTED` means this project
 does not use the source for pilot dataset clips; it does not mean the
 platform is bad, just that its terms do not cover this specific use.
+`CONDITIONALLY APPROVED` means usable, but per-clip license recording
+is still required before `rights_cleared=True`.
 
 | Date checked | Source | Relevant clause (verbatim) | AI training explicitly allowed | Decision |
 |---|---|---|---|---|
 | 2026-08-04 | Pexels | "Data mining, extraction, scraping and the use of programs or robots for automatic data collection and/or extraction of digital data on the Service and/or the content available therein is strictly prohibited for all unauthorised purposes, including without limitation for machine learning purposes." (Pexels Terms of Service, via help.pexels.com's AI/ML FAQ and pexels.com/terms-of-service) | **NO** - explicitly prohibited for bulk/automated ML use without Pexels' prior explicit permission | **REJECTED** |
 | 2026-08-04 | Pixabay | "Data mining, extraction, scraping and the use of programs or robots for automatic data collection and/or extraction of digital data for machine learning purposes is strictly prohibited." Separately: "Pixabay content ... can't be used to train machine learning models or incorporated into AI generation tools ... redistribution for machine learning or database-building purposes isn't permitted under the license." (pixabay.com/service/terms/, pixabay.com/service/license-summary/) | **NO** - explicitly prohibited, applies to all content including AI-generated uploads | **REJECTED** |
-| *(pending - awaiting user budget decision)* | Wirestock | *(not yet verified - candidate only, markets itself specifically for AI training use)* | *(pending)* | **LEGAL REVIEW REQUIRED** |
+| 2026-08-04 | Vimeo Stock Footage (paid marketplace) | "[Vimeo Stock Footage] prohibits licensees from using licensed works for any machine learning and/or artificial intelligence purposes, or in connection with any technologies designed for identification of natural persons." (vimeo.com/legal/service-terms/stock) | **NO** - explicitly prohibited | **REJECTED** (this marketplace only - regular Vimeo CC-licensed creator uploads are a separate, un-rejected case, see below) |
+| 2026-08-04 | Wikimedia Commons (per site-wide upload policy; per-file license still required) | Upload policy requires CC-BY, CC-BY-SA, CC0/PD, or GFDL only - "must not include Non-Commercial (nc) or No-Derivatives (nd) restrictions." Creative Commons' own May 2025 guidance: "AI training is often permitted by copyright... CC-BY... CC0... [releases] into the public domain." | **YES, for CC-BY/CC0-tagged files** (CC-BY-SA: legally ambiguous re: share-alike propagation to model weights - deprioritize) | **CONDITIONALLY APPROVED** - CC-BY/CC0 files only, record each file's actual license before ingest |
+| 2026-08-04 | NASA Image and Video Library | "NASA content... generally are not subject to copyright in the United States [as] works created by the U.S. federal government." Carve-outs: NASA insignia/logo, and identifiable-person footage needs that person's permission for commercial use. | **YES** (no ML-specific restriction found; general public-domain reuse, including commercial) | **CONDITIONALLY APPROVED** - avoid insignia/logo shots and any identifiable-person footage |
+| 2026-08-04 | Internet Archive (public-domain/CC subcollections specifically, not the whole site) | Site hosts curated public-domain and CC-tagged film subcollections alongside large amounts of unrelated/unclear-rights content - not blanket-clean. | **YES, for items individually tagged public-domain/CC** - **NO / UNKNOWN for the rest of the site** | **CONDITIONALLY APPROVED** - curated PD/CC subcollections only, verify each item's own rights tag |
+| 2026-08-04 | Vimeo (individual creator CC-licensed uploads via the CC filter, separate from Stock Footage above) | Governed by whichever CC license the individual creator selected (same CC-BY/CC0/CC-BY-SA reasoning as Wikimedia Commons row) | **YES, for CC-BY/CC0-tagged uploads** | **CONDITIONALLY APPROVED** - verify the specific license on each video's own page before use |
 
-**Note on verification method:** both entries above were checked via
-direct web search of the platforms' own published terms pages
-(pexels.com/terms-of-service, help.pexels.com's dedicated AI/ML FAQ,
-pixabay.com/service/terms and license-summary) on 2026-08-04, not
-inferred from general reputation. Both platforms' own help centers
-have a page specifically about AI/ML use, which is itself a signal
-this exact question comes up often enough to need one - a real
-industry-wide 2026 trend, not a one-off obscure clause. This project's
-`rights_cleared` field is `False` for every clip from these two
-sources and will stay that way; per the config's own hard rule
-(`DatasetValidator` treats an unrights-cleared clip as a hard
-validation error), no clip from either source can be ingested as-is.
+**Note on verification method:** every row was checked via direct web
+search of the platform's own published terms/policy pages on
+2026-08-04, not inferred from general reputation. Pexels' and
+Pixabay's own help centers each have a page specifically about AI/ML
+use - itself a signal this exact question comes up often enough to
+need one, a real industry-wide 2026 trend. This project's
+`rights_cleared` field stays `False` for every clip until its specific
+source clip's own license is individually recorded, even for
+"CONDITIONALLY APPROVED" sources - per `DatasetValidator`'s existing
+hard rule, an unrights-cleared clip is a validation error, not a soft
+warning.
 
 ## 7. Captioning approach
 
@@ -259,44 +316,47 @@ A and B specifically (Section 4), heuristic captions are **not
 sufficient on their own** - the training signal those two categories
 exist to provide depends on precise count/distance language that a
 generic heuristic captioner is unlikely to reliably produce. Plan:
-heuristic pass first for all 800 clips, then a hand-verification pass
-focused on categories A and B (400 clips) to confirm/correct the
+heuristic pass first for all 600 clips, then a hand-verification pass
+focused on categories A and B (300 clips) to confirm/correct the
 count/distance language before `ingest_dataset.py` runs. Categories
-C/D/E can rely on the heuristic pass alone for the pilot.
+C/D/E can rely on the heuristic pass alone for Dataset v1.
 
 ## 8. Explicit non-goals for v1.0
 
 - Not attempting full category coverage of the original 30-category
   benchmark - only the categories tied to a real diagnosed weakness (or
   the one regression-guard category).
-- Not mixing sources yet (Section 1.3).
-- Not targeting 5k-10k+ scale yet (Section 7 below).
-- Not writing final captions by hand for all 800 clips - only the two
+- Not using paid stock/AI-training-licensed marketplaces (Section 5) -
+  free, openly-licensed sources only.
+- Not targeting 5k-10k+ scale yet (Section 9).
+- Not writing final captions by hand for all 600 clips - only the two
   categories where precision matters most for the training signal.
 
 ## 9. Phase gates (staged, each gated on the previous one's real evidence)
 
-1. **Smoke test (50 clips, Section 4a) -> 800-clip pilot.** Gate: the
-   pipeline runs end to end on real data (real metadata, real captions
-   with the required count/distance language, a real deterministic
-   split) and a ~50-100-step LoRA run on these 50 clips measurably
+1. **Stage 0 mechanics check (~10-20 clips) -> Stage 1 first training
+   proof (100-500 clips, Section 4a).** Gate: `ingest_dataset.py` runs
+   cleanly end to end on real data (real metadata, real captions, a
+   real deterministic split confirmed by re-running ingestion).
+2. **Stage 1 (100-500 clips) -> Dataset v1 (600 clips, Section 4).**
+   Gate: a ~50-500-step LoRA run on the Stage 1 subset measurably
    changes the model's behavior at all (any direction) versus the
    untrained baseline, per `Wan22EvaluationHook`. If nothing changes,
-   diagnose why before sourcing 750 more clips - it may be too few
+   diagnose why before sourcing the rest of the 600 - it may be too few
    steps, too small a LoRA rank, or a real backend issue, not
    necessarily "need more data."
-2. **800-clip pilot -> Phase 2 (5k-10k).** Gate: the pilot LoRA
-   (trained on all 800 clips) shows a real, visually-confirmed
-   improvement - not just a CLIP delta - on at least one of categories
-   A or B's exact failure cases (a 3-entity prompt rendering a real 3rd
-   entity; a "distant" prompt actually rendering the subject
-   smaller/farther), checked via `Wan22EvaluationHook` +
-   `RegressionDetector` against the untrained baseline, with no
-   regression on category E (`animals_regression_guard`).
-3. **Phase 2 -> Phase 3 (50k-100k).** Not designed yet - deliberately
-   out of scope until gate 2 is actually cleared with real evidence.
+3. **Dataset v1 (600 clips) -> Phase 2 (5k-10k).** Gate: the Dataset v1
+   LoRA shows a real, visually-confirmed improvement - not just a CLIP
+   delta - on at least one of categories A or B's exact failure cases
+   (a 3-entity prompt rendering a real 3rd entity; a "distant" prompt
+   actually rendering the subject smaller/farther), checked via
+   `Wan22EvaluationHook` + `RegressionDetector` against the untrained
+   baseline, with no regression on category E
+   (`animals_regression_guard`).
+4. **Phase 2 -> Phase 3 (50k-100k).** Not designed yet - deliberately
+   out of scope until gate 3 is actually cleared with real evidence.
 
 At every gate, "scale the dataset further" is not the automatic answer
-to a disappointing result - the smoke test in particular exists so a
-pipeline or config problem gets caught at 50-clip cost, not diagnosed
-for the first time after 800 clips are already sourced.
+to a disappointing result - Stages 0/1 in particular exist so a
+pipeline or config problem gets caught at 10-500-clip cost, not
+diagnosed for the first time after 600 clips are already sourced.
