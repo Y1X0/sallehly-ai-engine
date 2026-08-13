@@ -654,8 +654,19 @@ class TestDispatchWiring:
         dataset_metadata_path = (
             Path(create_call[create_call.index("-p") + 1]) / "dataset-metadata.json"
         )
-        subtitle = json.loads(dataset_metadata_path.read_text())["subtitle"]
+        dataset_metadata = json.loads(dataset_metadata_path.read_text())
+        subtitle = dataset_metadata["subtitle"]
         assert 20 <= len(subtitle) <= 80
+        # Real failure found live in CI even after the fixed processing
+        # delay was added: `kaggle datasets create` had run without error,
+        # but the kernel push still warned "not valid dataset sources" for
+        # the exact id we specified - Kaggle likely derives the dataset's
+        # real slug from its title the same way it does for kernels, so a
+        # human-readable, non-slug title meant the dataset never actually
+        # existed at the id we asked for, no matter how long we waited.
+        expected_dataset_slug = f"{job.job_id}-input".replace("_", "-")
+        assert dataset_metadata["id"].endswith(f"/{expected_dataset_slug}")
+        assert dataset_metadata["title"] == expected_dataset_slug
         # Real failures found live in CI, both at the kernel push step:
         # (1) a bare "400 Client Error" for SaveKernel when the title drifted
         # to 52 chars (Kaggle's real bound is 5-50); (2) after fixing that,

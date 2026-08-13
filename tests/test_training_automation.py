@@ -261,6 +261,31 @@ class TestKaggleClient:
                 clock=clock_values.__next__,
             )
 
+    def test_poll_kernel_until_terminal_retries_a_transient_status_check_failure(self):
+        # Real bug found live (run 31711116854): `kaggle kernels status`
+        # got "Permission 'kernels.get' was denied" on the very first check
+        # right after `kernels push` reported success for that exact same
+        # slug - a transient read-side lag, not a wrong ref (unlike the
+        # earlier dataset bug). Must be retried like any other non-terminal
+        # status, not raised immediately.
+        responses = iter([
+            _fake_result(returncode=1, stderr="Permission 'kernels.get' was denied"),
+            _fake_result(stdout='"complete"'),
+        ])
+        client = KaggleClient(runner=lambda args: next(responses))
+        sleeps: list[float] = []
+
+        result = client.poll_kernel_until_terminal(
+            KaggleKernelRef(owner_slug="sallehly", kernel_slug="x"),
+            poll_interval_sec=1.0,
+            timeout_sec=100.0,
+            sleep_fn=sleeps.append,
+            clock=iter([0.0, 0.0, 1.0, 1.0]).__next__,
+        )
+
+        assert result.status == KaggleKernelStatus.COMPLETE
+        assert len(sleeps) == 1
+
     def test_poll_dataset_until_ready_stops_on_ready(self):
         statuses = iter(["blobs_received", "ready"])
         calls = {"n": 0}

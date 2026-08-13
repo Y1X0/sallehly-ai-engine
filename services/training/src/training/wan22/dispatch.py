@@ -133,7 +133,16 @@ def dispatch_via_kaggle(
         dataset_input_dir,
         DatasetMetadata(
             dataset_ref=input_dataset_ref,
-            title=f"Wan2.2 training input - {job.job_id}",
+            # Kaggle likely derives a dataset's *actual* slug from this
+            # title the same way it does for kernels (see
+            # _kaggle_kernel_title's docstring) - confirmed live even after
+            # adding the 30s processing delay below: the kernel push still
+            # warned "not valid dataset sources" for the exact id we asked
+            # for, meaning no dataset existed at that ref regardless of how
+            # long we waited. Using the dataset_slug itself as the title
+            # guarantees title and id always resolve to the same slug, the
+            # same fix already proven for kernels.
+            title=input_dataset_ref.dataset_slug,
             # Kaggle's real dataset-create API rejects subtitles outside
             # 20-80 chars (found live: "Subtitle length must be between 20
             # and 80 characters" on the first real dispatch attempt that got

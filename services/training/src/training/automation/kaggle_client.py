@@ -318,15 +318,30 @@ class KaggleClient:
     ) -> KaggleJobResult:
         """Blocks (via the injectable `sleep_fn`) until the kernel reaches
         a terminal status or `timeout_sec` elapses. Tests inject a no-op
-        sleep_fn and a fake clock so this never actually waits in CI."""
+        sleep_fn and a fake clock so this never actually waits in CI.
+
+        A status check can itself transiently fail right after `kernels
+        push` returns - confirmed live (run 31711116854): the very first
+        `kernels status` call got "Permission 'kernels.get' was denied" on
+        a kernel that had just been pushed successfully (to the exact slug
+        `kernels push` itself reported back), so this wasn't a wrong-ref
+        problem like the earlier dataset one - just the read API not
+        having caught up yet. Treated as non-terminal and retried, the
+        same way `poll_dataset_until_ready` treats a transient status-check
+        failure, rather than propagated as a hard failure on the first
+        check."""
         start = clock()
         last_status = KaggleKernelStatus.QUEUED
         while True:
-            last_status = self.get_kernel_status(kernel_ref)
-            if last_status.is_terminal:
-                return KaggleJobResult(
-                    kernel_ref=kernel_ref, status=last_status, elapsed_sec=clock() - start,
-                )
+            try:
+                last_status = self.get_kernel_status(kernel_ref)
+            except KaggleAutomationError:
+                pass
+            else:
+                if last_status.is_terminal:
+                    return KaggleJobResult(
+                        kernel_ref=kernel_ref, status=last_status, elapsed_sec=clock() - start,
+                    )
             if clock() - start >= timeout_sec:
                 raise KaggleAutomationError(
                     f"Timed out after {timeout_sec}s waiting for kernel {kernel_ref.full_ref} "
