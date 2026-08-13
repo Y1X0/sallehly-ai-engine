@@ -21,15 +21,21 @@ _KAGGLE_RUNNER_FILENAME = "kaggle_kernel_runner.py"
 # training - ci-smoke-31706606785" at 52 chars got a bare "400 Client
 # Error" from SaveKernel with no field-level message, unlike the dataset
 # subtitle check - only caught by cross-referencing Kaggle's own docs).
-# Truncating job_id here guarantees the bound holds for any job_id length,
-# not just today's.
-_KAGGLE_KERNEL_TITLE_PREFIX = "Wan2.2 LoRA - "
-_KAGGLE_KERNEL_TITLE_MAX_LEN = 50
 
-
-def _kaggle_kernel_title(job_id: str) -> str:
-    budget = _KAGGLE_KERNEL_TITLE_MAX_LEN - len(_KAGGLE_KERNEL_TITLE_PREFIX)
-    return _KAGGLE_KERNEL_TITLE_PREFIX + job_id[:budget]
+def _kaggle_kernel_title(kernel_slug: str) -> str:
+    """Kaggle derives a kernel's *actual* slug from the human title (clean-
+    URL slugification of it), not from the "id" field callers specify -
+    confirmed live a second time: a title of "Wan2.2 LoRA - <job_id>" got
+    silently pushed to slug "wan2-2-lora-<job_id>" instead of the id we
+    asked for, and every downstream step (polling, output fetch) then
+    looked up the id we specified and got a misleading "Permission
+    'kernels.get' was denied" for what was really a slug mismatch. Using
+    `kernel_slug` itself as the title - already lowercase/hyphenated by
+    every caller, and validated against Kaggle's real 5-50 char bound by
+    `KernelPushConfig.validate()` - is the only way to guarantee title and
+    id always resolve to the same slug. Truncating here instead would just
+    reintroduce the same mismatch against the untruncated id."""
+    return kernel_slug
 
 
 def build_training_command_for_job(job: JobRecord, **kwargs) -> TrainingCommand:
@@ -120,12 +126,18 @@ def dispatch_via_kaggle(
         ),
         is_new=True,
     )
+    # A freshly created dataset is processed asynchronously - pushing a
+    # kernel that references it before Kaggle reports "ready" makes Kaggle
+    # silently drop it from the kernel's dataset_sources (confirmed live
+    # twice: run 30278022296 and run 31707456042, both ending in "No
+    # dataset mounted under /kaggle/input" / "not valid dataset sources").
+    kaggle_client.poll_dataset_until_ready(input_dataset_ref)
 
     entrypoint_path = Path(command.entrypoint)
     runner_path = entrypoint_path.parent / _KAGGLE_RUNNER_FILENAME
     push_config = KernelPushConfig(
         kernel_ref=kernel_ref,
-        title=_kaggle_kernel_title(job.job_id),
+        title=_kaggle_kernel_title(kernel_ref.kernel_slug),
         code_file=runner_path.name,
         dataset_sources=(input_dataset_ref, *extra_dataset_sources),
     )

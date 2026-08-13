@@ -32,6 +32,7 @@ from training import (
     InMemoryUsageLedger,
     KaggleClient,
     KaggleKernelRef,
+    KernelPushConfig,
     LoRAConfig,
     ModalJobLauncher,
     OutputExistsMetric,
@@ -616,6 +617,12 @@ class TestDispatchWiring:
 
         def runner(args):
             calls.append(args)
+            if args[1:3] == ["datasets", "status"]:
+                # A freshly created dataset processes asynchronously on
+                # Kaggle's side - the real poll_dataset_until_ready() call
+                # dispatch_via_kaggle makes between upload and push checks
+                # for exactly this "ready" string.
+                return _fake_result(stdout="ready")
             return _fake_result(stdout="Kernel version pushed")
 
         client = KaggleClient(runner=runner)
@@ -624,9 +631,11 @@ class TestDispatchWiring:
         output = dispatch_via_kaggle(job, command, client, kernel_ref, git_ref="claude/sallehly-engine-audit-vnxs4f")
 
         assert output == "Kernel version pushed"
-        # Two real CLI calls: create the input dataset, then push the kernel.
+        # Three real CLI calls: create the input dataset, poll it until
+        # ready, then push the kernel.
         assert calls[0][:3] == ["kaggle", "datasets", "create"]
-        assert calls[1][:3] == ["kaggle", "kernels", "push"]
+        assert calls[1][:3] == ["kaggle", "datasets", "status"]
+        assert calls[2][:3] == ["kaggle", "kernels", "push"]
         # The config was written to disk as a real side effect of dispatch.
         assert TrainingConfig.from_yaml(command.config_path).run_id == job.config.run_id
         # The uploaded dataset staging dir actually contains all three real inputs -
@@ -646,23 +655,37 @@ class TestDispatchWiring:
         )
         subtitle = json.loads(dataset_metadata_path.read_text())["subtitle"]
         assert 20 <= len(subtitle) <= 80
-        # Real failure found live in CI one step later: `kaggle kernels push`
-        # rejected the kernel with a bare "400 Client Error" for SaveKernel -
-        # Kaggle's own docs put the real bound at 5-50 chars, and the
-        # previous title format (a fixed prefix + job_id) drifted to 52.
-        kernel_push_call = calls[1]
+        # Real failures found live in CI, both at the kernel push step:
+        # (1) a bare "400 Client Error" for SaveKernel when the title drifted
+        # to 52 chars (Kaggle's real bound is 5-50); (2) after fixing that,
+        # Kaggle silently pushed the kernel to a *different* slug derived
+        # from the title ("wan2-2-lora-<job_id>") instead of the id we
+        # specified, and every later step (polling, output fetch) then
+        # 404'd looking up the id. The title must equal kernel_slug exactly
+        # so both id and title always resolve to the same real slug.
+        kernel_push_call = calls[2]
         kernel_metadata_path = (
             Path(kernel_push_call[kernel_push_call.index("-p") + 1]) / "kernel-metadata.json"
         )
-        title = json.loads(kernel_metadata_path.read_text())["title"]
-        assert 5 <= len(title) <= 50
+        kernel_metadata = json.loads(kernel_metadata_path.read_text())
+        assert 5 <= len(kernel_metadata["title"]) <= 50
+        assert kernel_metadata["title"] == kernel_ref.kernel_slug
 
-    def test_kaggle_kernel_title_stays_within_kaggles_real_50_char_bound_for_a_long_job_id(self):
-        # _kaggle_kernel_title() must hold the bound for any job_id length,
-        # not just the ones seen in CI so far - a long custom --job-id
-        # would otherwise silently reproduce the exact bug above.
-        title = _kaggle_kernel_title("ci-smoke-" + "9" * 40)
-        assert 5 <= len(title) <= 50
+    def test_kaggle_kernel_title_is_exactly_the_kernel_slug(self):
+        # _kaggle_kernel_title() must return the slug unchanged - any
+        # transformation (prefixing, truncating) risks the title no longer
+        # resolving to the same slug as `id`, reproducing the bug above.
+        assert _kaggle_kernel_title("wan22-ci-smoke-31707456042") == "wan22-ci-smoke-31707456042"
+
+    def test_kernel_push_config_rejects_a_title_outside_kaggles_real_5_to_50_char_bound(self):
+        base_kwargs = dict(
+            kernel_ref=KaggleKernelRef(owner_slug="sallehly", kernel_slug="x" * 60),
+            code_file="runner.py",
+        )
+        with pytest.raises(ValueError, match="5-50 chars"):
+            KernelPushConfig(title="x" * 60, **base_kwargs).validate()
+        with pytest.raises(ValueError, match="5-50 chars"):
+            KernelPushConfig(title="abcd", **base_kwargs).validate()
 
     def test_dispatch_via_kaggle_defaults_git_ref_to_master(self, tmp_path):
         fake_entrypoint_dir = tmp_path / "fake_entrypoints"
@@ -673,7 +696,12 @@ class TestDispatchWiring:
         )
         Path(command.dataset_manifest_path).parent.mkdir(parents=True, exist_ok=True)
         Path(command.dataset_manifest_path).write_text('{"clip_id": "c1"}\n')
-        client = KaggleClient(runner=lambda args: _fake_result(stdout="Kernel version pushed"))
+        def runner(args):
+            if args[1:3] == ["datasets", "status"]:
+                return _fake_result(stdout="ready")
+            return _fake_result(stdout="Kernel version pushed")
+
+        client = KaggleClient(runner=runner)
         kernel_ref = KaggleKernelRef(owner_slug="sallehly", kernel_slug=job.job_id)
 
         dispatch_via_kaggle(job, command, client, kernel_ref)

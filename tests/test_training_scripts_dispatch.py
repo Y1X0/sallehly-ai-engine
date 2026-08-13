@@ -97,6 +97,12 @@ class TestDispatchWiring:
 
         def fake_runner(args: list[str]) -> subprocess.CompletedProcess:
             calls.append(args)
+            if args[1:3] == ["datasets", "status"]:
+                # dispatch_via_kaggle polls dataset readiness before pushing
+                # the kernel (a freshly created dataset processes async on
+                # Kaggle's side) - without this the real poll would sleep
+                # for real seconds up to its timeout in this test.
+                return _fake_result(stdout="ready")
             return _fake_result(stdout="OK")
 
         real_kaggle_client_cls = module.KaggleClient

@@ -89,6 +89,17 @@ class KernelPushConfig:
     def validate(self) -> None:
         if not self.title.strip():
             raise ValueError("KernelPushConfig.title must not be empty")
+        # Kaggle's real kernel-push API enforces 5-50 chars and derives the
+        # kernel's actual slug from this title, not from `id` - a title
+        # outside this bound either gets a bare "400 Client Error" (too
+        # long, no field-level message) or silently resolves to a
+        # different slug than `id` (confirmed live both ways - see
+        # dispatch_via_kaggle's _kaggle_kernel_title docstring).
+        if not (5 <= len(self.title) <= 50):
+            raise ValueError(
+                f"KernelPushConfig.title must be 5-50 chars (Kaggle's real bound), got "
+                f"{len(self.title)}: {self.title!r}"
+            )
         if not self.code_file.strip():
             raise ValueError("KernelPushConfig.code_file must not be empty")
         if self.language not in ("python", "r"):
@@ -227,6 +238,35 @@ class KaggleClient:
         """
         args = [self._binary, "datasets", "status", dataset_ref.full_ref]
         return self._run(args).stdout.strip()
+
+    def poll_dataset_until_ready(
+        self,
+        dataset_ref: KaggleDatasetRef,
+        *,
+        poll_interval_sec: float = 5.0,
+        timeout_sec: float = 180.0,
+        sleep_fn: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> str:
+        """Blocks until `get_dataset_status` reports "ready" or
+        `timeout_sec` elapses - see that method's own docstring for why a
+        freshly created dataset must reach this state before a kernel
+        referencing it is pushed. Confirmed live a second time (run
+        31707456042): the push warned "not valid dataset sources" and
+        silently dropped the input dataset, so the kernel had nothing
+        mounted under /kaggle/input at all."""
+        start = clock()
+        last_status = ""
+        while True:
+            last_status = self.get_dataset_status(dataset_ref).strip().lower()
+            if last_status == "ready":
+                return last_status
+            if clock() - start >= timeout_sec:
+                raise KaggleAutomationError(
+                    f"Timed out after {timeout_sec}s waiting for dataset {dataset_ref.full_ref} "
+                    f"to become ready (last status: {last_status!r})"
+                )
+            sleep_fn(poll_interval_sec)
 
     def download_dataset(self, dataset_ref: KaggleDatasetRef, dest_dir: Path) -> Path:
         dest_dir.mkdir(parents=True, exist_ok=True)
