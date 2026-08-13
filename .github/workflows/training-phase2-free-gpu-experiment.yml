@@ -222,6 +222,14 @@ jobs:
 
       - name: Record the real outcome and build the training report
         if: always()
+        # Guards the case where an earlier step (fetch/ingest/dispatch)
+        # failed before run_experiment.py ever created the job record -
+        # mark_failed/mark_completed both require an existing job, and
+        # crashed with a bare KeyError here the first time an earlier
+        # step failed (real CI evidence, run 31704814436). When the job
+        # was never created, the real failure is already visible in that
+        # earlier step's own log - this step just says so plainly instead
+        # of crashing on top of it.
         run: |
           uv run python - <<'PY'
           from pathlib import Path
@@ -233,18 +241,27 @@ jobs:
           )
           job_id = "ci-smoke-${{ github.run_id }}"
           fetch_succeeded = "${{ steps.fetch.outcome }}" == "success"
-          if fetch_succeeded:
-              controller.mark_completed(
-                  job_id, result_summary="Kaggle kernel finished - see kaggle-output/ for checkpoints and logs.",
+
+          if job_store.get(job_id) is None:
+              Path(".training-automation/report.md").write_text(
+                  f"# {job_id}\n\nNo job record exists - an earlier step (fetch/ingest/build-config/"
+                  "dispatch) failed before this job was ever registered. See that step's own log "
+                  "for the real reason.\n"
               )
           else:
-              controller.mark_failed(
-                  job_id, error_message="Kaggle kernel did not finish successfully - see the "
-                  "'Wait for the Kaggle kernel' step's own log for the real reason.",
-              )
-          report = controller.report(job_id)
-          Path(".training-automation/report.md").write_text(report)
-          print(report)
+              if fetch_succeeded:
+                  controller.mark_completed(
+                      job_id, result_summary="Kaggle kernel finished - see kaggle-output/ for checkpoints and logs.",
+                  )
+              else:
+                  controller.mark_failed(
+                      job_id, error_message="Kaggle kernel did not finish successfully - see the "
+                      "'Wait for the Kaggle kernel' step's own log for the real reason.",
+                  )
+              report = controller.report(job_id)
+              Path(".training-automation/report.md").write_text(report)
+
+          print(Path(".training-automation/report.md").read_text())
           PY
 
       - name: Upload checkpoint + report artifacts

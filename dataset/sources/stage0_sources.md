@@ -6,9 +6,19 @@ for every source below is already done in `docs/DATASET_SPEC.md`
 Section 6 - this file is the "where do I actually go look" companion,
 not a second license review.
 
+**Duration ceiling, found the hard way:** the first live Stage 0 ingest
+run rejected 6 of 9 sourced `multi_entity_interaction` clips (154s-2059s
+long) for exceeding `DatasetValidator`'s real `max_duration_sec=120.0`
+default - long videos (highlight reels, full dance competitions) are
+usually multi-scene compilations, not single continuous shots, even
+when their content otherwise looks perfect. **Check a candidate's
+actual duration before sourcing it, not just after - stay under 120s.**
+Wikimedia Commons search result snippets usually show duration; prefer
+that over guessing from the title.
+
 | Category | Source | Category/Search | Acceptance criteria |
 |---|---|---|---|
-| `multi_entity_interaction` | Wikimedia Commons | `Category:Videos of sports`, `Category:Videos of dance`, `Category:Group dances` | 3+ clearly distinguishable people, actively interacting (not just co-present) - combat, dance, team sport, coordinated work/play. Caption must name the real count in words. |
+| `multi_entity_interaction` | Wikimedia Commons | `Category:Videos of sports`, `Category:Videos of dance`, `Category:Group dances` | 3+ clearly distinguishable people, actively interacting (not just co-present) - combat, dance, team sport, coordinated work/play. Caption must name the real count in words. Duration 6-120s (see note above). |
 | `distant_small_subject` v1.1 | Wikimedia Commons, NASA | Commons: `Category:Aerial videos`, `Category:Drone videos of nature/mountains/bodies of water`. NASA: Earth-observation/aerial search on images.nasa.gov | A clearly identifiable subject (person/animal/vehicle/boat) occupying roughly under ~20-25% of frame area against a wide backdrop. Reject: no subject at all, or subject framed close/large. Caption must contain explicit scale/distance language. |
 | `dense_architecture` | Wikimedia Commons | `Category:Videos from New York City` (and other-city equivalents), `Category:Skyscrapers` subcats (mostly stills - filter for actual video files) | A real building genuinely visible in motion footage, not a still photo. Mix of angle (aerial/street/oblique), day/night/weather per `docs/DATASET_SPEC.md` Section 4.C. |
 | `wide_anchor_camera` | NASA, Wikimedia Commons | NASA: Earth/aerial library. Commons: `Category:Aerial videos`, `Category:Drone videos of nature` | One unambiguous compositional anchor (river, single structure, light source) in an otherwise wide/diffuse shot. |

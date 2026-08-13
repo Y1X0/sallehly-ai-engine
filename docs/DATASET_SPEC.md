@@ -67,10 +67,15 @@ spreadsheet. Every clip gets exactly one **category tag** (below) plus
 ## 4. Category breakdown (Dataset v1 target: 600 clips)
 
 Minimum quality bar for **every** clip, all categories: source
-resolution >=1280x720, duration >=6s, single continuous shot (no hard
-cuts mid-clip - the VAE/temporal path assumes continuous motion), no
-visible watermark/logo burn-in, no heavy compression artifacts, mp4/h264
-container preferred.
+resolution >=1280x720, **6s <= duration <= 120s** (upper bound is
+`DatasetValidator`'s real, enforced `max_duration_sec` default - found
+the hard way in the first live Stage 0 ingest run, where 6 of 9
+sourced clips were rejected for exceeding it), single continuous shot
+(no hard cuts mid-clip - the VAE/temporal path assumes continuous
+motion; long, multi-scene compilations like a 34-minute highlights
+reel are exactly what this ceiling catches, even when individually
+they'd otherwise look like good candidates), no visible watermark/logo
+burn-in, no heavy compression artifacts, mp4/h264 container preferred.
 
 ### A. `multi_entity_interaction` - 150 clips (highest priority)
 
