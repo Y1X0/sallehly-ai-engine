@@ -12,6 +12,7 @@ without ever touching real weights.
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -632,6 +633,16 @@ class TestDispatchWiring:
         assert (staged_dir / "config.yaml").is_file()
         assert (staged_dir / "dataset_manifest.jsonl").is_file()
         assert (staged_dir / "git_ref.txt").read_text() == "claude/sallehly-engine-audit-vnxs4f"
+        # Real failure found live in CI: `kaggle datasets create` rejects
+        # the whole dispatch with "Subtitle length must be between 20 and
+        # 80 characters" if this drifts outside that range - assert the
+        # actual bound Kaggle's API enforces, not just that it's non-empty.
+        create_call = calls[0]
+        dataset_metadata_path = (
+            Path(create_call[create_call.index("-p") + 1]) / "dataset-metadata.json"
+        )
+        subtitle = json.loads(dataset_metadata_path.read_text())["subtitle"]
+        assert 20 <= len(subtitle) <= 80
 
     def test_dispatch_via_kaggle_defaults_git_ref_to_master(self, tmp_path):
         fake_entrypoint_dir = tmp_path / "fake_entrypoints"

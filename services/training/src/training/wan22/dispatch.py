@@ -96,7 +96,12 @@ def dispatch_via_kaggle(
         DatasetMetadata(
             dataset_ref=input_dataset_ref,
             title=f"Wan2.2 training input - {job.job_id}",
-            subtitle="config.yaml + dataset_manifest.jsonl for one training run - see kaggle_kernel_runner.py",
+            # Kaggle's real dataset-create API rejects subtitles outside
+            # 20-80 chars (found live: "Subtitle length must be between 20
+            # and 80 characters" on the first real dispatch attempt that got
+            # this far - the previous 87-char subtitle was silently never
+            # exercised until then).
+            subtitle="config.yaml + dataset_manifest.jsonl for one Wan2.2 training run",
         ),
         is_new=True,
     )
