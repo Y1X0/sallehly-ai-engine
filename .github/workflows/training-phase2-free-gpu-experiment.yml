@@ -20,18 +20,18 @@ name: Training - Phase 2 Free GPU Experiment (Kaggle/Modal, $0)
 # explicit confirmation input - a real GPU + real weights download is a
 # deliberate, human-triggered action here, never an unattended one.
 #
-# *** DEVELOPMENT-ONLY DATASET WARNING ***
-# The clips this job generates (solid-color, ffmpeg lavfi test sources)
-# exist ONLY to exercise the real DatasetManager/dispatch/training
-# mechanism end-to-end - GitHub-hosted runners have no access to real
-# footage. They are not representative training data and the resulting
-# checkpoint has no real quality: it proves the pipeline runs, not that
-# a usable model comes out the other end. See
-# docs/WAN22_KAGGLE_SMOKE_TEST.md ("Replacing the placeholder dataset")
-# for how to run this against a real dataset instead - the production
-# path is `services/training/scripts/ingest_dataset.py` against your
-# own real, rights-cleared clips, run outside this placeholder-data CI
-# job.
+# *** REAL STAGE 0 DATA, MECHANISM-PROOF SCOPE ***
+# This job fetches the real, rights-cleared multi_entity_interaction
+# Stage 0 clips (dataset/sources/stage0_urls_multi_entity.json - 9 real
+# Wikimedia Commons videos, see dataset/sources/stage0_sources.md and
+# docs/DATASET_SPEC.md) directly inside the runner - GitHub-hosted
+# runners have real internet access, so this is a real fetch, not a
+# placeholder. This is still Stage 0 scope, not the full Dataset v1:
+# every clip's category-level license (Wikimedia Commons, CONDITIONALLY
+# APPROVED per docs/DATASET_SPEC.md Section 6) is verified, but
+# per-clip CC-BY vs CC-BY-SA verification has not been done yet - fine
+# for proving the pipeline/checking if training changes behavior at
+# all, not yet the bar for the full 600-clip Dataset v1.
 
 on:
   schedule:
@@ -49,7 +49,7 @@ on:
         required: true
         default: "services/training/configs/wan21_finetune.yaml"
       run_wan22_kaggle_smoke_test:
-        description: "[wan22-ti2v5b-kaggle-smoke-test] Actually download real weights and dispatch a real Kaggle GPU run (free tier, but a real external action - requires KAGGLE_USERNAME/KAGGLE_KEY repo secrets)"
+        description: "[wan22-ti2v5b-kaggle-smoke-test] Actually download real weights and dispatch a real Kaggle GPU run (free tier, but a real external action - requires KAGGLE_USERNAME/KAGGLE_API_TOKEN repo secrets)"
         required: true
         default: false
         type: boolean
@@ -101,12 +101,12 @@ jobs:
     timeout-minutes: 120
     env:
       KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
-      KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install ffmpeg (for the CI placeholder dataset)
+      - name: Install ffmpeg (needed by ffprobe-based dataset ingestion)
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
       - name: Install uv
@@ -118,43 +118,45 @@ jobs:
         run: uv sync --all-packages --extra gpu-training
 
       - name: Verify Kaggle authentication (fails fast, before any real work below)
+        # KAGGLE_API_TOKEN, not the older KAGGLE_KEY - confirmed by hand in
+        # infra/kaggle/README.md's own troubleshooting log that Kaggle's
+        # current API token flow no longer authenticates reliably through
+        # the older username+key pair (real dispatch attempt hit
+        # "Authentication required to call the Kaggle API"); the same fix
+        # kaggle-free-inference.yml already uses successfully.
         run: |
-          if [ -z "$KAGGLE_USERNAME" ] || [ -z "$KAGGLE_KEY" ]; then
-            echo "KAGGLE_USERNAME / KAGGLE_KEY repo secrets are not set - see docs/EXECUTION_PLAN_FIRST_GPU_RUN.md" >&2
+          if [ -z "$KAGGLE_USERNAME" ] || [ -z "$KAGGLE_API_TOKEN" ]; then
+            echo "KAGGLE_USERNAME / KAGGLE_API_TOKEN repo secrets are not set - see docs/EXECUTION_PLAN_FIRST_GPU_RUN.md" >&2
             exit 1
           fi
           uv run kaggle kernels list --mine >/dev/null
 
-      # *** DEVELOPMENT-ONLY DATASET - NOT real curated footage ***
-      # GitHub-hosted runners have no access to your real clips. This
-      # generates a few tiny solid-color test clips purely to exercise
-      # the real DatasetManager pipeline (ffprobe, validation, split,
-      # versioning) end-to-end against real files - it validates the
-      # MECHANISM, not model quality. See docs/WAN22_KAGGLE_SMOKE_TEST.md
-      # ("Replacing the placeholder dataset") for the real production
-      # path: run services/training/scripts/ingest_dataset.py yourself
-      # against real, rights-cleared footage (outside this CI job, since
-      # CI cannot see your files), then dispatch from that real manifest.
-      - name: Generate a DEVELOPMENT-ONLY placeholder dataset (not real footage)
-        run: |
-          mkdir -p /tmp/ci-placeholder-clips
-          for color in red green blue; do
-            ffmpeg -y -hide_banner -loglevel error -f lavfi \
-              -i "color=c=${color}:size=960x544:duration=3:rate=16" \
-              -c:v libx264 -pix_fmt yuv420p "/tmp/ci-placeholder-clips/${color}.mp4"
-          done
+      # *** REAL Stage 0 clips, mechanism-proof scope (see the file-top note) ***
+      # GitHub-hosted runners have real internet access, so this fetches
+      # the actual 9 rights-cleared multi_entity_interaction clips
+      # (dataset/sources/stage0_urls_multi_entity.json) directly - not
+      # solid-color placeholders. dataset/sources/fetch_stage0.py already
+      # does exactly this (resolve Commons File: URLs -> real files,
+      # retry-with-backoff on Wikimedia's rate limiting, stable per-URL
+      # filenames) and is already tested (tests/test_dataset_fetch_stage0.py).
+      - name: Fetch the real multi_entity_interaction Stage 0 clips
+        run: >
+          uv run python dataset/sources/fetch_stage0.py
+          --urls dataset/sources/stage0_urls_multi_entity.json
+          --out-dir dataset/raw
 
-      - name: Ingest the placeholder dataset (real DatasetManager pipeline, development-only data)
-        # --val-fraction 0 --test-fraction 0: this placeholder dataset is
-        # only 3 clips - a nonzero val/test split has a real (small but
-        # nonzero) chance of leaving the "train" split empty, which would
-        # break the next step's `ls .training-data/manifests/*_train.jsonl`.
-        # A held-out val/test split is meaningless for a 3-clip smoke
-        # test anyway; the real dataset split fractions apply to real
-        # production ingestion runs, not this CI mechanism check.
+      - name: Ingest the real Stage 0 clips (real DatasetManager pipeline, real footage)
+        # --tag-from-subdir: auto-tags each clip with its category
+        # (multi_entity_interaction, from the folder name) - see
+        # ingest_dataset.py's own --tag-from-subdir help text.
+        # --val-fraction 0 --test-fraction 0: only 9 clips - a nonzero
+        # val/test split has a real chance of leaving "train" empty,
+        # which would break the next step's manifest glob. A held-out
+        # split is meaningless at this size; real split fractions apply
+        # once Dataset v1 (600 clips) is ingested for a real training run.
         run: >
           uv run python services/training/scripts/ingest_dataset.py
-          --clips-dir /tmp/ci-placeholder-clips --rights-cleared --tag ci-placeholder
+          --clips-dir dataset/raw --tag-from-subdir --rights-cleared --tag stage0
           --version-store-dir .training-data/dataset-versions
           --manifest-output-dir .training-data/manifests
           --base-model-config services/training/configs/wan22_finetune.yaml
