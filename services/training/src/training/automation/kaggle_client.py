@@ -258,9 +258,22 @@ class KaggleClient:
         start = clock()
         last_status = ""
         while True:
-            last_status = self.get_dataset_status(dataset_ref).strip().lower()
-            if last_status == "ready":
-                return last_status
+            try:
+                last_status = self.get_dataset_status(dataset_ref).strip().lower()
+            except KaggleAutomationError as exc:
+                # A status check can itself transiently fail right after
+                # `datasets create` returns - confirmed live (run
+                # 31708887912): the very first `datasets status` call got a
+                # bare "403 Client Error: Forbidden", the same
+                # misleading-permission-error shape as the earlier
+                # kernel-slug bug, really meaning the freshly created
+                # dataset isn't visible to the API yet. Treated as "not
+                # ready" and retried, the same way fetch_stage0.py already
+                # retries real HTTP 429s, rather than propagated.
+                last_status = f"<status check failed: {exc}>"
+            else:
+                if last_status == "ready":
+                    return last_status
             if clock() - start >= timeout_sec:
                 raise KaggleAutomationError(
                     f"Timed out after {timeout_sec}s waiting for dataset {dataset_ref.full_ref} "

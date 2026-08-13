@@ -261,6 +261,66 @@ class TestKaggleClient:
                 clock=clock_values.__next__,
             )
 
+    def test_poll_dataset_until_ready_stops_on_ready(self):
+        statuses = iter(["blobs_received", "ready"])
+        calls = {"n": 0}
+
+        def runner(args):
+            calls["n"] += 1
+            return _fake_result(stdout=next(statuses))
+
+        client = KaggleClient(runner=runner)
+        sleeps: list[float] = []
+
+        result = client.poll_dataset_until_ready(
+            KaggleDatasetRef(owner_slug="sallehly", dataset_slug="x-input"),
+            poll_interval_sec=1.0,
+            timeout_sec=100.0,
+            sleep_fn=sleeps.append,
+            clock=iter([0.0, 0.0, 1.0, 1.0]).__next__,
+        )
+
+        assert result == "ready"
+        assert calls["n"] == 2
+        assert len(sleeps) == 1
+
+    def test_poll_dataset_until_ready_retries_a_transient_status_check_failure(self):
+        # Real bug found live (run 31708887912): `kaggle datasets status`
+        # itself got a bare "403 Client Error: Forbidden" on the very
+        # first check right after `datasets create` returned - the
+        # freshly created dataset wasn't visible to the API yet. That
+        # must be retried like any other "not ready" state, not raised
+        # immediately (which crashed the whole dispatch before this fix).
+        responses = iter([
+            _fake_result(returncode=1, stderr="403 Client Error: Forbidden"),
+            _fake_result(stdout="ready"),
+        ])
+        client = KaggleClient(runner=lambda args: next(responses))
+        sleeps: list[float] = []
+
+        result = client.poll_dataset_until_ready(
+            KaggleDatasetRef(owner_slug="sallehly", dataset_slug="x-input"),
+            poll_interval_sec=1.0,
+            timeout_sec=100.0,
+            sleep_fn=sleeps.append,
+            clock=iter([0.0, 0.0, 1.0, 1.0]).__next__,
+        )
+
+        assert result == "ready"
+        assert len(sleeps) == 1
+
+    def test_poll_dataset_until_ready_raises_on_timeout(self):
+        client = KaggleClient(runner=lambda args: _fake_result(stdout="blobs_received"))
+        clock_values = iter([0.0, 0.0, 50.0, 50.0, 200.0])
+        with pytest.raises(KaggleAutomationError, match="Timed out"):
+            client.poll_dataset_until_ready(
+                KaggleDatasetRef(owner_slug="sallehly", dataset_slug="x-input"),
+                poll_interval_sec=10.0,
+                timeout_sec=100.0,
+                sleep_fn=lambda _s: None,
+                clock=clock_values.__next__,
+            )
+
 
 # --------------------------------------------------------------------------
 # ModalJobLauncher
