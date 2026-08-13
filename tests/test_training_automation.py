@@ -663,6 +663,16 @@ class TestTrainingController:
         assert reloaded.config.run_id == job.config.run_id
         assert len(store2.list_all()) == 1
 
+    def test_filesystem_job_status_store_accepts_a_plain_string_path(self, tmp_path):
+        # Regression test: a real CI run (training-phase2-free-gpu-experiment.yml's
+        # inline report-building script) passed a plain string, not a
+        # pathlib.Path, and crashed with "'str' object has no attribute
+        # 'mkdir'" - every existing caller/test happened to already pass a
+        # real Path, so this was never caught until it hit CI for real.
+        store = FilesystemJobStatusStore(str(tmp_path / "jobs"))
+        assert (tmp_path / "jobs").is_dir()
+        assert store.list_all() == []
+
 
 def test_uses_real_base_model_registry_entry():
     # Sanity: the automation layer's config generator operates on the

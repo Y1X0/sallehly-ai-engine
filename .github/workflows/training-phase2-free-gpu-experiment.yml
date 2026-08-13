@@ -123,13 +123,18 @@ jobs:
         # current API token flow no longer authenticates reliably through
         # the older username+key pair (real dispatch attempt hit
         # "Authentication required to call the Kaggle API"); the same fix
-        # kaggle-free-inference.yml already uses successfully.
+        # kaggle-free-inference.yml already uses successfully. `--with
+        # kaggle`: the `kaggle` CLI/package is not part of the
+        # gpu-training extra synced above (real failure hit in CI: "Failed
+        # to spawn: kaggle - No such file or directory" on a bare `uv run
+        # kaggle ...`) - kaggle-free-inference.yml's every kaggle-CLI call
+        # already uses this same flag.
         run: |
           if [ -z "$KAGGLE_USERNAME" ] || [ -z "$KAGGLE_API_TOKEN" ]; then
             echo "KAGGLE_USERNAME / KAGGLE_API_TOKEN repo secrets are not set - see docs/EXECUTION_PLAN_FIRST_GPU_RUN.md" >&2
             exit 1
           fi
-          uv run kaggle kernels list --mine >/dev/null
+          uv run --with kaggle kaggle kernels list --mine >/dev/null
 
       # *** REAL Stage 0 clips, mechanism-proof scope (see the file-top note) ***
       # GitHub-hosted runners have real internet access, so this fetches
@@ -183,10 +188,12 @@ jobs:
 
       - name: Dispatch the LoRA training smoke test to Kaggle's free GPU
         id: dispatch
+        # --with kaggle: dispatch_via_kaggle -> KaggleClient shells out to
+        # the real `kaggle` CLI, same gap as the auth-check step above.
         run: |
           MANIFEST=$(ls .training-data/manifests/*_train.jsonl | tail -1)
           KERNEL_REF="${{ github.event.inputs.kaggle_username || github.repository_owner }}/wan22-ci-smoke-${{ github.run_id }}"
-          uv run python services/training/scripts/run_experiment.py \
+          uv run --with kaggle python services/training/scripts/run_experiment.py \
             --base-config .training-data/ci_smoke_config.yaml \
             --allowed-ranges services/training/automation/allowed_ranges.example.json \
             --tier free_gpu --provider kaggle --dispatch \
@@ -204,9 +211,10 @@ jobs:
         # this - see docs/adr/0025-kaggle-dispatch-argv-fix.md), and
         # --validate-checkpoint fails this step if no loadable
         # adapter_model.safetensors was actually produced, rather than
-        # reporting success on an empty or corrupt result.
+        # reporting success on an empty or corrupt result. --with kaggle:
+        # same KaggleClient/kaggle-CLI gap as the earlier steps.
         run: >
-          uv run python services/training/scripts/fetch_kaggle_kernel_result.py
+          uv run --with kaggle python services/training/scripts/fetch_kaggle_kernel_result.py
           --kernel-ref "${{ steps.dispatch.outputs.kernel_ref }}"
           --output-dir .training-automation/kaggle-output
           --timeout-sec 5400
