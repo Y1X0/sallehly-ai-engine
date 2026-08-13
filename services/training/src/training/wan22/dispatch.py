@@ -16,6 +16,21 @@ from .command import TrainingCommand, build_training_command
 
 _KAGGLE_RUNNER_FILENAME = "kaggle_kernel_runner.py"
 
+# Kaggle's real kernel-push API rejects titles outside 5-80 chars, but
+# actually enforces <=50 in practice (found live: "Sallehly Wan2.2 LoRA
+# training - ci-smoke-31706606785" at 52 chars got a bare "400 Client
+# Error" from SaveKernel with no field-level message, unlike the dataset
+# subtitle check - only caught by cross-referencing Kaggle's own docs).
+# Truncating job_id here guarantees the bound holds for any job_id length,
+# not just today's.
+_KAGGLE_KERNEL_TITLE_PREFIX = "Wan2.2 LoRA - "
+_KAGGLE_KERNEL_TITLE_MAX_LEN = 50
+
+
+def _kaggle_kernel_title(job_id: str) -> str:
+    budget = _KAGGLE_KERNEL_TITLE_MAX_LEN - len(_KAGGLE_KERNEL_TITLE_PREFIX)
+    return _KAGGLE_KERNEL_TITLE_PREFIX + job_id[:budget]
+
 
 def build_training_command_for_job(job: JobRecord, **kwargs) -> TrainingCommand:
     """Item 7: the bridge from `TrainingController`'s planning output (a
@@ -110,7 +125,7 @@ def dispatch_via_kaggle(
     runner_path = entrypoint_path.parent / _KAGGLE_RUNNER_FILENAME
     push_config = KernelPushConfig(
         kernel_ref=kernel_ref,
-        title=f"Sallehly Wan2.2 LoRA training - {job.job_id}",
+        title=_kaggle_kernel_title(job.job_id),
         code_file=runner_path.name,
         dataset_sources=(input_dataset_ref, *extra_dataset_sources),
     )

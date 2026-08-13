@@ -54,6 +54,9 @@ from training import (
     load_manifest_jsonl,
     write_job_inputs,
 )
+from training.wan22.dispatch import (
+    _kaggle_kernel_title,
+)
 from training.dataset.metadata import ClipMetadata
 from training.dataset.records import ClipRecord
 from training.evaluation.benchmark import BenchmarkCase
@@ -643,6 +646,23 @@ class TestDispatchWiring:
         )
         subtitle = json.loads(dataset_metadata_path.read_text())["subtitle"]
         assert 20 <= len(subtitle) <= 80
+        # Real failure found live in CI one step later: `kaggle kernels push`
+        # rejected the kernel with a bare "400 Client Error" for SaveKernel -
+        # Kaggle's own docs put the real bound at 5-50 chars, and the
+        # previous title format (a fixed prefix + job_id) drifted to 52.
+        kernel_push_call = calls[1]
+        kernel_metadata_path = (
+            Path(kernel_push_call[kernel_push_call.index("-p") + 1]) / "kernel-metadata.json"
+        )
+        title = json.loads(kernel_metadata_path.read_text())["title"]
+        assert 5 <= len(title) <= 50
+
+    def test_kaggle_kernel_title_stays_within_kaggles_real_50_char_bound_for_a_long_job_id(self):
+        # _kaggle_kernel_title() must hold the bound for any job_id length,
+        # not just the ones seen in CI so far - a long custom --job-id
+        # would otherwise silently reproduce the exact bug above.
+        title = _kaggle_kernel_title("ci-smoke-" + "9" * 40)
+        assert 5 <= len(title) <= 50
 
     def test_dispatch_via_kaggle_defaults_git_ref_to_master(self, tmp_path):
         fake_entrypoint_dir = tmp_path / "fake_entrypoints"
