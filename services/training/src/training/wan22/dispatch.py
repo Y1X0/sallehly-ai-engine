@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import shutil
+import time
 from pathlib import Path
+from typing import Callable
 
 from ..automation.controller import JobRecord
 from ..automation.kaggle_client import (
@@ -21,6 +23,20 @@ _KAGGLE_RUNNER_FILENAME = "kaggle_kernel_runner.py"
 # training - ci-smoke-31706606785" at 52 chars got a bare "400 Client
 # Error" from SaveKernel with no field-level message, unlike the dataset
 # subtitle check - only caught by cross-referencing Kaggle's own docs).
+
+# How long to wait after `datasets create` before pushing a kernel that
+# references it. Originally this waited on `KaggleClient.get_dataset_status`
+# reaching "ready" - real evidence killed that approach: run 31709685707's
+# very first status check got a bare "403 Client Error: Forbidden" for
+# GetDatasetStatus, and every retry over the full 180s timeout got the exact
+# same 403, on a dataset the same token had just created seconds earlier.
+# That is not a brief propagation lag resolving with more retries - it's the
+# status-check API call itself not working for this token/private-dataset
+# combination. A fixed delay sidesteps depending on that call at all; 30s
+# comfortably covers the processing time observed for a few-KB dataset
+# (config.yaml + dataset_manifest.jsonl) in every attempt that got this far.
+_DATASET_PROCESSING_DELAY_SECONDS = 30.0
+
 
 def _kaggle_kernel_title(kernel_slug: str) -> str:
     """Kaggle derives a kernel's *actual* slug from the human title (clean-
@@ -68,6 +84,7 @@ def dispatch_via_kaggle(
     git_ref: str = "master",
     dataset_owner_slug: str | None = None,
     extra_dataset_sources: tuple[KaggleDatasetRef, ...] = (),
+    sleep_fn: Callable[[float], None] | None = None,
 ) -> str:
     """Item 8 (Kaggle half): pushes a real, runnable Kaggle kernel via
     the real `KaggleClient` built in the automation layer.
@@ -127,11 +144,16 @@ def dispatch_via_kaggle(
         is_new=True,
     )
     # A freshly created dataset is processed asynchronously - pushing a
-    # kernel that references it before Kaggle reports "ready" makes Kaggle
+    # kernel that references it before Kaggle finishes makes Kaggle
     # silently drop it from the kernel's dataset_sources (confirmed live
     # twice: run 30278022296 and run 31707456042, both ending in "No
     # dataset mounted under /kaggle/input" / "not valid dataset sources").
-    kaggle_client.poll_dataset_until_ready(input_dataset_ref)
+    # See _DATASET_PROCESSING_DELAY_SECONDS's own comment for why this is a
+    # fixed delay rather than polling get_dataset_status for "ready".
+    # Resolved at call time (not a bound default) so callers that can't pass
+    # sleep_fn through (e.g. run_experiment.py's CLI) can still monkeypatch
+    # time.sleep itself in tests without a real 30s wait.
+    (sleep_fn or time.sleep)(_DATASET_PROCESSING_DELAY_SECONDS)
 
     entrypoint_path = Path(command.entrypoint)
     runner_path = entrypoint_path.parent / _KAGGLE_RUNNER_FILENAME

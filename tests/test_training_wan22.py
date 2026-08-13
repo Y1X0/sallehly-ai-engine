@@ -617,25 +617,26 @@ class TestDispatchWiring:
 
         def runner(args):
             calls.append(args)
-            if args[1:3] == ["datasets", "status"]:
-                # A freshly created dataset processes asynchronously on
-                # Kaggle's side - the real poll_dataset_until_ready() call
-                # dispatch_via_kaggle makes between upload and push checks
-                # for exactly this "ready" string.
-                return _fake_result(stdout="ready")
             return _fake_result(stdout="Kernel version pushed")
 
         client = KaggleClient(runner=runner)
         kernel_ref = KaggleKernelRef(owner_slug="sallehly", kernel_slug=job.job_id)
+        sleeps: list[float] = []
 
-        output = dispatch_via_kaggle(job, command, client, kernel_ref, git_ref="claude/sallehly-engine-audit-vnxs4f")
+        output = dispatch_via_kaggle(
+            job, command, client, kernel_ref,
+            git_ref="claude/sallehly-engine-audit-vnxs4f", sleep_fn=sleeps.append,
+        )
 
         assert output == "Kernel version pushed"
-        # Three real CLI calls: create the input dataset, poll it until
-        # ready, then push the kernel.
+        # Two real CLI calls: create the input dataset, then push the kernel.
+        # A fixed delay sits between them instead of a third "datasets
+        # status" poll - see _DATASET_PROCESSING_DELAY_SECONDS's own
+        # docstring for why (a real, persistent 403 on that endpoint, not a
+        # brief race).
         assert calls[0][:3] == ["kaggle", "datasets", "create"]
-        assert calls[1][:3] == ["kaggle", "datasets", "status"]
-        assert calls[2][:3] == ["kaggle", "kernels", "push"]
+        assert calls[1][:3] == ["kaggle", "kernels", "push"]
+        assert sleeps == [30.0]
         # The config was written to disk as a real side effect of dispatch.
         assert TrainingConfig.from_yaml(command.config_path).run_id == job.config.run_id
         # The uploaded dataset staging dir actually contains all three real inputs -
@@ -663,7 +664,7 @@ class TestDispatchWiring:
         # specified, and every later step (polling, output fetch) then
         # 404'd looking up the id. The title must equal kernel_slug exactly
         # so both id and title always resolve to the same real slug.
-        kernel_push_call = calls[2]
+        kernel_push_call = calls[1]
         kernel_metadata_path = (
             Path(kernel_push_call[kernel_push_call.index("-p") + 1]) / "kernel-metadata.json"
         )
@@ -696,15 +697,10 @@ class TestDispatchWiring:
         )
         Path(command.dataset_manifest_path).parent.mkdir(parents=True, exist_ok=True)
         Path(command.dataset_manifest_path).write_text('{"clip_id": "c1"}\n')
-        def runner(args):
-            if args[1:3] == ["datasets", "status"]:
-                return _fake_result(stdout="ready")
-            return _fake_result(stdout="Kernel version pushed")
-
-        client = KaggleClient(runner=runner)
+        client = KaggleClient(runner=lambda args: _fake_result(stdout="Kernel version pushed"))
         kernel_ref = KaggleKernelRef(owner_slug="sallehly", kernel_slug=job.job_id)
 
-        dispatch_via_kaggle(job, command, client, kernel_ref)
+        dispatch_via_kaggle(job, command, client, kernel_ref, sleep_fn=lambda _s: None)
 
         staged_dir = Path(command.config_path).parent / "kaggle_dataset_input"
         assert (staged_dir / "git_ref.txt").read_text() == "master"

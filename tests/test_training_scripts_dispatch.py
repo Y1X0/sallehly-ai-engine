@@ -97,16 +97,17 @@ class TestDispatchWiring:
 
         def fake_runner(args: list[str]) -> subprocess.CompletedProcess:
             calls.append(args)
-            if args[1:3] == ["datasets", "status"]:
-                # dispatch_via_kaggle polls dataset readiness before pushing
-                # the kernel (a freshly created dataset processes async on
-                # Kaggle's side) - without this the real poll would sleep
-                # for real seconds up to its timeout in this test.
-                return _fake_result(stdout="ready")
             return _fake_result(stdout="OK")
 
         real_kaggle_client_cls = module.KaggleClient
         monkeypatch.setattr(module, "KaggleClient", lambda: real_kaggle_client_cls(runner=fake_runner))
+        # dispatch_via_kaggle() waits _DATASET_PROCESSING_DELAY_SECONDS (real
+        # seconds) between the dataset upload and the kernel push - this CLI
+        # path has no way to inject a fake sleep_fn, so patch time.sleep
+        # itself (resolved at call time, not a bound default - see
+        # dispatch.py's own comment) to keep this test fast.
+        from training.wan22 import dispatch as dispatch_module
+        monkeypatch.setattr(dispatch_module.time, "sleep", lambda _s: None)
         fake_entrypoint = tmp_path / "entrypoint_dir" / "wan22_lora_train.py"
         fake_entrypoint.parent.mkdir(parents=True)
         fake_entrypoint.write_text("# fake entrypoint for this test\n")
