@@ -316,6 +316,50 @@ class KaggleClient:
         self._run(args)
         return dest_dir
 
+    def poll_dataset_downloadable(
+        self,
+        dataset_ref: KaggleDatasetRef,
+        *,
+        dest_dir: Path,
+        poll_interval_sec: float = 10.0,
+        timeout_sec: float = 180.0,
+        sleep_fn: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        """Blocks until `dataset_ref` is genuinely downloadable or
+        `timeout_sec` elapses - the readiness check `dispatch_via_kaggle`
+        actually needs before pushing a kernel that references a freshly
+        created dataset. Confirmed live (infra/kaggle/diagnose_dataset_attach.py's
+        push-kernel diagnostic, run 31795945773) that `datasets download`
+        is a trustworthy readiness signal: it succeeded on the first
+        attempt and the exact same production KernelPushConfig/push_kernel()
+        code path then pushed clean, with no "not valid dataset sources"
+        warning at all. `get_dataset_status`/`poll_dataset_until_ready`
+        are NOT used here - that endpoint 403'd persistently across every
+        real production attempt (see get_dataset_status's own docstring),
+        so it was never a working readiness signal to begin with; the
+        fixed-delay workaround that replaced it was a blind guess that
+        never actually confirmed anything.
+
+        Raises KaggleAutomationError on timeout - callers must treat that
+        as a hard dispatch failure, not push a kernel referencing a
+        dataset that was never confirmed ready."""
+        start = clock()
+        last_error: KaggleAutomationError | None = None
+        while True:
+            try:
+                self.download_dataset(dataset_ref, dest_dir)
+            except KaggleAutomationError as exc:
+                last_error = exc
+            else:
+                return
+            if clock() - start >= timeout_sec:
+                raise KaggleAutomationError(
+                    f"Timed out after {timeout_sec}s waiting for dataset {dataset_ref.full_ref} "
+                    f"to become downloadable (last error: {last_error})"
+                )
+            sleep_fn(poll_interval_sec)
+
     def push_kernel(self, kernel_dir: Path, config: KernelPushConfig) -> str:
         config.validate()
         metadata_path = kernel_dir / "kernel-metadata.json"

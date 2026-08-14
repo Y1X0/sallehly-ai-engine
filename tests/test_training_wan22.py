@@ -30,6 +30,7 @@ from training import (
     InMemoryCheckpointStore,
     InMemoryJobStatusStore,
     InMemoryUsageLedger,
+    KaggleAutomationError,
     KaggleClient,
     KaggleKernelRef,
     KernelPushConfig,
@@ -629,14 +630,15 @@ class TestDispatchWiring:
         )
 
         assert output == "Kernel version pushed"
-        # Two real CLI calls: create the input dataset, then push the kernel.
-        # A fixed delay sits between them instead of a third "datasets
-        # status" poll - see _DATASET_PROCESSING_DELAY_SECONDS's own
-        # docstring for why (a real, persistent 403 on that endpoint, not a
-        # brief race).
+        # Three real CLI calls: create the input dataset, poll its real
+        # readiness via `datasets download` (succeeds on the first try
+        # here, so no sleep is needed), then push the kernel. Replaces the
+        # old blind fixed-delay approach - see poll_dataset_downloadable's
+        # own docstring for the real evidence behind this (run 31795945773).
         assert calls[0][:3] == ["kaggle", "datasets", "create"]
-        assert calls[1][:3] == ["kaggle", "kernels", "push"]
-        assert sleeps == [90.0]
+        assert calls[1][:3] == ["kaggle", "datasets", "download"]
+        assert calls[2][:3] == ["kaggle", "kernels", "push"]
+        assert sleeps == []
         # The config was written to disk as a real side effect of dispatch.
         assert TrainingConfig.from_yaml(command.config_path).run_id == job.config.run_id
         # The uploaded dataset staging dir actually contains all three real inputs -
@@ -675,7 +677,7 @@ class TestDispatchWiring:
         # specified, and every later step (polling, output fetch) then
         # 404'd looking up the id. The title must equal kernel_slug exactly
         # so both id and title always resolve to the same real slug.
-        kernel_push_call = calls[1]
+        kernel_push_call = calls[2]
         kernel_metadata_path = (
             Path(kernel_push_call[kernel_push_call.index("-p") + 1]) / "kernel-metadata.json"
         )
@@ -728,6 +730,44 @@ class TestDispatchWiring:
 
         with pytest.raises(FileNotFoundError):
             dispatch_via_kaggle(job, command, client, kernel_ref)
+
+    def test_dispatch_via_kaggle_fails_loudly_without_pushing_a_kernel_when_dataset_never_becomes_downloadable(
+        self, tmp_path
+    ):
+        # The real fix for the "not valid dataset sources" warning: a
+        # dataset that never becomes downloadable within the readiness
+        # poll's timeout must fail the whole dispatch clearly, not push a
+        # kernel referencing a dataset Kaggle was never confirmed to have
+        # actually attached.
+        fake_entrypoint_dir = tmp_path / "fake_entrypoints"
+        fake_entrypoint_dir.mkdir()
+        (fake_entrypoint_dir / "wan22_lora_train.py").write_text("# fake entrypoint for tests\n")
+        job, command = self._planned_job(
+            tmp_path, provider="kaggle", entrypoint=str(fake_entrypoint_dir / "wan22_lora_train.py"),
+        )
+        Path(command.dataset_manifest_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(command.dataset_manifest_path).write_text('{"clip_id": "c1"}\n')
+
+        calls = []
+
+        def runner(args):
+            calls.append(args)
+            if args[1:3] == ["datasets", "download"]:
+                return _fake_result(returncode=1, stderr="404 Client Error: Not Found")
+            return _fake_result(stdout="Kernel version pushed")
+
+        client = KaggleClient(runner=runner)
+        kernel_ref = KaggleKernelRef(owner_slug="sallehly", kernel_slug=job.job_id)
+
+        with pytest.raises(KaggleAutomationError, match="Timed out"):
+            dispatch_via_kaggle(
+                job, command, client, kernel_ref,
+                sleep_fn=lambda _s: None,
+                dataset_readiness_poll_interval_sec=0.01,
+                dataset_readiness_timeout_sec=0.01,
+            )
+
+        assert all(call[1:3] != ["kernels", "push"] for call in calls)
 
     def test_dispatch_via_modal_launches_with_gpu_and_extra_args(self, tmp_path):
         job, command = self._planned_job(tmp_path, provider="modal")

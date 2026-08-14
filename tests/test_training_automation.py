@@ -379,6 +379,44 @@ class TestKaggleClient:
                 clock=clock_values.__next__,
             )
 
+    def test_poll_dataset_downloadable_stops_once_download_succeeds(self, tmp_path):
+        # Real evidence (infra/kaggle/diagnose_dataset_attach.py's
+        # push-kernel diagnostic, run 31795945773): `datasets download` is
+        # a trustworthy readiness signal where `datasets status` was not
+        # (that endpoint 403'd on every real production attempt).
+        responses = iter([
+            _fake_result(returncode=1, stderr="404 Client Error: Not Found"),
+            _fake_result(stdout="Dataset downloaded"),
+        ])
+        client = KaggleClient(runner=lambda args: next(responses))
+        sleeps: list[float] = []
+
+        client.poll_dataset_downloadable(
+            KaggleDatasetRef(owner_slug="sallehly", dataset_slug="x-input"),
+            dest_dir=tmp_path / "probe",
+            poll_interval_sec=1.0,
+            timeout_sec=100.0,
+            sleep_fn=sleeps.append,
+            clock=iter([0.0, 0.0, 1.0, 1.0]).__next__,
+        )
+
+        assert len(sleeps) == 1
+
+    def test_poll_dataset_downloadable_raises_on_timeout_without_ever_succeeding(self, tmp_path):
+        client = KaggleClient(
+            runner=lambda args: _fake_result(returncode=1, stderr="404 Client Error: Not Found")
+        )
+        clock_values = iter([0.0, 0.0, 50.0, 50.0, 200.0])
+        with pytest.raises(KaggleAutomationError, match="Timed out"):
+            client.poll_dataset_downloadable(
+                KaggleDatasetRef(owner_slug="sallehly", dataset_slug="x-input"),
+                dest_dir=tmp_path / "probe",
+                poll_interval_sec=10.0,
+                timeout_sec=100.0,
+                sleep_fn=lambda _s: None,
+                clock=clock_values.__next__,
+            )
+
 
 # --------------------------------------------------------------------------
 # ModalJobLauncher

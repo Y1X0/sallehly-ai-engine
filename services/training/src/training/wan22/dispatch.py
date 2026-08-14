@@ -24,28 +24,16 @@ _KAGGLE_RUNNER_FILENAME = "kaggle_kernel_runner.py"
 # Error" from SaveKernel with no field-level message, unlike the dataset
 # subtitle check - only caught by cross-referencing Kaggle's own docs).
 
-# How long to wait after `datasets create` before pushing a kernel that
-# references it. Originally this waited on `KaggleClient.get_dataset_status`
-# reaching "ready" - real evidence killed that approach: run 31709685707's
-# very first status check got a bare "403 Client Error: Forbidden" for
-# GetDatasetStatus, and every retry over the full 180s timeout got the exact
-# same 403, on a dataset the same token had just created seconds earlier.
-# That is not a brief propagation lag resolving with more retries - it's the
-# status-check API call itself not working for this token/private-dataset
-# combination. A fixed delay sidesteps depending on that call at all.
-#
-# 30s was not enough - confirmed live twice more (runs 31711116854 and
-# 31711893016): the kernel push still warned "not valid dataset sources" for
-# the exact id we specified, *even after* also making the dataset's title
-# match its slug exactly (which fixed the analogous kernel-slug bug, but
-# evidently was never the real cause here - the id/slug were already
-# correct, so this was always a pure timing issue). Bumped to 90s as the
-# best available lever with no working readiness check; re-pushing the
-# kernel on failure instead was deliberately rejected - each push queues a
-# fresh execution, and run 31711893016 already spent its full 90-minute
-# poll timeout sitting in Kaggle's free-tier GPU queue without ever
-# starting, so adding more queue cycles would only make that worse.
-_DATASET_PROCESSING_DELAY_SECONDS = 90.0
+# Blind fixed delays (0s -> 30s -> 90s) between `datasets create` and the
+# kernel push never reliably fixed the real "not valid dataset sources"
+# warning - see git history for that dead end. The actual, evidence-backed
+# fix: poll `KaggleClient.poll_dataset_downloadable` (which probes real
+# readiness via `datasets download`, not the persistently-403ing
+# `datasets status`) until the freshly created dataset is genuinely
+# downloadable, confirmed live by infra/kaggle/diagnose_dataset_attach.py's
+# push-kernel diagnostic (run 31795945773): the exact same production
+# KernelPushConfig/push_kernel() code path pushed clean with zero warning
+# once readiness was actually confirmed first.
 
 
 def _kaggle_kernel_title(kernel_slug: str) -> str:
@@ -95,6 +83,8 @@ def dispatch_via_kaggle(
     dataset_owner_slug: str | None = None,
     extra_dataset_sources: tuple[KaggleDatasetRef, ...] = (),
     sleep_fn: Callable[[float], None] | None = None,
+    dataset_readiness_poll_interval_sec: float = 10.0,
+    dataset_readiness_timeout_sec: float = 180.0,
 ) -> str:
     """Item 8 (Kaggle half): pushes a real, runnable Kaggle kernel via
     the real `KaggleClient` built in the automation layer.
@@ -126,6 +116,14 @@ def dispatch_via_kaggle(
     work is actually merged there. Callers dispatching from a feature
     branch (e.g. a CI job running via `${{ github.ref_name }}`) must
     pass that branch name here.
+
+    `dataset_readiness_poll_interval_sec`/`dataset_readiness_timeout_sec`
+    tune `KaggleClient.poll_dataset_downloadable`, which blocks here until
+    the freshly uploaded input dataset is confirmed genuinely downloadable
+    before the kernel push - see that method's own docstring for why (real
+    evidence: run 31795945773). Raises `KaggleAutomationError` if the
+    dataset never becomes downloadable in time, without ever pushing a
+    kernel.
     """
     write_job_inputs(job, command)
 
@@ -167,12 +165,18 @@ def dispatch_via_kaggle(
     # silently drop it from the kernel's dataset_sources (confirmed live
     # twice: run 30278022296 and run 31707456042, both ending in "No
     # dataset mounted under /kaggle/input" / "not valid dataset sources").
-    # See _DATASET_PROCESSING_DELAY_SECONDS's own comment for why this is a
-    # fixed delay rather than polling get_dataset_status for "ready".
-    # Resolved at call time (not a bound default) so callers that can't pass
-    # sleep_fn through (e.g. run_experiment.py's CLI) can still monkeypatch
-    # time.sleep itself in tests without a real 30s wait.
-    (sleep_fn or time.sleep)(_DATASET_PROCESSING_DELAY_SECONDS)
+    # poll_dataset_downloadable raises KaggleAutomationError on timeout,
+    # which propagates straight out of dispatch_via_kaggle - a dataset
+    # that never becomes readable must fail the whole dispatch loudly,
+    # not push a kernel with a dataset silently missing from it.
+    readiness_probe_dir = Path(command.config_path).parent / "kaggle_dataset_readiness_probe"
+    kaggle_client.poll_dataset_downloadable(
+        input_dataset_ref,
+        dest_dir=readiness_probe_dir,
+        poll_interval_sec=dataset_readiness_poll_interval_sec,
+        timeout_sec=dataset_readiness_timeout_sec,
+        sleep_fn=sleep_fn or time.sleep,
+    )
 
     entrypoint_path = Path(command.entrypoint)
     runner_path = entrypoint_path.parent / _KAGGLE_RUNNER_FILENAME
