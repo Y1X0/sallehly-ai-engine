@@ -1,0 +1,66 @@
+name: Kaggle - Diagnose kernel failure ($0, no GPU, no new dispatch)
+
+# Two real dispatches (runs 31797445523 and 31798057770) both pushed
+# cleanly - the dataset-attach bug (see kaggle-diagnose-dataset-attach.yml)
+# is fixed and confirmed - but the kernel itself then errored on Kaggle's
+# side after only ~31s both times, and `kaggle kernels status`'s own
+# Failure message field came back empty. This workflow does NOT dispatch
+# anything new: it only queries the Kaggle API about the two already-
+# finished kernels (status + every real output/log file Kaggle has for
+# them) and prints everything to this run's own job log, so the real
+# cause can be read without downloading a GitHub Actions artifact. See
+# infra/kaggle/diagnose_kernel_failure.py's own module docstring.
+#
+# Required repository secrets: same KAGGLE_USERNAME/KAGGLE_API_TOKEN as
+# kaggle-free-inference.yml - see infra/kaggle/README.md.
+
+on:
+  push:
+    branches:
+      - claude/sallehly-engine-audit-vnxs4f
+  workflow_dispatch:
+    inputs:
+      kernel_slugs:
+        description: "Comma-separated kernel slugs to investigate (owner comes from the KAGGLE_USERNAME secret)"
+        required: true
+        default: "wan22-ci-smoke-31797445523,wan22-ci-smoke-31798057770"
+
+concurrency:
+  group: kaggle-diagnose-kernel-failure
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Sync workspace (base deps only, no torch/diffusers)
+        run: uv sync --all-packages
+
+      - name: Verify Kaggle authentication (fails fast, before any real work below)
+        run: |
+          if [ -z "$KAGGLE_USERNAME" ] || [ -z "$KAGGLE_API_TOKEN" ]; then
+            echo "KAGGLE_USERNAME / KAGGLE_API_TOKEN repo secrets are not set - see infra/kaggle/README.md" >&2
+            exit 1
+          fi
+          uv run --with kaggle kaggle kernels list --mine >/dev/null
+
+      - name: Investigate the failed kernel(s)
+        run: |
+          ARGS=()
+          IFS=',' read -ra SLUGS <<< "${{ github.event.inputs.kernel_slugs }}"
+          for slug in "${SLUGS[@]}"; do
+            ARGS+=(--kernel-ref "${KAGGLE_USERNAME}/${slug}")
+          done
+          uv run --with kaggle python infra/kaggle/diagnose_kernel_failure.py "${ARGS[@]}"
