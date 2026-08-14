@@ -149,6 +149,17 @@ class DatasetMetadata:
                 f"DatasetMetadata.title must be 6-50 chars (Kaggle's real bound), got "
                 f"{len(self.title)}: {self.title!r}"
             )
+        # Same real bound dispatch_via_kaggle() already worked around by
+        # hand (see its own subtitle comment) - confirmed a second,
+        # independent time by diagnose_dataset_attach.py's own second real
+        # run: "Subtitle length must be between 20 and 80 characters".
+        # Only checked when non-empty - subtitle is optional and no real
+        # evidence exists for how Kaggle treats an empty one.
+        if self.subtitle and not (20 <= len(self.subtitle) <= 80):
+            raise ValueError(
+                f"DatasetMetadata.subtitle must be 20-80 chars when set (Kaggle's real bound), got "
+                f"{len(self.subtitle)}: {self.subtitle!r}"
+            )
 
     def to_dataset_metadata_dict(self) -> dict:
         return {

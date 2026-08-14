@@ -131,6 +131,27 @@ class TestKaggleClient:
         with pytest.raises(ValueError, match="6-50 chars"):
             client.upload_dataset(tmp_path, DatasetMetadata(dataset_ref=ref, title="x" * 51), is_new=True)
 
+    def test_upload_dataset_rejects_a_nonempty_subtitle_outside_kaggles_real_20_to_80_char_bound(self, tmp_path):
+        # Real bug found live a second time (infra/kaggle/diagnose_dataset_attach.py's
+        # second real run, after the title fix): `kaggle datasets create`
+        # rejected a 93-char subtitle with "Subtitle length must be
+        # between 20 and 80 characters".
+        client = KaggleClient(runner=lambda args: _fake_result())
+        ref = KaggleDatasetRef(owner_slug="sallehly", dataset_slug="x")
+        with pytest.raises(ValueError, match="20-80 chars"):
+            client.upload_dataset(
+                tmp_path, DatasetMetadata(dataset_ref=ref, title="Training clips", subtitle="too short"),
+                is_new=True,
+            )
+        with pytest.raises(ValueError, match="20-80 chars"):
+            client.upload_dataset(
+                tmp_path, DatasetMetadata(dataset_ref=ref, title="Training clips", subtitle="x" * 81),
+                is_new=True,
+            )
+        # An empty subtitle (the default) is not checked - no real
+        # evidence exists for how Kaggle treats that case.
+        client.upload_dataset(tmp_path, DatasetMetadata(dataset_ref=ref, title="Training clips"), is_new=True)
+
     def test_download_dataset_creates_dest_and_runs_download_command(self, tmp_path):
         calls = []
 

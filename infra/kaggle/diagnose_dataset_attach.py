@@ -84,7 +84,10 @@ def _run_upload(args: argparse.Namespace, kaggle_username: str) -> int:
         # script's own first run used a 54-char title and got "The
         # dataset title must be between 6 and 50 characters").
         title=f"Diag attach - {dataset_slug}",
-        subtitle="One tiny text file - isolates the dataset-upload/attach step from training/LoRA code entirely",
+        # Kept within Kaggle's real 20-80 char subtitle bound too (found
+        # live on this same run: the previous, longer subtitle got
+        # "Subtitle length must be between 20 and 80 characters").
+        subtitle="One tiny text file - isolates dataset attach from training code",
     )
     print("Uploading real test dataset with this exact metadata:")
     print(json.dumps(metadata.to_dataset_metadata_dict(), indent=2))
