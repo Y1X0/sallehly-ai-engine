@@ -167,7 +167,14 @@ jobs:
           --base-model-config services/training/configs/wan22_finetune.yaml
           --val-fraction 0 --test-fraction 0
 
-      - name: Build a scratch smoke-test config (short run, real dataset_version)
+      - name: Build a scratch smoke-test config (real dataset_version, real LoRA training run)
+        # max_train_steps=75 (midpoint of the 50-100 range requested for
+        # the first real LoRA training attempt, now that the dataset-attach
+        # dispatch bug has real evidence-backed proof of a fix) - previous
+        # attempts used 20 steps purely to prove the dispatch mechanism
+        # worked, not to actually observe training behavior (loss movement,
+        # checkpoint output, VRAM). checkpoint_every_steps/eval_every_steps=25
+        # gives 3 checkpoints across the run to actually inspect.
         run: |
           uv run python - <<'PY'
           import dataclasses
@@ -179,8 +186,8 @@ jobs:
           version_id = Path(manifest).name.removesuffix("_train.jsonl")
           config = TrainingConfig.from_yaml("services/training/configs/wan22_finetune.yaml")
           config = dataclasses.replace(
-              config, dataset_version=version_id, max_train_steps=20,
-              checkpoint_every_steps=10, eval_every_steps=10,
+              config, dataset_version=version_id, max_train_steps=75,
+              checkpoint_every_steps=25, eval_every_steps=25,
           )
           config.to_yaml(".training-data/ci_smoke_config.yaml")
           print(f"dataset_version={version_id}")
@@ -190,9 +197,17 @@ jobs:
         id: dispatch
         # --with kaggle: dispatch_via_kaggle -> KaggleClient shells out to
         # the real `kaggle` CLI, same gap as the auth-check step above.
+        # KERNEL_REF's owner previously defaulted to github.repository_owner
+        # (the GitHub org/user, "Y1X0" - not a real Kaggle username) when
+        # kaggle_username was left blank, silently pushing under the wrong
+        # account. infra/kaggle/dispatch_inference.py's proven-working
+        # pattern (kaggle-free-inference.yml) never asks for a manual
+        # kaggle_username input at all - it falls back to the real
+        # KAGGLE_USERNAME secret already set as this job's own env var
+        # above. Matching that here removes the same footgun.
         run: |
           MANIFEST=$(ls .training-data/manifests/*_train.jsonl | tail -1)
-          KERNEL_REF="${{ github.event.inputs.kaggle_username || github.repository_owner }}/wan22-ci-smoke-${{ github.run_id }}"
+          KERNEL_REF="${{ github.event.inputs.kaggle_username || env.KAGGLE_USERNAME }}/wan22-ci-smoke-${{ github.run_id }}"
           uv run --with kaggle python services/training/scripts/run_experiment.py \
             --base-config .training-data/ci_smoke_config.yaml \
             --allowed-ranges services/training/automation/allowed_ranges.example.json \
