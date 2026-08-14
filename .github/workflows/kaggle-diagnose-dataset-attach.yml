@@ -1,4 +1,4 @@
-name: Kaggle - Diagnose dataset-attach warning ($0, human-gated, no GPU)
+name: Kaggle - Diagnose dataset-attach warning ($0, fully automated, no GPU)
 
 # 10 real dispatches of training-phase2-free-gpu-experiment.yml all hit
 # the identical "not valid dataset sources and could not be added to
@@ -9,11 +9,16 @@ name: Kaggle - Diagnose dataset-attach warning ($0, human-gated, no GPU)
 # project's other real Kaggle dispatch path) uses the same
 # non-slug dataset-title pattern, which rules that out as the cause
 # too. This workflow isolates the dataset-upload/kernel-attach step
-# completely from training/LoRA code and from any GPU request, so a
-# human can compare what our code sends against what a real,
-# UI-driven Kaggle kernel attachment actually produces - see
+# completely from training/LoRA code and from any GPU request. Steps
+# "upload" and "push-kernel" are fully automated (no browser needed):
+# push-kernel probes real dataset readiness via `datasets download`
+# (not the persistently-403ing `datasets status`) and then pushes a
+# trivial no-GPU kernel with the dataset attached via production-
+# identical code, so the "not valid dataset sources" warning (if it
+# happens) shows up directly in that step's own log - see
 # infra/kaggle/diagnose_dataset_attach.py's own module docstring for
-# the full manual procedure between these two steps.
+# full details, including the optional manual-UI "pull-kernel-metadata"
+# step.
 #
 # Required repository secrets: same KAGGLE_USERNAME/KAGGLE_API_TOKEN as
 # kaggle-free-inference.yml - see infra/kaggle/README.md.
@@ -25,14 +30,19 @@ on:
   workflow_dispatch:
     inputs:
       step:
-        description: "Which half of the diagnostic to run"
+        description: "Which part of the diagnostic to run"
         required: true
         type: choice
         options:
           - upload
+          - push-kernel
           - pull-kernel-metadata
+      dataset_ref:
+        description: "step=push-kernel only: owner_slug/dataset_slug printed by the upload step"
+        required: false
+        default: ""
       kernel_ref:
-        description: "step=pull-kernel-metadata only: owner_slug/kernel_slug of the kernel you manually created and attached the dataset to in the Kaggle UI"
+        description: "step=pull-kernel-metadata only: owner_slug/kernel_slug of a kernel a human manually attached the dataset to in the Kaggle UI"
         required: false
         default: ""
 
@@ -76,4 +86,5 @@ jobs:
         run: |
           uv run --with kaggle python infra/kaggle/diagnose_dataset_attach.py \
             --step "${{ github.event.inputs.step }}" \
+            --dataset-ref "${{ github.event.inputs.dataset_ref }}" \
             --kernel-ref "${{ github.event.inputs.kernel_ref }}"

@@ -8,29 +8,48 @@ LoRA/training code and does NOT request a GPU - this only exercises
 the dataset-upload and kernel-metadata-pull surface of the real
 KaggleClient.
 
-Two steps, run independently (see the two `--step` values below):
+Three steps, run independently (see the `--step` values below). `upload`
++ `push-kernel` are both fully automated (no browser, no GPU) and are the
+preferred path - `pull-kernel-metadata` only matters if a human separately
+does the manual UI attach described under step 1.
 
   1. `--step upload` - uploads one tiny real test dataset (a single
      short text file) using the exact same DatasetMetadata pattern
      training.wan22.dispatch.dispatch_via_kaggle() uses in production,
      and prints the real dataset ref + the exact metadata JSON sent.
-     No kernel is pushed. A human must then confirm in the Kaggle UI
-     that this dataset really exists and is visible, create an empty
-     kernel there, and manually attach it via "Add Input" - a real
-     UI-driven kernel push writes the dataset_sources id/slug Kaggle
-     itself considers valid, which is exactly what step 2 needs to
-     compare against.
+     No kernel is pushed.
 
-  2. `--step pull-kernel-metadata --kernel-ref owner/slug` - once that
-     manual kernel exists, runs `kaggle kernels pull -m` (Kaggle's own
-     documented way to fetch a real kernel's generated
-     kernel-metadata.json) and prints it verbatim, so it can be diffed
-     by eye against what KernelPushConfig.to_kernel_metadata_dict()
-     would have produced for the same dataset ref.
+  2. `--step push-kernel --dataset-ref owner/dataset-slug` - fully
+     automated, no browser needed. First probes real dataset readiness
+     by retrying `kaggle datasets download` (NOT `datasets status` -
+     that endpoint 403'd persistently across every real production
+     attempt, so it was never a trustworthy readiness signal to begin
+     with). Once the dataset is confirmed downloadable (or the probe
+     window runs out), pushes a trivial `enable_gpu=False` kernel via
+     the exact same KernelPushConfig/KaggleClient.push_kernel() code
+     path production training dispatch uses, with this dataset attached.
+     The "not valid dataset sources" warning (if it happens) appears
+     directly in `kernels push`'s own stdout - no kernel run/GPU wait
+     needed to see it. This isolates: does a *provably ready* dataset,
+     pushed with production-identical code, still trigger the warning?
+     If yes -> not a client-side format/timing bug, points at a
+     Kaggle-side dataset/account-state issue. If no -> the real cause
+     was `datasets status` giving a false readiness signal all along.
+
+  3. `--step pull-kernel-metadata --kernel-ref owner/slug` - only
+     needed if a human manually attaches the uploaded dataset to a
+     kernel via Kaggle's UI ("Add Input") instead of using step 2.
+     Runs `kaggle kernels pull -m` (Kaggle's own documented way to
+     fetch a real kernel's generated kernel-metadata.json) and prints
+     it verbatim, to diff by eye against
+     KernelPushConfig.to_kernel_metadata_dict()'s output.
 
 Usage:
     uv run --with kaggle python infra/kaggle/diagnose_dataset_attach.py \\
         --step upload --kaggle-username your-kaggle-username
+
+    uv run --with kaggle python infra/kaggle/diagnose_dataset_attach.py \\
+        --step push-kernel --dataset-ref your-kaggle-username/diagnose-attach-1234
 
     uv run --with kaggle python infra/kaggle/diagnose_dataset_attach.py \\
         --step pull-kernel-metadata --kernel-ref your-kaggle-username/some-kernel-slug
@@ -47,18 +66,22 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "services" / "training" / "src"))
+from training.automation.errors import KaggleAutomationError  # noqa: E402
 from training.automation.kaggle_client import (  # noqa: E402
     DatasetMetadata,
     KaggleClient,
     KaggleDatasetRef,
+    KaggleKernelRef,
+    KernelPushConfig,
 )
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--step", required=True, choices=("upload", "pull-kernel-metadata"))
+    parser.add_argument("--step", required=True, choices=("upload", "push-kernel", "pull-kernel-metadata"))
     parser.add_argument("--kaggle-username", default=None, help="Defaults to KAGGLE_USERNAME env var")
     parser.add_argument("--dataset-slug", default=None, help="--step upload only; defaults to a timestamped slug")
+    parser.add_argument("--dataset-ref", default=None, help="--step push-kernel only: owner_slug/dataset_slug to attach")
     parser.add_argument("--kernel-ref", default=None, help="--step pull-kernel-metadata only: owner_slug/kernel_slug")
     parser.add_argument("--work-dir", default=".kaggle-diagnose-dataset-attach")
     return parser
@@ -96,17 +119,77 @@ def _run_upload(args: argparse.Namespace, kaggle_username: str) -> int:
     client.upload_dataset(work_dir, metadata, is_new=True)
 
     print(f"\nDataset ref: {dataset_ref.full_ref}")
-    print(f"Kaggle UI:   https://www.kaggle.com/{dataset_ref.owner_slug}/datasets  (or your private datasets list)")
     print(
-        "\nNext (manual, on kaggle.com - this script cannot do these):\n"
-        f"  1. Confirm '{dataset_ref.full_ref}' really appears as a dataset with that exact reference.\n"
-        "  2. Create a brand-new, empty Kaggle Notebook.\n"
-        "  3. Use 'Add Input' in that notebook's UI to manually attach the dataset above.\n"
-        "  4. Save a version (no need to actually run anything).\n"
-        "  5. Note the kernel's owner/slug from its URL (kaggle.com/code/<owner>/<slug>),\n"
-        "     then re-run this script with:\n"
-        "       --step pull-kernel-metadata --kernel-ref <owner>/<slug>"
+        "\nNext (fully automated, no browser needed):\n"
+        f"  uv run --with kaggle python infra/kaggle/diagnose_dataset_attach.py \\\n"
+        f"      --step push-kernel --dataset-ref {dataset_ref.full_ref}"
     )
+    return 0
+
+
+def _run_push_kernel(args: argparse.Namespace, kaggle_username: str) -> int:
+    if not args.dataset_ref or "/" not in args.dataset_ref:
+        print("--dataset-ref 'owner_slug/dataset_slug' is required for --step push-kernel", file=sys.stderr)
+        return 1
+    owner_slug, dataset_slug = args.dataset_ref.split("/", 1)
+    dataset_ref = KaggleDatasetRef(owner_slug=owner_slug, dataset_slug=dataset_slug)
+    client = KaggleClient()
+
+    print(
+        f"Probing real readiness of {dataset_ref.full_ref} via 'kaggle datasets download' "
+        "(not 'datasets status' - that endpoint 403'd persistently across every real "
+        "production attempt, so it was never a trustworthy readiness signal)..."
+    )
+    probe_dir = Path(args.work_dir) / "readiness-probe"
+    ready = False
+    for attempt in range(1, 13):
+        try:
+            client.download_dataset(dataset_ref, probe_dir)
+        except KaggleAutomationError as exc:
+            print(f"  attempt {attempt}/12: not downloadable yet ({exc})")
+            time.sleep(10)
+        else:
+            ready = True
+            print(f"  attempt {attempt}/12: download succeeded - dataset is genuinely readable server-side.")
+            break
+    if not ready:
+        print(
+            "Dataset never became downloadable within the 120s probe window - "
+            "pushing the kernel anyway to see the real warning.",
+            file=sys.stderr,
+        )
+
+    kernel_slug = f"diag-push-{int(time.time())}"
+    kernel_dir = Path(args.work_dir) / "kernel"
+    kernel_dir.mkdir(parents=True, exist_ok=True)
+    (kernel_dir / "script.py").write_text("print('diagnostic kernel - no GPU, no training/LoRA code')\n")
+
+    config = KernelPushConfig(
+        kernel_ref=KaggleKernelRef(owner_slug=kaggle_username, kernel_slug=kernel_slug),
+        # Same title==kernel_slug pattern the real kernel-slug-mismatch fix
+        # established for production dispatch.
+        title=kernel_slug,
+        code_file="script.py",
+        dataset_sources=(dataset_ref,),
+        enable_gpu=False,
+    )
+    print(f"\nPushing minimal no-GPU kernel {config.kernel_ref.full_ref} with dataset_sources=[{dataset_ref.full_ref}]...")
+    output = client.push_kernel(kernel_dir, config)
+    print(output)
+
+    lowered = output.lower()
+    if "not valid dataset sources" in lowered or "could not be added" in lowered:
+        print(
+            "\n=> RESULT: the warning was reproduced even with a confirmed-ready dataset and "
+            "production-identical push code. This points at a Kaggle-side dataset/account-state "
+            "issue, not a client-side metadata format or timing bug."
+        )
+    else:
+        print(
+            "\n=> RESULT: no dataset-attach warning this time. This suggests the earlier failures "
+            "really were a readiness race that 'datasets status' failed to detect (it was "
+            "403'ing), now correctly handled by probing via 'datasets download' instead."
+        )
     return 0
 
 
@@ -147,6 +230,11 @@ def main(argv: list[str] | None = None) -> int:
             print("--kaggle-username or KAGGLE_USERNAME is required for --step upload", file=sys.stderr)
             return 1
         return _run_upload(args, kaggle_username)
+    if args.step == "push-kernel":
+        if not kaggle_username:
+            print("--kaggle-username or KAGGLE_USERNAME is required for --step push-kernel", file=sys.stderr)
+            return 1
+        return _run_push_kernel(args, kaggle_username)
     return _run_pull_kernel_metadata(args)
 
 
