@@ -1,0 +1,73 @@
+name: Kaggle - Diagnose disk space ($0, real GPU, no weights download, no training)
+
+# Real evidence (run 31818469155): after fixing the dataset-attach,
+# kernel input-dir, and cwd bugs, the real ~11GB Wan2.2-TI2V-5B
+# download itself died with "IO Error: No space left on device (os
+# error 28)" after only 3 of 20 files. Before spending another real
+# Kaggle GPU attempt on the full training dispatch, this workflow
+# pushes an isolated, read-only measurement kernel
+# (infra/kaggle/kaggle_disk_diagnostic_kernel.py, dispatched by
+# infra/kaggle/dispatch_disk_diagnostic.py) that performs the exact
+# same real `git clone` + `pip install` steps kaggle_kernel_runner.py
+# does, then reports: total/free disk space at each stage, repo size,
+# pip/huggingface cache sizes, the real byte size Wan2.2's
+# allow_patterns would actually download (via HF Hub file metadata, no
+# download), and the effect of a real `pip cache purge`. Does NOT
+# touch dispatch.py, kaggle_kernel_runner.py, or
+# download_wan22_weights.py, and does NOT download the real weights or
+# run any training.
+#
+# Requests a real GPU (same as production) so the numbers are
+# representative - not a $-cost concern (Kaggle's free tier), but it
+# does consume free GPU quota and can sit in Kaggle's queue like any
+# other real GPU dispatch.
+#
+# Required repository secrets: same KAGGLE_USERNAME/KAGGLE_API_TOKEN as
+# kaggle-free-inference.yml - see infra/kaggle/README.md.
+
+on:
+  push:
+    branches:
+      - claude/sallehly-engine-audit-vnxs4f
+  workflow_dispatch:
+    inputs:
+      git_ref:
+        description: "Branch/ref for the diagnostic kernel to clone and measure"
+        required: true
+        default: "claude/sallehly-engine-audit-vnxs4f"
+
+concurrency:
+  group: kaggle-diagnose-disk-space
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Sync workspace (base deps only, no torch/diffusers)
+        run: uv sync --all-packages
+
+      - name: Verify Kaggle authentication (fails fast, before any real work below)
+        run: |
+          if [ -z "$KAGGLE_USERNAME" ] || [ -z "$KAGGLE_API_TOKEN" ]; then
+            echo "KAGGLE_USERNAME / KAGGLE_API_TOKEN repo secrets are not set - see infra/kaggle/README.md" >&2
+            exit 1
+          fi
+          uv run --with kaggle kaggle kernels list --mine >/dev/null
+
+      - name: Measure real Kaggle disk space (no weights download, no training)
+        run: |
+          uv run --with kaggle python infra/kaggle/dispatch_disk_diagnostic.py \
+            --git-ref "${{ github.event.inputs.git_ref }}"
