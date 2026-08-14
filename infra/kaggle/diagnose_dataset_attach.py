@@ -80,7 +80,10 @@ def _run_upload(args: argparse.Namespace, kaggle_username: str) -> int:
         # production code (both dispatch_via_kaggle() and the already
         # "proven working" infra/kaggle/dispatch_inference.py) uses -
         # testing the real current behavior, not a hypothetical fix.
-        title=f"Dataset attach diagnostic - {dataset_slug}",
+        # Kept under Kaggle's real 50-char title bound (found live: this
+        # script's own first run used a 54-char title and got "The
+        # dataset title must be between 6 and 50 characters").
+        title=f"Diag attach - {dataset_slug}",
         subtitle="One tiny text file - isolates the dataset-upload/attach step from training/LoRA code entirely",
     )
     print("Uploading real test dataset with this exact metadata:")

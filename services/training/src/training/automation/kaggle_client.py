@@ -136,6 +136,20 @@ class DatasetMetadata:
     license_name: str = "other"
     subtitle: str = ""
 
+    def validate(self) -> None:
+        # Kaggle's real `datasets create` API enforces a 6-50 char bound on
+        # title - found live (infra/kaggle/diagnose_dataset_attach.py's own
+        # first real run): "The dataset title must be between 6 and 50
+        # characters" for a 54-char diagnostic title. Never actually hit by
+        # dispatch_via_kaggle()'s production titles (~27-46 chars), but
+        # nothing previously checked it, so a longer job_id/dataset_slug in
+        # the future would fail with a real but easily-preventable error.
+        if not (6 <= len(self.title) <= 50):
+            raise ValueError(
+                f"DatasetMetadata.title must be 6-50 chars (Kaggle's real bound), got "
+                f"{len(self.title)}: {self.title!r}"
+            )
+
     def to_dataset_metadata_dict(self) -> dict:
         return {
             "id": self.dataset_ref.full_ref,
@@ -214,6 +228,7 @@ class KaggleClient:
         version_notes: str = "Automated dataset update",
         is_new: bool = False,
     ) -> str:
+        metadata.validate()
         metadata_path = local_dir / "dataset-metadata.json"
         metadata_path.write_text(json.dumps(metadata.to_dataset_metadata_dict(), indent=2))
 

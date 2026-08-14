@@ -115,9 +115,21 @@ class TestKaggleClient:
 
         client = KaggleClient(runner=runner)
         ref = KaggleDatasetRef(owner_slug="sallehly", dataset_slug="training-clips")
-        client.upload_dataset(tmp_path, DatasetMetadata(dataset_ref=ref, title="x"), is_new=True)
+        client.upload_dataset(tmp_path, DatasetMetadata(dataset_ref=ref, title="Training clips"), is_new=True)
 
         assert calls[0][:3] == ["kaggle", "datasets", "create"]
+
+    def test_upload_dataset_rejects_a_title_outside_kaggles_real_6_to_50_char_bound(self, tmp_path):
+        # Real bug found live (infra/kaggle/diagnose_dataset_attach.py's
+        # first real run): `kaggle datasets create` rejected a 54-char
+        # title with "The dataset title must be between 6 and 50
+        # characters" - nothing previously checked this locally.
+        client = KaggleClient(runner=lambda args: _fake_result())
+        ref = KaggleDatasetRef(owner_slug="sallehly", dataset_slug="x")
+        with pytest.raises(ValueError, match="6-50 chars"):
+            client.upload_dataset(tmp_path, DatasetMetadata(dataset_ref=ref, title="abcde"), is_new=True)
+        with pytest.raises(ValueError, match="6-50 chars"):
+            client.upload_dataset(tmp_path, DatasetMetadata(dataset_ref=ref, title="x" * 51), is_new=True)
 
     def test_download_dataset_creates_dest_and_runs_download_command(self, tmp_path):
         calls = []
