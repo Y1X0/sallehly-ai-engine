@@ -19,7 +19,7 @@ does the manual UI attach described under step 1.
      and prints the real dataset ref + the exact metadata JSON sent.
      No kernel is pushed.
 
-  2. `--step push-kernel --dataset-ref owner/dataset-slug` - fully
+  2. `--step push-kernel --dataset-ref dataset-slug` (or `owner/dataset-slug`) - fully
      automated, no browser needed. First probes real dataset readiness
      by retrying `kaggle datasets download` (NOT `datasets status` -
      that endpoint 403'd persistently across every real production
@@ -122,16 +122,23 @@ def _run_upload(args: argparse.Namespace, kaggle_username: str) -> int:
     print(
         "\nNext (fully automated, no browser needed):\n"
         f"  uv run --with kaggle python infra/kaggle/diagnose_dataset_attach.py \\\n"
-        f"      --step push-kernel --dataset-ref {dataset_ref.full_ref}"
+        f"      --step push-kernel --dataset-ref {dataset_slug}"
     )
     return 0
 
 
 def _run_push_kernel(args: argparse.Namespace, kaggle_username: str) -> int:
-    if not args.dataset_ref or "/" not in args.dataset_ref:
-        print("--dataset-ref 'owner_slug/dataset_slug' is required for --step push-kernel", file=sys.stderr)
+    if not args.dataset_ref:
+        print("--dataset-ref 'dataset_slug' or 'owner_slug/dataset_slug' is required for --step push-kernel", file=sys.stderr)
         return 1
-    owner_slug, dataset_slug = args.dataset_ref.split("/", 1)
+    if "/" in args.dataset_ref:
+        owner_slug, dataset_slug = args.dataset_ref.split("/", 1)
+    else:
+        # Bare slug (no "owner/") defaults the owner to kaggle_username, the
+        # same way --step upload derives its own dataset ref - lets a caller
+        # pass just the slug printed by --step upload's own output without
+        # needing to know/repeat the real Kaggle username.
+        owner_slug, dataset_slug = kaggle_username, args.dataset_ref
     dataset_ref = KaggleDatasetRef(owner_slug=owner_slug, dataset_slug=dataset_slug)
     client = KaggleClient()
 

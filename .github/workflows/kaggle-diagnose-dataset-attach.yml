@@ -38,7 +38,7 @@ on:
           - push-kernel
           - pull-kernel-metadata
       dataset_ref:
-        description: "step=push-kernel only: owner_slug/dataset_slug printed by the upload step"
+        description: "step=push-kernel only: dataset_slug (or owner_slug/dataset_slug) printed by the upload step"
         required: false
         default: ""
       kernel_ref:
