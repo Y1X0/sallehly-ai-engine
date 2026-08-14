@@ -94,9 +94,9 @@ _GPU_TRAINING_EXTRA_PACKAGES: dict[str, str] = {
 _PINNED_TRANSFORMERS_VERSION = "4.48.0"
 
 
-def _run(args: list[str]) -> None:
+def _run(args: list[str], *, cwd: Path | None = None) -> None:
     print(f"$ {' '.join(args)}", flush=True)
-    subprocess.run(args, check=True)
+    subprocess.run(args, check=True, cwd=cwd)
 
 
 def _verify_cuda_available() -> None:
@@ -208,10 +208,23 @@ def main(
 
     registry_path = repo_dir / "models" / "registry.yaml"
     models_cache_root = kaggle_working_root / "models-cache"
+    # cwd=repo_dir: registry.yaml entries like capability_manifest hold
+    # paths relative to the repo root ("models/wan2.2-ti2v-5b/..."), and
+    # training.wan22.registry_metadata's validation checks them with a
+    # plain Path(...).is_file() - correct for every other real caller
+    # (local dev, tests, CI), which all already run from the repo root,
+    # but this wrapper's own subprocess otherwise inherits whatever cwd
+    # the Kaggle kernel itself started in (/kaggle/working/, not
+    # /kaggle/working/repo/) - confirmed live (run 31816280534): "file
+    # does not exist: models/wan2.2-ti2v-5b/capability_manifest.yaml"
+    # even though that file is really there, just one directory over.
+    # wan22_lora_train.py loads the same registry the same way, so it
+    # would hit the identical bug two steps later if only the download
+    # step were fixed.
     _run([
         sys.executable, str(repo_dir / "services" / "training" / "scripts" / "download_wan22_weights.py"),
         "--engine-id", _ENGINE_ID, "--registry", str(registry_path), "--cache-root", str(models_cache_root),
-    ])
+    ], cwd=repo_dir)
 
     _run([
         sys.executable, str(repo_dir / "services" / "training" / "entrypoints" / "wan22_lora_train.py"),
@@ -224,7 +237,7 @@ def main(
         "--device", "auto",
         "--registry", str(registry_path),
         "--models-cache-root", str(models_cache_root),
-    ])
+    ], cwd=repo_dir)
     return 0
 
 

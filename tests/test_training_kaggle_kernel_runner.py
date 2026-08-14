@@ -96,16 +96,17 @@ class TestKaggleKernelRunner:
         (dataset_dir / "git_ref.txt").write_text("claude/sallehly-engine-audit-vnxs4f")
         monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
         calls: list[list[str]] = []
-        monkeypatch.setattr(module, "_run", lambda args: calls.append(args))
+        monkeypatch.setattr(module, "_run", lambda args, cwd=None: calls.append((args, cwd)))
 
         module.main(
             repo_dir=_REPO_ROOT, kaggle_input_root=input_root,
             kaggle_working_root=tmp_path / "kaggle_working", clone=False,
         )
 
-        train_call = next(c for c in calls if "wan22_lora_train.py" in " ".join(c))
-        assert str(dataset_dir / "config.yaml") in train_call
-        assert str(dataset_dir / "dataset_manifest.jsonl") in train_call
+        train_args, train_cwd = next(c for c in calls if "wan22_lora_train.py" in " ".join(c[0]))
+        assert str(dataset_dir / "config.yaml") in train_args
+        assert str(dataset_dir / "dataset_manifest.jsonl") in train_args
+        assert train_cwd == _REPO_ROOT
 
     def test_raises_and_lists_all_paths_when_more_than_one_git_ref_found(self, tmp_path):
         # Refuses to guess which of several attached datasets is the real
@@ -179,7 +180,7 @@ class TestKaggleKernelRunner:
         # dependency on torch, so this still can't touch it.
         module = _load_module()
         calls: list[list[str]] = []
-        monkeypatch.setattr(module.subprocess, "run", lambda args, check=True: calls.append(args))
+        monkeypatch.setattr(module.subprocess, "run", lambda args, check=True, cwd=None: calls.append(args))
         monkeypatch.setattr(module.importlib.util, "find_spec", lambda name: None)  # everything "missing"
 
         module._install_missing_packages(tmp_path / "repo")
@@ -204,16 +205,41 @@ class TestKaggleKernelRunner:
         input_root = _write_input_dataset(tmp_path)
         monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
         calls: list[list[str]] = []
-        monkeypatch.setattr(module, "_run", lambda args: calls.append(args))
+        monkeypatch.setattr(module, "_run", lambda args, cwd=None: calls.append((args, cwd)))
 
         module.main(
             repo_dir=_REPO_ROOT, kaggle_input_root=input_root,
             kaggle_working_root=tmp_path / "kaggle_working", clone=False,
         )
 
-        train_call = next(c for c in calls if "wan22_lora_train.py" in " ".join(c))
-        assert "--device" in train_call
-        assert train_call[train_call.index("--device") + 1] == "auto"
+        train_args, train_cwd = next(c for c in calls if "wan22_lora_train.py" in " ".join(c[0]))
+        assert "--device" in train_args
+        assert train_args[train_args.index("--device") + 1] == "auto"
+        assert train_cwd == _REPO_ROOT
+
+    def test_run_passes_cwd_through_to_subprocess(self, tmp_path, monkeypatch):
+        # The real fix: download_wan22_weights.py and wan22_lora_train.py
+        # must both run with cwd=repo_dir, since models/registry.yaml's
+        # capability_manifest entries hold paths relative to the repo
+        # root - confirmed live (run 31816280534): validation failed with
+        # "file does not exist: models/wan2.2-ti2v-5b/capability_manifest.yaml"
+        # because the subprocess otherwise inherited /kaggle/working/
+        # (this wrapper's own cwd), not /kaggle/working/repo/.
+        module = _load_module()
+        input_root = _write_input_dataset(tmp_path)
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        calls: list[tuple[list[str], Path | None]] = []
+        monkeypatch.setattr(module, "_run", lambda args, cwd=None: calls.append((args, cwd)))
+
+        module.main(
+            repo_dir=_REPO_ROOT, kaggle_input_root=input_root,
+            kaggle_working_root=tmp_path / "kaggle_working", clone=False,
+        )
+
+        download_args, download_cwd = next(c for c in calls if "download_wan22_weights.py" in " ".join(c[0]))
+        assert download_cwd == _REPO_ROOT
+        train_args, train_cwd = next(c for c in calls if "wan22_lora_train.py" in " ".join(c[0]))
+        assert train_cwd == _REPO_ROOT
 
     def test_raises_when_git_ref_missing_from_older_dispatch(self, tmp_path):
         # Simulates a kernel pushed by a pre-ADR-0025-git-ref-fix
