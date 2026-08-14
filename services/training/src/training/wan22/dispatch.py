@@ -32,10 +32,20 @@ _KAGGLE_RUNNER_FILENAME = "kaggle_kernel_runner.py"
 # same 403, on a dataset the same token had just created seconds earlier.
 # That is not a brief propagation lag resolving with more retries - it's the
 # status-check API call itself not working for this token/private-dataset
-# combination. A fixed delay sidesteps depending on that call at all; 30s
-# comfortably covers the processing time observed for a few-KB dataset
-# (config.yaml + dataset_manifest.jsonl) in every attempt that got this far.
-_DATASET_PROCESSING_DELAY_SECONDS = 30.0
+# combination. A fixed delay sidesteps depending on that call at all.
+#
+# 30s was not enough - confirmed live twice more (runs 31711116854 and
+# 31711893016): the kernel push still warned "not valid dataset sources" for
+# the exact id we specified, *even after* also making the dataset's title
+# match its slug exactly (which fixed the analogous kernel-slug bug, but
+# evidently was never the real cause here - the id/slug were already
+# correct, so this was always a pure timing issue). Bumped to 90s as the
+# best available lever with no working readiness check; re-pushing the
+# kernel on failure instead was deliberately rejected - each push queues a
+# fresh execution, and run 31711893016 already spent its full 90-minute
+# poll timeout sitting in Kaggle's free-tier GPU queue without ever
+# starting, so adding more queue cycles would only make that worse.
+_DATASET_PROCESSING_DELAY_SECONDS = 90.0
 
 
 def _kaggle_kernel_title(kernel_slug: str) -> str:

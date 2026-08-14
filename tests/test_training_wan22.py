@@ -636,7 +636,7 @@ class TestDispatchWiring:
         # brief race).
         assert calls[0][:3] == ["kaggle", "datasets", "create"]
         assert calls[1][:3] == ["kaggle", "kernels", "push"]
-        assert sleeps == [30.0]
+        assert sleeps == [90.0]
         # The config was written to disk as a real side effect of dispatch.
         assert TrainingConfig.from_yaml(command.config_path).run_id == job.config.run_id
         # The uploaded dataset staging dir actually contains all three real inputs -
