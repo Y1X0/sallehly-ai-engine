@@ -62,11 +62,73 @@ class TestKaggleKernelRunner:
         empty_input_root = tmp_path / "kaggle_input"
         empty_input_root.mkdir()
 
-        with pytest.raises(RuntimeError, match="No dataset mounted"):
+        with pytest.raises(RuntimeError, match="No git_ref.txt found"):
             module.main(
                 repo_dir=_REPO_ROOT, kaggle_input_root=empty_input_root,
                 kaggle_working_root=tmp_path / "kaggle_working", clone=False,
             )
+
+    def test_finds_git_ref_when_nested_under_an_extra_datasets_directory(self, tmp_path, monkeypatch):
+        # Real bug found live, twice, with an identical traceback (runs
+        # 31797445523 and 31798057770): Kaggle mounted the real input
+        # dataset one level deeper than assumed, under a "datasets"
+        # container directory - /kaggle/input/datasets/<slug>/git_ref.txt,
+        # not the old flat /kaggle/input/<slug>/git_ref.txt. A recursive
+        # search for git_ref.txt itself must still find it regardless of
+        # how deep Kaggle nests it.
+        module = _load_module()
+        input_root = tmp_path / "kaggle_input"
+        dataset_dir = input_root / "datasets" / "ci-smoke-XXXXX-input"
+        dataset_dir.mkdir(parents=True)
+        config = TrainingConfig(
+            schema_version="1.0", run_id="kernel-runner-test", base_model_id="wan2.2-ti2v-5b",
+            base_model_revision="2.2.0", strategy="lora", dataset_version="test", resolution="64x64", fps=8,
+            max_frames=9, learning_rate=1e-4, batch_size=1, gradient_accumulation_steps=1, max_train_steps=4,
+            mixed_precision="no", min_vram_gb=1.0, gpu_count=1, checkpoint_every_steps=2, eval_every_steps=2,
+            seed=0, lora=LoRAConfig(rank=4, alpha=8, target_modules=("to_q", "to_k", "to_v", "to_out.0")),
+        )
+        config.to_yaml(dataset_dir / "config.yaml")
+        (dataset_dir / "dataset_manifest.jsonl").write_text(
+            json.dumps({"clip_id": "c1", "video_path": "/fake.mp4", "caption": "x", "width": 64, "height": 64,
+                        "num_frames": 9, "fps": 8.0})
+            + "\n"
+        )
+        (dataset_dir / "git_ref.txt").write_text("claude/sallehly-engine-audit-vnxs4f")
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        calls: list[list[str]] = []
+        monkeypatch.setattr(module, "_run", lambda args: calls.append(args))
+
+        module.main(
+            repo_dir=_REPO_ROOT, kaggle_input_root=input_root,
+            kaggle_working_root=tmp_path / "kaggle_working", clone=False,
+        )
+
+        train_call = next(c for c in calls if "wan22_lora_train.py" in " ".join(c))
+        assert str(dataset_dir / "config.yaml") in train_call
+        assert str(dataset_dir / "dataset_manifest.jsonl") in train_call
+
+    def test_raises_and_lists_all_paths_when_more_than_one_git_ref_found(self, tmp_path):
+        # Refuses to guess which of several attached datasets is the real
+        # input - must fail loudly and name every candidate, not silently
+        # pick one (the exact class of bug that caused the real failure
+        # this fix addresses in the first place).
+        module = _load_module()
+        input_root = tmp_path / "kaggle_input"
+        first = input_root / "datasets" / "job-a-input"
+        second = input_root / "datasets" / "job-b-input"
+        first.mkdir(parents=True)
+        second.mkdir(parents=True)
+        (first / "git_ref.txt").write_text("master")
+        (second / "git_ref.txt").write_text("master")
+
+        with pytest.raises(RuntimeError, match="Found 2 git_ref.txt files") as exc_info:
+            module.main(
+                repo_dir=_REPO_ROOT, kaggle_input_root=input_root,
+                kaggle_working_root=tmp_path / "kaggle_working", clone=False,
+            )
+
+        assert str(first / "git_ref.txt") in str(exc_info.value)
+        assert str(second / "git_ref.txt") in str(exc_info.value)
 
     def test_raises_when_no_cuda_available(self, tmp_path, monkeypatch):
         # The most severe gap the pre-first-real-run production audit

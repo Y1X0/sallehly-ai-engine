@@ -164,25 +164,40 @@ def main(
     only ever overridden by tests - a real Kaggle kernel invocation
     (`python kaggle_kernel_runner.py`, no args) always uses the real
     Kaggle paths and always clones fresh."""
-    # Fail fast on a misconfigured dispatch (no dataset attached) before
-    # spending any time on cloning or the ~11GB weights download below.
-    input_candidates = sorted(p for p in kaggle_input_root.glob("*") if p.is_dir())
-    if not input_candidates:
+    # Fail fast on a misconfigured dispatch (no dataset attached, or the
+    # wrong one) before spending any time on cloning or the ~11GB weights
+    # download below.
+    #
+    # Previously took `sorted(kaggle_input_root.glob("*"))[0]` and assumed
+    # that was the real dataset - confirmed live, twice, with an identical
+    # traceback (runs 31797445523 and 31798057770): the first (and only)
+    # top-level entry under /kaggle/input/ was a directory literally named
+    # "datasets" (Kaggle's own container, not our dataset's slug), so
+    # `input_dir / "git_ref.txt"` always resolved to
+    # "/kaggle/input/datasets/git_ref.txt" - never our real, one-level-
+    # deeper input. Searching recursively for git_ref.txt itself (the one
+    # file only our own uploaded dataset ever contains) and using its
+    # parent directory sidesteps depending on Kaggle's mount layout at
+    # all. Refuses to guess if that search finds anything other than
+    # exactly one match, rather than silently picking one.
+    git_ref_candidates = sorted(kaggle_input_root.rglob("git_ref.txt"))
+    if not git_ref_candidates:
         raise RuntimeError(
-            f"No dataset mounted under {kaggle_input_root} - dispatch_via_kaggle() must attach "
-            "the job's config/manifest dataset via KernelPushConfig.dataset_sources; this kernel "
-            "was not pushed with one."
+            f"No git_ref.txt found anywhere under {kaggle_input_root} (searched recursively) - "
+            "dispatch_via_kaggle() must attach the job's config/manifest dataset (which contains "
+            "git_ref.txt) via KernelPushConfig.dataset_sources; this kernel was either not pushed "
+            "with one, or was pushed by an out-of-date dispatch_via_kaggle() that predates "
+            "docs/adr/0025-kaggle-dispatch-argv-fix.md's git-ref fix."
         )
-    input_dir = input_candidates[0]
-
-    git_ref_path = input_dir / "git_ref.txt"
-    if not git_ref_path.is_file():
+    if len(git_ref_candidates) > 1:
+        found = "\n".join(f"  {p}" for p in git_ref_candidates)
         raise RuntimeError(
-            f"{git_ref_path} not found - dispatch_via_kaggle() must write the git ref this kernel "
-            "should clone into the input dataset; this kernel was pushed by an out-of-date "
-            "dispatch_via_kaggle() that predates docs/adr/0025-kaggle-dispatch-argv-fix.md's "
-            "git-ref fix."
+            f"Found {len(git_ref_candidates)} git_ref.txt files under {kaggle_input_root} - "
+            "refusing to guess which one is the real input dataset (either multiple datasets are "
+            f"attached, or Kaggle's /kaggle/input/ mount layout changed again):\n{found}"
         )
+    git_ref_path = git_ref_candidates[0]
+    input_dir = git_ref_path.parent
     git_ref = git_ref_path.read_text().strip()
 
     _verify_cuda_available()
