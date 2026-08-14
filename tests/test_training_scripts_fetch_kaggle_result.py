@@ -72,6 +72,29 @@ class TestFetchKaggleKernelResult:
 
         assert exit_code == 1
 
+    def test_prints_the_real_failure_message_when_kernel_errors(self, tmp_path, monkeypatch, capsys):
+        # `kaggle kernels status` prints a real "Failure message: ..." line
+        # for an errored kernel - printing it straight to this script's own
+        # stdout means the actual cause is visible in a CI job log, without
+        # a separate step to download/inspect kernel output files.
+        module = _load_module()
+        raw_status = 'me/my-kernel has status "error"\nFailure message: "Traceback: ImportError: no module named foo"\n'
+
+        def fake_runner(args: list[str]) -> subprocess.CompletedProcess:
+            if "status" in args:
+                return _fake_result(stdout=raw_status)
+            return _fake_result(stdout="output pulled")
+
+        real_kaggle_client_cls = module.KaggleClient
+        monkeypatch.setattr(module, "KaggleClient", lambda: real_kaggle_client_cls(runner=fake_runner))
+
+        exit_code = module.main([
+            "--kernel-ref", "me/my-kernel", "--output-dir", str(tmp_path / "out"), "--poll-interval-sec", "0",
+        ])
+
+        assert exit_code == 1
+        assert "ImportError: no module named foo" in capsys.readouterr().out
+
     def test_timeout_still_pulls_output(self, tmp_path, monkeypatch):
         # Fix: a polling timeout must not throw away whatever logs/
         # checkpoints the kernel had already produced - pull_kernel_output

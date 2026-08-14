@@ -282,6 +282,28 @@ class TestKaggleClient:
         assert calls["n"] == 3
         assert len(sleeps) == 2
 
+    def test_poll_kernel_until_terminal_captures_the_real_failure_message(self):
+        # `kaggle kernels status` prints a real "Failure message: ..." line
+        # right after the status line whenever a kernel errored (confirmed
+        # by reading kaggle's own kernels_status_cli source) - this is the
+        # actual reason the run failed, for free, with no extra API call.
+        # Must be captured in KaggleJobResult.raw_status_output, not
+        # discarded like get_kernel_status() alone does.
+        raw_output = 'me/x has status "error"\nFailure message: "Traceback: ImportError: no module named foo"\n'
+        client = KaggleClient(runner=lambda args: _fake_result(stdout=raw_output))
+        sleeps: list[float] = []
+
+        result = client.poll_kernel_until_terminal(
+            KaggleKernelRef(owner_slug="me", kernel_slug="x"),
+            poll_interval_sec=1.0,
+            timeout_sec=100.0,
+            sleep_fn=sleeps.append,
+            clock=iter([0.0, 0.0]).__next__,
+        )
+
+        assert result.status == KaggleKernelStatus.ERROR
+        assert result.raw_status_output == raw_output
+
     def test_poll_kernel_until_terminal_raises_on_timeout(self):
         client = KaggleClient(runner=lambda args: _fake_result(stdout='"running"'))
         clock_values = iter([0.0, 0.0, 50.0, 50.0, 200.0])

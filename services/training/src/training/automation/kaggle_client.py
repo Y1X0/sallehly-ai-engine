@@ -368,8 +368,20 @@ class KaggleClient:
         return self._run(args).stdout
 
     def get_kernel_status(self, kernel_ref: KaggleKernelRef) -> KaggleKernelStatus:
+        status, _raw = self._get_kernel_status_raw(kernel_ref)
+        return status
+
+    def _get_kernel_status_raw(self, kernel_ref: KaggleKernelRef) -> tuple[KaggleKernelStatus, str]:
+        # `kaggle kernels status` prints a real `Failure message: "..."`
+        # line (from the CLI's own kernels_status_cli) right after the
+        # status line whenever a kernel errored - the actual reason the
+        # run failed, for free, with no extra API call. get_kernel_status
+        # discarded this by only ever returning the parsed enum; kept here
+        # so poll_kernel_until_terminal can surface it via
+        # KaggleJobResult.raw_status_output instead of a caller having to
+        # separately download kernel output/log files to find out why.
         result = self._run([self._binary, "kernels", "status", kernel_ref.full_ref])
-        return self._parse_status(result.stdout)
+        return self._parse_status(result.stdout), result.stdout
 
     def pull_kernel_output(self, kernel_ref: KaggleKernelRef, dest_dir: Path) -> Path:
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -404,13 +416,14 @@ class KaggleClient:
         last_status = KaggleKernelStatus.QUEUED
         while True:
             try:
-                last_status = self.get_kernel_status(kernel_ref)
+                last_status, raw_status_output = self._get_kernel_status_raw(kernel_ref)
             except KaggleAutomationError:
                 pass
             else:
                 if last_status.is_terminal:
                     return KaggleJobResult(
                         kernel_ref=kernel_ref, status=last_status, elapsed_sec=clock() - start,
+                        raw_status_output=raw_status_output,
                     )
             if clock() - start >= timeout_sec:
                 raise KaggleAutomationError(

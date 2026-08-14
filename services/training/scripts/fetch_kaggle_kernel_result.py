@@ -89,6 +89,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if result is not None:
         print(f"Kernel {kernel_ref.full_ref} finished with status={result.status.value} after {result.elapsed_sec:.1f}s")
+        # `kaggle kernels status` prints a real "Failure message: ..." line
+        # whenever a kernel errored - the actual reason, for free, with no
+        # extra API call or artifact download needed. Printed straight to
+        # this job's own log (not just left in KaggleJobResult) so the real
+        # cause is visible without a separate step to download/inspect
+        # kernel output files.
+        if result.status != KaggleKernelStatus.COMPLETE and result.raw_status_output:
+            print(f"Real status output from Kaggle:\n{result.raw_status_output}")
 
     # Always attempt to pull whatever output/logs/checkpoints exist so
     # far, even after a polling timeout - partial progress on a real GPU
