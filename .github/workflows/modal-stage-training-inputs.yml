@@ -29,6 +29,9 @@ name: Modal - Stage training inputs ($0, no GPU, no training)
 # (never printed in logs, never written to files).
 
 on:
+  push:
+    branches:
+      - claude/sallehly-engine-audit-vnxs4f
   workflow_dispatch:
     inputs:
       job_id:
