@@ -1,0 +1,138 @@
+name: Modal - Stage training inputs ($0, no GPU, no training)
+
+# Isolated preparation phase for the first real Wan2.2 LoRA run on
+# Modal (docs/EXECUTION_PLAN_FIRST_GPU_RUN.md's chosen provider after
+# real evidence proved Kaggle's free-tier disk (~19.5GB) cannot hold
+# Wan2.2-TI2V-5B's real weight footprint (~31.85GB) -
+# infra/kaggle/kaggle_disk_diagnostic_kernel.py).
+#
+# services/training/entrypoints/modal_wan22_train_app.py's own
+# `train_wan22_lora` function documents a real, unsolved gap:
+# `TrainingCommand.to_modal_extra_args()` passes `--config`/
+# `--dataset-manifest` as bare local path strings, and Modal's CLI does
+# not auto-upload a local file referenced that way. This workflow
+# closes that gap operationally, without touching dispatch.py,
+# command.py, wan22_lora_train.py, or download_wan22_weights.py: it
+# fetches+ingests the same real, already-established 3-clip Stage 0
+# multi_entity_interaction dataset, builds a 5-step smoke config, then
+# uploads config + manifest (with video_path rewritten to real Volume
+# paths) + every real clip the manifest references onto the persistent
+# Modal Volume ("wan22-training-data") via
+# infra/modal/stage_training_inputs.py, and validates every uploaded
+# path really landed there.
+#
+# Deliberately does NOT run `modal run ...::train_wan22_lora`. No GPU
+# is requested and no training runs anywhere in this workflow - that is
+# a separate, later, explicitly-approved phase.
+#
+# Required repository secrets: MODAL_TOKEN_ID, MODAL_TOKEN_SECRET
+# (never printed in logs, never written to files).
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "Job id used both as the Modal Volume's runs/<job_id>/ prefix and the training run's own --job-id"
+        required: true
+        default: "modal-prep-smoke"
+
+concurrency:
+  group: modal-stage-training-inputs
+  cancel-in-progress: false
+
+jobs:
+  stage-training-inputs:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ffmpeg (needed by ffprobe-based dataset ingestion)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Sync workspace
+        run: uv sync --all-packages
+
+      - name: Verify Modal authentication (fails fast, before any real work below)
+        run: |
+          if [ -z "$MODAL_TOKEN_ID" ] || [ -z "$MODAL_TOKEN_SECRET" ]; then
+            echo "MODAL_TOKEN_ID / MODAL_TOKEN_SECRET repo secrets are not set" >&2
+            exit 1
+          fi
+          uv run --with modal modal app list >/dev/null
+
+      # Same real, already-established Stage 0 clips and mechanism the
+      # Kaggle smoke-test workflow uses (training-phase2-free-gpu-experiment.yml)
+      # - no new data source, no dataset expansion.
+      - name: Fetch the real multi_entity_interaction Stage 0 clips
+        run: >
+          uv run python dataset/sources/fetch_stage0.py
+          --urls dataset/sources/stage0_urls_multi_entity.json
+          --out-dir dataset/raw
+
+      - name: Ingest the real Stage 0 clips (real DatasetManager pipeline, real footage)
+        run: >
+          uv run python services/training/scripts/ingest_dataset.py
+          --clips-dir dataset/raw --tag-from-subdir --rights-cleared --tag stage0
+          --version-store-dir .training-data/dataset-versions
+          --manifest-output-dir .training-data/manifests
+          --base-model-config services/training/configs/wan22_finetune.yaml
+          --val-fraction 0 --test-fraction 0
+
+      - name: Build a 5-step smoke-test config (real dataset_version)
+        # max_train_steps=5 - first of the approved 5 -> 25 -> 75 phased
+        # rollout, not the full 75-step run. checkpoint_every_steps/
+        # eval_every_steps=5 so the single checkpoint the 5-step run
+        # produces is actually written and inspectable.
+        run: |
+          uv run python - <<'PY'
+          import dataclasses
+          import glob
+          from pathlib import Path
+          from training import TrainingConfig
+
+          manifest = sorted(glob.glob(".training-data/manifests/*_train.jsonl"))[-1]
+          version_id = Path(manifest).name.removesuffix("_train.jsonl")
+          config = TrainingConfig.from_yaml("services/training/configs/wan22_finetune.yaml")
+          config = dataclasses.replace(
+              config, dataset_version=version_id, max_train_steps=5,
+              checkpoint_every_steps=5, eval_every_steps=5,
+          )
+          config.to_yaml(".training-data/ci_smoke_config.yaml")
+          print(f"dataset_version={version_id}")
+          PY
+
+      - name: Stage config + manifest + real clips onto the Modal Volume, then validate
+        id: stage
+        run: |
+          MANIFEST=$(ls .training-data/manifests/*_train.jsonl | tail -1)
+          VERSION_ID=$(basename "$MANIFEST" _train.jsonl)
+          uv run --with modal python infra/modal/stage_training_inputs.py \
+            --config .training-data/ci_smoke_config.yaml \
+            --dataset-manifest "$MANIFEST" \
+            --dataset-version "$VERSION_ID" \
+            --job-id "${{ github.event.inputs.job_id }}"
+          echo "dataset_version=$VERSION_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Independently verify real Volume contents (modal volume ls)
+        run: |
+          uv run --with modal modal volume ls wan22-training-data \
+            "runs/${{ github.event.inputs.job_id }}" --json
+
+      - name: Final report
+        if: always()
+        run: |
+          echo "=== Modal preparation workflow report ==="
+          echo "dataset_version: ${{ steps.stage.outputs.dataset_version }}"
+          echo "job_id: ${{ github.event.inputs.job_id }}"
+          echo "modal run ...::train_wan22_lora: NOT executed in this workflow."
+          echo "No GPU requested, no training started - staging/validation only."
