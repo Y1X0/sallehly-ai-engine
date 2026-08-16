@@ -63,7 +63,25 @@ In this environment (and by default anywhere `ANTHROPIC_API_KEY`/
 `RUNPOD_API_KEY` aren't set), that resolves to `LocalHeuristicLLMProvider`
 + `Wan21Adapter` + `LocalProvider` - fully offline, no GPU, no API key,
 which is what lets this API be exercised end-to-end in tests
-(`tests/test_api.py`). `VIDEO_ENGINE` genuinely selects the engine via
+(`tests/test_api.py`).
+
+### `COMPUTE_PROVIDER` modes (video generation backend)
+
+| `COMPUTE_PROVIDER` | What it does | Credentials needed |
+|---|---|---|
+| `local` (default if unset) | Mock stub (`LocalProvider`) - writes the job payload as JSON, no actual video | none |
+| `local-inference` | Real (never mocked) tiny-scale `WanPipeline` generation, in-process (`LocalInferenceProvider`, `video_engine_adapter.inference.wan_inference`) - real playable `.mp4` per shot, small/short/low-res on purpose | none |
+| `runpod` | Real, full-scale Wan2.2 generation on a real GPU via a deployed RunPod Serverless endpoint (`RunPodProvider`, `workers/gpu-worker`) | `RUNPOD_API_KEY`, `RUNPOD_ENDPOINT_ID` - **fails fast at startup with a clear error if either is missing**, never silently falls back to the mock |
+
+See `infra/runpod/README.md` for deploying the real endpoint (build/push
+the image, `deploy_endpoint.py`, `check_health.py`) and
+`apps/api/src/api/static/demo.html` (`GET /demo`) for a click-through
+demo of all three modes. `HF_TOKEN` is not read by this API process
+itself - it's consumed by `workers/gpu-worker/handler.py` (the RunPod
+worker container) and `services/training/scripts/download_wan22_weights.py`
+when the configured `models/registry.yaml` repo is gated.
+
+`VIDEO_ENGINE` genuinely selects the engine via
 `VIDEO_ENGINE_REGISTRY.create(...)` as of Phase 8 - this module used to
 hardcode `Wan21Adapter()` directly and never actually read the config
 value, a real gap found and fixed while implementing config-driven engine

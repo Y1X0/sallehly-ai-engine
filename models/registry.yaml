@@ -19,6 +19,89 @@ engines:
       integration spec and open questions (checkpoint size, motion
       strength mapping) to resolve during Phase 3.
 
+  # Training targets for the Sallehly custom foundation model track
+  # (docs/adr/0023-wan22-training-execution-layer.md,
+  # docs/adr/0024-wan22-real-training-backend.md). These are not yet a
+  # selectable IVideoEngine (no adapter implements IVideoEngine against
+  # them - training.wan22.Wan22DiffusersBackend only trains a LoRA
+  # adapter on top of them) - `status: training-target` marks that
+  # distinction explicitly, rather than implying these are ready for
+  # VIDEO_ENGINE= selection the way wan2.1 (status: primary) is.
+  - engine_id: wan2.2-ti2v-5b
+    engine_version: "2.2.0"
+    status: training-target
+    license: Apache-2.0
+    source: https://github.com/Wan-Video/Wan2.2
+    capability_manifest: models/wan2.2-ti2v-5b/capability_manifest.yaml
+    weights_location: "TBD - not fetched yet; run training/scripts/download_wan22_weights.py"
+    experts:
+      # Unified single-network variant - one expert, no MoE split. See
+      # training.wan22.lora_config.expected_experts().
+      unified:
+        subfolder: transformer
+    download:
+      source: huggingface
+      repo_id: Wan-AI/Wan2.2-TI2V-5B-Diffusers
+      revision: main
+      allow_patterns:
+        - "transformer/**"
+        - "vae/**"
+        - "text_encoder/**"
+        - "tokenizer/**"
+        - "scheduler/**"
+        - "model_index.json"
+      approx_download_size_gb: 11
+      notes: >
+        Diffusers-format repo layout (transformer/vae/text_encoder/tokenizer
+        subfolders), matching diffusers.WanPipeline's own constructor
+        parameters - verified against diffusers==0.39.0's actual
+        WanPipeline/WanTransformer3DModel signatures on 2026-07-26, not
+        independently downloaded (no GPU/multi-GB weights were fetched
+        in that sandbox). Re-verify the repo's actual file listing before
+        a real download - HF repo contents can change.
+    checkpoints:
+      # Where training.wan22.Wan22DiffusersBackend.save_checkpoint()
+      # writes LoRA adapters (megabytes, not the base model) once a real
+      # training run produces them - populated per training_run_id, not
+      # committed to this file ahead of time.
+      lora_adapters_root: ".training-runs/wan2.2-ti2v-5b/checkpoints"
+
+  - engine_id: wan2.2-t2v-a14b
+    engine_version: "2.2.0"
+    status: training-target
+    license: Apache-2.0
+    source: https://github.com/Wan-Video/Wan2.2
+    capability_manifest: models/wan2.2-t2v-a14b/capability_manifest.yaml
+    weights_location: "TBD - not fetched yet; run training/scripts/download_wan22_weights.py"
+    experts:
+      # Two-expert MoE DiT - both MUST be trained and checkpointed
+      # together (training.wan22.checkpoint_writer.PairedCheckpointMissingError
+      # enforces this). See training.wan22.lora_config.expected_experts().
+      high_noise:
+        subfolder: transformer
+      low_noise:
+        subfolder: transformer_2
+    download:
+      source: huggingface
+      repo_id: Wan-AI/Wan2.2-T2V-A14B-Diffusers
+      revision: main
+      allow_patterns:
+        - "transformer/**"
+        - "transformer_2/**"
+        - "vae/**"
+        - "text_encoder/**"
+        - "tokenizer/**"
+        - "scheduler/**"
+        - "model_index.json"
+      approx_download_size_gb: 58
+      notes: >
+        Same verification caveat as wan2.2-ti2v-5b's download.notes -
+        checked against diffusers==0.39.0's WanPipeline signature
+        (transformer/transformer_2 params), not against a real download
+        of this specific repo.
+    checkpoints:
+      lora_adapters_root: ".training-runs/wan2.2-t2v-a14b/checkpoints"
+
   # Phase 8 (docs/ARCHITECTURE.md roadmap): a custom foundation model gets
   # its own entry here once training produces a usable checkpoint. It
   # implements the same IVideoEngine interface as wan2.1 above - see

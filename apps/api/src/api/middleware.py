@@ -105,6 +105,17 @@ _SECURITY_HEADERS = {
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
 }
 
+_DEMO_CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+    "connect-src 'self'; img-src 'self'"
+)
+"""GET /demo (apps/api/src/api/static/demo.html) is the one route this
+API serves that is actually an HTML page with its own inline
+script/style and same-origin fetch() calls - `default-src 'none'` (safe
+for every JSON route, which is everything else this API serves) would
+break it outright. Scoped to the `/demo` prefix only; every other
+route keeps the strict default unchanged."""
+
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Adds a fixed set of defensive response headers to every request
@@ -123,20 +134,26 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
         response = await call_next(request)
-        apply_security_headers(response)
+        apply_security_headers(response, path=request.url.path)
         return response
 
 
-def apply_security_headers(response: Response) -> Response:
+def apply_security_headers(response: Response, *, path: str = "") -> Response:
     """Also called directly by `main.py`'s global `Exception` handler:
     that handler builds its `JSONResponse` inside `ServerErrorMiddleware`,
     which sits *outside* `SecurityHeadersMiddleware` in Starlette's
     stack (same reason `ObservabilityMiddleware` can't record a
     500-from-an-exception through its own `call_next` either) - a
     response built there never passes back through this middleware's
-    `dispatch`, so it needs these headers applied explicitly."""
+    `dispatch`, so it needs these headers applied explicitly.
+
+    `path` selects the relaxed `/demo`-only CSP (see
+    `_DEMO_CONTENT_SECURITY_POLICY`); every other path (including the
+    default, unknown-path case) keeps the strict `default-src 'none'`."""
     for header, value in _SECURITY_HEADERS.items():
         response.headers[header] = value
+    if path.startswith("/demo"):
+        response.headers["Content-Security-Policy"] = _DEMO_CONTENT_SECURITY_POLICY
     return response
 
 

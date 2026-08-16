@@ -12,7 +12,9 @@ without ever touching real weights.
 
 from __future__ import annotations
 
+import json
 import subprocess
+from pathlib import Path
 
 import pytest
 from training import (
@@ -28,9 +30,10 @@ from training import (
     InMemoryCheckpointStore,
     InMemoryJobStatusStore,
     InMemoryUsageLedger,
+    KaggleAutomationError,
     KaggleClient,
-    KaggleDatasetRef,
     KaggleKernelRef,
+    KernelPushConfig,
     LoRAConfig,
     ModalJobLauncher,
     OutputExistsMetric,
@@ -52,6 +55,9 @@ from training import (
     expert_checkpoint_id,
     load_manifest_jsonl,
     write_job_inputs,
+)
+from training.wan22.dispatch import (
+    _kaggle_kernel_title,
 )
 from training.dataset.metadata import ClipMetadata
 from training.dataset.records import ClipRecord
@@ -293,6 +299,30 @@ class TestWan22CheckpointWriter:
         found = writer2.get_paired_checkpoints("run-1", 50, {"unified"})
         assert found["unified"].step == 50
 
+    def test_latest_paired_step_returns_none_for_a_fresh_run(self):
+        writer = Wan22CheckpointWriter(InMemoryCheckpointStore())
+        assert writer.latest_paired_step("run-1", {"unified"}) is None
+
+    def test_latest_paired_step_returns_the_highest_fully_paired_step(self):
+        writer = Wan22CheckpointWriter(InMemoryCheckpointStore())
+        writer.save_expert_checkpoint(run_id="run-1", step=2, expert="high_noise", artifact_uri="s3://x/h2")
+        writer.save_expert_checkpoint(run_id="run-1", step=2, expert="low_noise", artifact_uri="s3://x/l2")
+        writer.save_expert_checkpoint(run_id="run-1", step=4, expert="high_noise", artifact_uri="s3://x/h4")
+        writer.save_expert_checkpoint(run_id="run-1", step=4, expert="low_noise", artifact_uri="s3://x/l4")
+
+        assert writer.latest_paired_step("run-1", {"high_noise", "low_noise"}) == 4
+
+    def test_latest_paired_step_skips_a_step_with_only_some_experts_saved(self):
+        # Simulates a crash mid-checkpoint: step 4 only got one of two
+        # experts saved before the run died - resuming must fall back to
+        # the last step where *both* experts have a real checkpoint.
+        writer = Wan22CheckpointWriter(InMemoryCheckpointStore())
+        writer.save_expert_checkpoint(run_id="run-1", step=2, expert="high_noise", artifact_uri="s3://x/h2")
+        writer.save_expert_checkpoint(run_id="run-1", step=2, expert="low_noise", artifact_uri="s3://x/l2")
+        writer.save_expert_checkpoint(run_id="run-1", step=4, expert="high_noise", artifact_uri="s3://x/h4")
+
+        assert writer.latest_paired_step("run-1", {"high_noise", "low_noise"}) == 2
+
 
 # --------------------------------------------------------------------------
 # Wan22LoRATrainer (the ITrainer orchestration loop)
@@ -404,6 +434,81 @@ class TestWan22LoRATrainer:
             assert set(paired) == {"high_noise", "low_noise"}
         assert len(result.checkpoint_ids) == 4  # 2 experts x 2 checkpoint steps
 
+    def test_train_resumes_from_a_previously_paired_checkpoint(self):
+        """A run that already has a paired checkpoint at step 2 for both
+        experts (e.g. a previous process died after step 2) must resume
+        from there - loading each expert's saved checkpoint and
+        continuing global_step from 2, not restarting at step 0 and not
+        redoing steps 1-2."""
+        from training.wan22.backend import IWan22TrainingBackend, TrainStepResult
+
+        class FakeResumableBackend(IWan22TrainingBackend):
+            def __init__(self):
+                self.steps: list[tuple[str, int]] = []
+                self.loaded: list[tuple[str, str]] = []
+
+            def train_step(self, *, expert, step, batch, lora_config):
+                self.steps.append((expert, step))
+                return TrainStepResult(loss=1.0)
+
+            def save_checkpoint(self, *, expert, step, output_dir):
+                return f"fake://{output_dir}/{expert}/{step}"
+
+            def load_checkpoint(self, *, expert, artifact_uri, lora_config):
+                self.loaded.append((expert, artifact_uri))
+
+        config = _training_config(base_model_id="wan2.2-t2v-a14b", max_train_steps=4, checkpoint_every_steps=2)
+        lora_config = Wan22LoRAConfig.from_training_config(config)
+        backend = FakeResumableBackend()
+        checkpoint_store = InMemoryCheckpointStore()
+        writer = Wan22CheckpointWriter(checkpoint_store)
+        # Simulate a prior run that already completed and checkpointed step 2.
+        writer.save_expert_checkpoint(run_id=config.run_id, step=2, expert="high_noise", artifact_uri="fake://prior/high_noise/2")
+        writer.save_expert_checkpoint(run_id=config.run_id, step=2, expert="low_noise", artifact_uri="fake://prior/low_noise/2")
+
+        trainer = Wan22LoRATrainer(
+            backend=backend, checkpoint_writer=writer, dataset_entries=self._manifest(),
+            lora_config=lora_config, output_dir="/tmp/wan22-test-output",
+        )
+
+        result = trainer.train(config)
+
+        assert result.status == "completed"
+        assert result.final_step == 4
+        assert set(backend.loaded) == {
+            ("high_noise", "fake://prior/high_noise/2"), ("low_noise", "fake://prior/low_noise/2"),
+        }
+        # Only steps 3 and 4 actually ran - steps 1-2 were not redone.
+        steps_trained = sorted({step for _expert, step in backend.steps})
+        assert steps_trained == [3, 4]
+
+    def test_train_does_not_attempt_resume_for_a_fresh_run(self):
+        # No prior checkpoint exists, so load_checkpoint must never be
+        # called and training starts at step 1 as normal.
+        from training.wan22.backend import IWan22TrainingBackend, TrainStepResult
+
+        class FakeBackendThatFailsOnLoad(IWan22TrainingBackend):
+            def train_step(self, *, expert, step, batch, lora_config):
+                return TrainStepResult(loss=1.0)
+
+            def save_checkpoint(self, *, expert, step, output_dir):
+                return f"fake://{output_dir}/{expert}/{step}"
+
+            def load_checkpoint(self, *, expert, artifact_uri, lora_config):
+                raise AssertionError("load_checkpoint must not be called for a fresh run")
+
+        config = _training_config(base_model_id="wan2.2-ti2v-5b", max_train_steps=2, checkpoint_every_steps=2)
+        lora_config = Wan22LoRAConfig.from_training_config(config)
+        trainer = Wan22LoRATrainer(
+            backend=FakeBackendThatFailsOnLoad(), checkpoint_writer=Wan22CheckpointWriter(InMemoryCheckpointStore()),
+            dataset_entries=self._manifest(), lora_config=lora_config, output_dir="/tmp/wan22-test-output",
+        )
+
+        result = trainer.train(config)
+
+        assert result.status == "completed"
+        assert result.final_step == 2
+
 
 # --------------------------------------------------------------------------
 # TrainingCommand / build_training_command
@@ -487,19 +592,28 @@ class TestDispatchWiring:
         command = build_training_command_for_job(job, base_dir=str(tmp_path), **command_kwargs)
         return job, command
 
-    def test_dispatch_via_kaggle_pushes_kernel_with_entrypoint_directory(self, tmp_path):
-        # dispatch_via_kaggle() writes a real kernel-metadata.json into
-        # the entrypoint's own directory (that's how `kaggle kernels
-        # push` works) - point the entrypoint at a scratch directory
-        # under tmp_path rather than the real
-        # services/training/entrypoints/, so this test never touches
-        # the source tree.
+    def test_dispatch_via_kaggle_uploads_input_dataset_then_pushes_runnable_kernel(self, tmp_path):
+        # A plain Kaggle kernel push cannot receive CLI arguments
+        # (docs/adr/0025-kaggle-dispatch-argv-fix.md) - dispatch_via_kaggle()
+        # now uploads config.yaml/dataset_manifest.jsonl as a real Kaggle
+        # dataset first, then pushes kaggle_kernel_runner.py (not
+        # wan22_lora_train.py directly) referencing that dataset. Point
+        # the entrypoint at a scratch directory under tmp_path rather
+        # than the real services/training/entrypoints/, so this test
+        # never touches the source tree.
         fake_entrypoint_dir = tmp_path / "fake_entrypoints"
         fake_entrypoint_dir.mkdir()
         (fake_entrypoint_dir / "wan22_lora_train.py").write_text("# fake entrypoint for tests\n")
+        (fake_entrypoint_dir / "kaggle_kernel_runner.py").write_text("# fake runner for tests\n")
         job, command = self._planned_job(
             tmp_path, provider="kaggle", entrypoint=str(fake_entrypoint_dir / "wan22_lora_train.py"),
         )
+        # dispatch_via_kaggle() expects the dataset manifest to already
+        # exist on disk (built ahead of time by ingest_dataset.py, per
+        # write_job_inputs()'s own docstring) - create a fake one here.
+        Path(command.dataset_manifest_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(command.dataset_manifest_path).write_text('{"clip_id": "c1"}\n')
+
         calls = []
 
         def runner(args):
@@ -508,14 +622,152 @@ class TestDispatchWiring:
 
         client = KaggleClient(runner=runner)
         kernel_ref = KaggleKernelRef(owner_slug="sallehly", kernel_slug=job.job_id)
-        dataset_ref = KaggleDatasetRef(owner_slug="sallehly", dataset_slug="training-clips")
+        sleeps: list[float] = []
 
-        output = dispatch_via_kaggle(job, command, client, kernel_ref, dataset_sources=(dataset_ref,))
+        output = dispatch_via_kaggle(
+            job, command, client, kernel_ref,
+            git_ref="claude/sallehly-engine-audit-vnxs4f", sleep_fn=sleeps.append,
+        )
 
         assert output == "Kernel version pushed"
-        assert calls[0][:3] == ["kaggle", "kernels", "push"]
+        # Three real CLI calls: create the input dataset, poll its real
+        # readiness via `datasets download` (succeeds on the first try
+        # here, so no sleep is needed), then push the kernel. Replaces the
+        # old blind fixed-delay approach - see poll_dataset_downloadable's
+        # own docstring for the real evidence behind this (run 31795945773).
+        assert calls[0][:3] == ["kaggle", "datasets", "create"]
+        assert calls[1][:3] == ["kaggle", "datasets", "download"]
+        assert calls[2][:3] == ["kaggle", "kernels", "push"]
+        assert sleeps == []
         # The config was written to disk as a real side effect of dispatch.
         assert TrainingConfig.from_yaml(command.config_path).run_id == job.config.run_id
+        # The uploaded dataset staging dir actually contains all three real inputs -
+        # including git_ref.txt, so the Kaggle-side clone checks out the right
+        # branch instead of silently falling back to the repo's default branch.
+        staged_dir = Path(command.config_path).parent / "kaggle_dataset_input"
+        assert (staged_dir / "config.yaml").is_file()
+        assert (staged_dir / "dataset_manifest.jsonl").is_file()
+        assert (staged_dir / "git_ref.txt").read_text() == "claude/sallehly-engine-audit-vnxs4f"
+        # Real failure found live in CI: `kaggle datasets create` rejects
+        # the whole dispatch with "Subtitle length must be between 20 and
+        # 80 characters" if this drifts outside that range - assert the
+        # actual bound Kaggle's API enforces, not just that it's non-empty.
+        create_call = calls[0]
+        dataset_metadata_path = (
+            Path(create_call[create_call.index("-p") + 1]) / "dataset-metadata.json"
+        )
+        dataset_metadata = json.loads(dataset_metadata_path.read_text())
+        subtitle = dataset_metadata["subtitle"]
+        assert 20 <= len(subtitle) <= 80
+        # Real failure found live in CI even after the fixed processing
+        # delay was added: `kaggle datasets create` had run without error,
+        # but the kernel push still warned "not valid dataset sources" for
+        # the exact id we specified - Kaggle likely derives the dataset's
+        # real slug from its title the same way it does for kernels, so a
+        # human-readable, non-slug title meant the dataset never actually
+        # existed at the id we asked for, no matter how long we waited.
+        expected_dataset_slug = f"{job.job_id}-input".replace("_", "-")
+        assert dataset_metadata["id"].endswith(f"/{expected_dataset_slug}")
+        assert dataset_metadata["title"] == expected_dataset_slug
+        # Real failures found live in CI, both at the kernel push step:
+        # (1) a bare "400 Client Error" for SaveKernel when the title drifted
+        # to 52 chars (Kaggle's real bound is 5-50); (2) after fixing that,
+        # Kaggle silently pushed the kernel to a *different* slug derived
+        # from the title ("wan2-2-lora-<job_id>") instead of the id we
+        # specified, and every later step (polling, output fetch) then
+        # 404'd looking up the id. The title must equal kernel_slug exactly
+        # so both id and title always resolve to the same real slug.
+        kernel_push_call = calls[2]
+        kernel_metadata_path = (
+            Path(kernel_push_call[kernel_push_call.index("-p") + 1]) / "kernel-metadata.json"
+        )
+        kernel_metadata = json.loads(kernel_metadata_path.read_text())
+        assert 5 <= len(kernel_metadata["title"]) <= 50
+        assert kernel_metadata["title"] == kernel_ref.kernel_slug
+
+    def test_kaggle_kernel_title_is_exactly_the_kernel_slug(self):
+        # _kaggle_kernel_title() must return the slug unchanged - any
+        # transformation (prefixing, truncating) risks the title no longer
+        # resolving to the same slug as `id`, reproducing the bug above.
+        assert _kaggle_kernel_title("wan22-ci-smoke-31707456042") == "wan22-ci-smoke-31707456042"
+
+    def test_kernel_push_config_rejects_a_title_outside_kaggles_real_5_to_50_char_bound(self):
+        base_kwargs = dict(
+            kernel_ref=KaggleKernelRef(owner_slug="sallehly", kernel_slug="x" * 60),
+            code_file="runner.py",
+        )
+        with pytest.raises(ValueError, match="5-50 chars"):
+            KernelPushConfig(title="x" * 60, **base_kwargs).validate()
+        with pytest.raises(ValueError, match="5-50 chars"):
+            KernelPushConfig(title="abcd", **base_kwargs).validate()
+
+    def test_dispatch_via_kaggle_defaults_git_ref_to_master(self, tmp_path):
+        fake_entrypoint_dir = tmp_path / "fake_entrypoints"
+        fake_entrypoint_dir.mkdir()
+        (fake_entrypoint_dir / "wan22_lora_train.py").write_text("# fake entrypoint for tests\n")
+        job, command = self._planned_job(
+            tmp_path, provider="kaggle", entrypoint=str(fake_entrypoint_dir / "wan22_lora_train.py"),
+        )
+        Path(command.dataset_manifest_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(command.dataset_manifest_path).write_text('{"clip_id": "c1"}\n')
+        client = KaggleClient(runner=lambda args: _fake_result(stdout="Kernel version pushed"))
+        kernel_ref = KaggleKernelRef(owner_slug="sallehly", kernel_slug=job.job_id)
+
+        dispatch_via_kaggle(job, command, client, kernel_ref, sleep_fn=lambda _s: None)
+
+        staged_dir = Path(command.config_path).parent / "kaggle_dataset_input"
+        assert (staged_dir / "git_ref.txt").read_text() == "master"
+
+    def test_dispatch_via_kaggle_requires_dataset_manifest_to_already_exist(self, tmp_path):
+        fake_entrypoint_dir = tmp_path / "fake_entrypoints"
+        fake_entrypoint_dir.mkdir()
+        (fake_entrypoint_dir / "wan22_lora_train.py").write_text("# fake entrypoint for tests\n")
+        job, command = self._planned_job(
+            tmp_path, provider="kaggle", entrypoint=str(fake_entrypoint_dir / "wan22_lora_train.py"),
+        )
+        client = KaggleClient(runner=lambda args: _fake_result(stdout="unused"))
+        kernel_ref = KaggleKernelRef(owner_slug="sallehly", kernel_slug=job.job_id)
+
+        with pytest.raises(FileNotFoundError):
+            dispatch_via_kaggle(job, command, client, kernel_ref)
+
+    def test_dispatch_via_kaggle_fails_loudly_without_pushing_a_kernel_when_dataset_never_becomes_downloadable(
+        self, tmp_path
+    ):
+        # The real fix for the "not valid dataset sources" warning: a
+        # dataset that never becomes downloadable within the readiness
+        # poll's timeout must fail the whole dispatch clearly, not push a
+        # kernel referencing a dataset Kaggle was never confirmed to have
+        # actually attached.
+        fake_entrypoint_dir = tmp_path / "fake_entrypoints"
+        fake_entrypoint_dir.mkdir()
+        (fake_entrypoint_dir / "wan22_lora_train.py").write_text("# fake entrypoint for tests\n")
+        job, command = self._planned_job(
+            tmp_path, provider="kaggle", entrypoint=str(fake_entrypoint_dir / "wan22_lora_train.py"),
+        )
+        Path(command.dataset_manifest_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(command.dataset_manifest_path).write_text('{"clip_id": "c1"}\n')
+
+        calls = []
+
+        def runner(args):
+            calls.append(args)
+            if args[1:3] == ["datasets", "download"]:
+                return _fake_result(returncode=1, stderr="404 Client Error: Not Found")
+            return _fake_result(stdout="Kernel version pushed")
+
+        client = KaggleClient(runner=runner)
+        kernel_ref = KaggleKernelRef(owner_slug="sallehly", kernel_slug=job.job_id)
+
+        with pytest.raises(KaggleAutomationError, match="Timed out"):
+            dispatch_via_kaggle(
+                job, command, client, kernel_ref,
+                sleep_fn=lambda _s: None,
+                dataset_readiness_poll_interval_sec=0.01,
+                dataset_readiness_timeout_sec=0.01,
+            )
+
+        assert all(call[1:3] != ["kernels", "push"] for call in calls)
 
     def test_dispatch_via_modal_launches_with_gpu_and_extra_args(self, tmp_path):
         job, command = self._planned_job(tmp_path, provider="modal")

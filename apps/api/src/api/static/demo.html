@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Sallehly AI Engine — Demo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    max-width: 880px; margin: 2rem auto; padding: 0 1.25rem;
+    background: #0b0d12; color: #e8e8ec;
+  }
+  h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+  .sub { color: #9aa0aa; font-size: 0.9rem; margin-bottom: 1.5rem; }
+  .badge {
+    display: inline-block; background: #2a2f3a; color: #ffd166;
+    border-radius: 999px; padding: 0.15rem 0.7rem; font-size: 0.75rem;
+    margin-left: 0.5rem; border: 1px solid #ffd16655;
+  }
+  textarea, input, select {
+    width: 100%; box-sizing: border-box; background: #14171d; color: #e8e8ec;
+    border: 1px solid #2a2f3a; border-radius: 8px; padding: 0.6rem 0.7rem;
+    font-size: 0.95rem; margin-top: 0.3rem;
+  }
+  label { font-size: 0.85rem; color: #b7bcc6; }
+  .row { display: flex; gap: 1rem; margin-top: 0.8rem; }
+  .row > div { flex: 1; }
+  button {
+    margin-top: 1.2rem; background: #4f7cff; color: white; border: none;
+    padding: 0.7rem 1.4rem; border-radius: 8px; font-size: 1rem; cursor: pointer;
+  }
+  button:disabled { background: #33384a; cursor: progress; }
+  #log {
+    margin-top: 1.5rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.82rem; white-space: pre-wrap; background: #0f1116; border: 1px solid #22262f;
+    border-radius: 8px; padding: 0.8rem 1rem; max-height: 260px; overflow-y: auto;
+  }
+  .card {
+    background: #14171d; border: 1px solid #2a2f3a; border-radius: 10px;
+    padding: 1rem 1.1rem; margin-top: 1rem;
+  }
+  .card h3 { margin: 0 0 0.5rem 0; font-size: 1rem; }
+  .shot { border-left: 3px solid #4f7cff; padding-left: 0.8rem; margin: 0.6rem 0; font-size: 0.88rem; }
+  .shot b { color: #ffd166; }
+  .kv { font-size: 0.82rem; color: #9aa0aa; }
+  .asset-card { border-left: 3px solid #4caf7d; }
+  pre.mini { font-size: 0.78rem; background: #0f1116; padding: 0.6rem; border-radius: 6px; overflow-x: auto; }
+  #status { font-size: 0.9rem; margin-top: 0.6rem; color: #9aa0aa; }
+  video.preview-video { display: block; max-width: 260px; margin-top: 0.5rem; border-radius: 6px; background: #000; }
+</style>
+</head>
+<body>
+  <h1>Sallehly AI Engine <span class="badge">DEMO</span></h1>
+  <p class="sub">
+    Type a video idea. This runs the real Creative Director → Shot Planner → Creative Compiler →
+    Render Orchestrator pipeline end-to-end, then a real Wan text-to-video generation
+    (<code>video_engine_adapter.inference.wan_inference</code>) for every shot.
+    <br/><br/>
+    <b>Compute provider matters for what you'll see:</b>
+    <br/>• <code>COMPUTE_PROVIDER=local-inference</code> (recommended for this demo) — a real,
+    tiny-scale WanPipeline runs in-process (no GPU, no credentials) and you get an actual playable
+    generated clip per shot below (small/short/low-res — proves the mechanism, not output quality).
+    <br/>• <code>COMPUTE_PROVIDER=runpod</code> (production) — real full-scale Wan2.2 generation on a
+    real GPU (<code>workers/gpu-worker</code>, real HF-downloaded + checksum-verified weights, never
+    random). Deploy once via <code>infra/runpod/deploy_endpoint.py</code>, then set
+    <code>RUNPOD_API_KEY</code>/<code>RUNPOD_ENDPOINT_ID</code>; the server refuses to start with a
+    clear error if either is missing, instead of silently mocking.
+    <br/>• <code>COMPUTE_PROVIDER=local</code> (server default if unset) — mock stub, shows the
+    render job payload only, no actual video.
+  </p>
+
+  <label for="prompt">Video idea / prompt</label>
+  <textarea id="prompt" rows="3">A lone astronaut discovers a glowing forest on an alien moon</textarea>
+
+  <div class="row">
+    <div>
+      <label for="duration">Target duration (sec)</label>
+      <input id="duration" type="number" value="12" min="2" max="60" />
+    </div>
+    <div>
+      <label for="aspect">Aspect ratio</label>
+      <select id="aspect">
+        <option value="16:9">16:9</option>
+        <option value="9:16">9:16</option>
+        <option value="1:1">1:1</option>
+      </select>
+    </div>
+  </div>
+
+  <button id="run">Run demo pipeline</button>
+  <div id="status"></div>
+  <div id="log"></div>
+  <div id="results"></div>
+
+<script>
+const logEl = document.getElementById("log");
+const statusEl = document.getElementById("status");
+const resultsEl = document.getElementById("results");
+const runBtn = document.getElementById("run");
+
+function log(msg) {
+  logEl.textContent += msg + "\n";
+  logEl.scrollTop = logEl.scrollHeight;
+}
+function setStatus(msg) { statusEl.textContent = msg; }
+
+async function api(method, path, token, body) {
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = "Bearer " + token;
+  const res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const text = await res.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = text; }
+  if (!res.ok) throw new Error(`${method} ${path} -> ${res.status}: ${JSON.stringify(data)}`);
+  return data;
+}
+
+function renderStoryboard(storyboard) {
+  const shots = storyboard.frames.map(f => `
+    <div class="shot">
+      <b>${f.shot_id}</b> — ${f.visual_description}<br/>
+      <span class="kv">${f.camera_framing} · ${f.lens_choice} · ${f.camera_movement} · ${f.lighting}</span>
+    </div>`).join("");
+  resultsEl.innerHTML += `<div class="card"><h3>Storyboard (${storyboard.frames.length} shots)</h3>${shots}</div>`;
+}
+
+async function renderAssets(assets) {
+  let html = `<div class="card asset-card"><h3>Generated artifacts (${assets.length})</h3>`;
+  for (const asset of assets) {
+    const uri = asset.versions[asset.versions.length - 1].uri;
+    const contentUrl = `/demo/asset-content?uri=${encodeURIComponent(uri)}`;
+    let preview = "";
+    if (uri.toLowerCase().endsWith(".mp4")) {
+      preview = `<video class="preview-video" src="${contentUrl}" controls muted loop></video>`;
+    } else {
+      try {
+        const content = await api("GET", contentUrl);
+        preview = `<pre class="mini">${JSON.stringify(content, null, 2)}</pre>`;
+      } catch (e) {
+        preview = `<span class="kv">${uri}</span>`;
+      }
+    }
+    html += `<div class="shot"><b>${asset.asset_id}</b> (${asset.kind}, shot ${asset.shot_id})${preview}</div>`;
+  }
+  html += "</div>";
+  resultsEl.innerHTML += html;
+}
+
+async function runDemo() {
+  runBtn.disabled = true;
+  logEl.textContent = "";
+  resultsEl.innerHTML = "";
+  const prompt = document.getElementById("prompt").value.trim();
+  const duration = parseFloat(document.getElementById("duration").value);
+  const aspect = document.getElementById("aspect").value;
+
+  try {
+    setStatus("Registering demo user…");
+    const email = `demo-${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.com`;
+    const password = "demo-pass-" + Math.random().toString(36).slice(2);
+    await api("POST", "/auth/register", null, { email, password });
+    log(`Registered ${email}`);
+
+    setStatus("Logging in…");
+    const { token } = await api("POST", "/auth/login", null, { email, password });
+    log("Logged in, token acquired");
+
+    setStatus("Creating project from prompt…");
+    const project = await api("POST", "/projects", token, {
+      prompt, target_duration_sec: duration, aspect_ratio: aspect,
+    });
+    log(`Project created: ${project.project_id}`);
+
+    setStatus("Running Creative Director (story + shot planning)…");
+    await api("POST", `/projects/${project.project_id}/generate-plan`, token);
+    log("Creative plan + storyboard generated");
+
+    const storyboard = await api("GET", `/projects/${project.project_id}/storyboard`, token);
+    renderStoryboard(storyboard);
+
+    setStatus("Approving storyboard…");
+    await api("POST", `/projects/${project.project_id}/approve-storyboard`, token);
+    log("Storyboard approved -> render plan compiled");
+
+    setStatus("Approving render plan…");
+    await api("POST", `/projects/${project.project_id}/approve-render`, token);
+    log("Render plan approved");
+
+    setStatus("Dispatching render jobs (mock compute provider)…");
+    const finalProject = await api("POST", `/projects/${project.project_id}/generate-video`, token);
+    log(`Generation status: ${finalProject.status}, jobs: ${finalProject.generation_job_ids.length}`);
+
+    setStatus("Fetching generated artifacts…");
+    const { assets } = await api("GET", `/projects/${project.project_id}/assets`, token);
+    await renderAssets(assets);
+
+    setStatus(`Done — ${assets.length} artifact(s) produced for project ${project.project_id}.`);
+  } catch (err) {
+    log("ERROR: " + err.message);
+    setStatus("Failed — see log above.");
+  } finally {
+    runBtn.disabled = false;
+  }
+}
+
+runBtn.addEventListener("click", runDemo);
+</script>
+</body>
+</html>

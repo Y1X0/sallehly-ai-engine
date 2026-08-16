@@ -1,11 +1,55 @@
 from __future__ import annotations
 
+import shutil
+import time
 from pathlib import Path
+from typing import Callable
 
 from ..automation.controller import JobRecord
-from ..automation.kaggle_client import KaggleClient, KaggleDatasetRef, KaggleKernelRef, KernelPushConfig
+from ..automation.kaggle_client import (
+    DatasetMetadata,
+    KaggleClient,
+    KaggleDatasetRef,
+    KaggleKernelRef,
+    KernelPushConfig,
+)
 from ..automation.modal_client import GPUType, ModalJobConfig, ModalJobHandle, ModalJobLauncher
 from .command import TrainingCommand, build_training_command
+
+_KAGGLE_RUNNER_FILENAME = "kaggle_kernel_runner.py"
+
+# Kaggle's real kernel-push API rejects titles outside 5-80 chars, but
+# actually enforces <=50 in practice (found live: "Sallehly Wan2.2 LoRA
+# training - ci-smoke-31706606785" at 52 chars got a bare "400 Client
+# Error" from SaveKernel with no field-level message, unlike the dataset
+# subtitle check - only caught by cross-referencing Kaggle's own docs).
+
+# Blind fixed delays (0s -> 30s -> 90s) between `datasets create` and the
+# kernel push never reliably fixed the real "not valid dataset sources"
+# warning - see git history for that dead end. The actual, evidence-backed
+# fix: poll `KaggleClient.poll_dataset_downloadable` (which probes real
+# readiness via `datasets download`, not the persistently-403ing
+# `datasets status`) until the freshly created dataset is genuinely
+# downloadable, confirmed live by infra/kaggle/diagnose_dataset_attach.py's
+# push-kernel diagnostic (run 31795945773): the exact same production
+# KernelPushConfig/push_kernel() code path pushed clean with zero warning
+# once readiness was actually confirmed first.
+
+
+def _kaggle_kernel_title(kernel_slug: str) -> str:
+    """Kaggle derives a kernel's *actual* slug from the human title (clean-
+    URL slugification of it), not from the "id" field callers specify -
+    confirmed live a second time: a title of "Wan2.2 LoRA - <job_id>" got
+    silently pushed to slug "wan2-2-lora-<job_id>" instead of the id we
+    asked for, and every downstream step (polling, output fetch) then
+    looked up the id we specified and got a misleading "Permission
+    'kernels.get' was denied" for what was really a slug mismatch. Using
+    `kernel_slug` itself as the title - already lowercase/hyphenated by
+    every caller, and validated against Kaggle's real 5-50 char bound by
+    `KernelPushConfig.validate()` - is the only way to guarantee title and
+    id always resolve to the same slug. Truncating here instead would just
+    reintroduce the same mismatch against the untruncated id."""
+    return kernel_slug
 
 
 def build_training_command_for_job(job: JobRecord, **kwargs) -> TrainingCommand:
@@ -35,20 +79,112 @@ def dispatch_via_kaggle(
     kaggle_client: KaggleClient,
     kernel_ref: KaggleKernelRef,
     *,
-    dataset_sources: tuple[KaggleDatasetRef, ...] = (),
+    git_ref: str = "master",
+    dataset_owner_slug: str | None = None,
+    extra_dataset_sources: tuple[KaggleDatasetRef, ...] = (),
+    sleep_fn: Callable[[float], None] | None = None,
+    dataset_readiness_poll_interval_sec: float = 10.0,
+    dataset_readiness_timeout_sec: float = 180.0,
 ) -> str:
-    """Item 8 (Kaggle half): pushes the entrypoint script as a Kaggle
-    kernel via the real `KaggleClient` built in the automation layer -
-    no new Kaggle integration code, just wiring. `kernel_dir` is the
-    entrypoint script's own directory, since `kaggle kernels push`
-    uploads a whole directory and `code_file` must live inside it."""
+    """Item 8 (Kaggle half): pushes a real, runnable Kaggle kernel via
+    the real `KaggleClient` built in the automation layer.
+
+    A plain Kaggle kernel push cannot receive CLI arguments the way a
+    local subprocess or `TrainingCommand.to_argv()` assumes - `kaggle
+    kernels push` runs `code_file` with no argv at all (see
+    docs/adr/0025-kaggle-dispatch-argv-fix.md for how this was found and
+    why it matters: the original ADR 0023 wiring pushed
+    `wan22_lora_train.py` directly as `code_file`, which would have
+    crashed on Kaggle's side on its first required `--config` argument).
+
+    The real fix: upload `command.config_path` +
+    `command.dataset_manifest_path` as a Kaggle dataset (mounted
+    read-only under `/kaggle/input/<slug>/` at kernel runtime), and push
+    `kaggle_kernel_runner.py` (which lives alongside the entrypoint, and
+    reads its inputs from that mount, then calls
+    `wan22_lora_train.main()` directly) as the kernel's `code_file`
+    instead of the entrypoint itself. `kernel_dir` is still the
+    entrypoint script's own directory - both files must be pushed
+    together, since the runner imports the entrypoint by module name.
+
+    `git_ref` is also written into that same uploaded dataset
+    (`git_ref.txt`) - `kaggle_kernel_runner.py` clones this repo fresh
+    inside the kernel (no persistent disk between runs) and needs to
+    know which branch/tag/commit to check out; a plain `git clone` with
+    no `--branch` would silently pull whatever the repo's *default*
+    branch happens to be, which will not contain this code until this
+    work is actually merged there. Callers dispatching from a feature
+    branch (e.g. a CI job running via `${{ github.ref_name }}`) must
+    pass that branch name here.
+
+    `dataset_readiness_poll_interval_sec`/`dataset_readiness_timeout_sec`
+    tune `KaggleClient.poll_dataset_downloadable`, which blocks here until
+    the freshly uploaded input dataset is confirmed genuinely downloadable
+    before the kernel push - see that method's own docstring for why (real
+    evidence: run 31795945773). Raises `KaggleAutomationError` if the
+    dataset never becomes downloadable in time, without ever pushing a
+    kernel.
+    """
     write_job_inputs(job, command)
+
+    dataset_input_dir = Path(command.config_path).parent / "kaggle_dataset_input"
+    dataset_input_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(command.config_path, dataset_input_dir / "config.yaml")
+    shutil.copyfile(command.dataset_manifest_path, dataset_input_dir / "dataset_manifest.jsonl")
+    (dataset_input_dir / "git_ref.txt").write_text(git_ref)
+
+    input_dataset_ref = KaggleDatasetRef(
+        owner_slug=dataset_owner_slug or kernel_ref.owner_slug,
+        dataset_slug=f"{job.job_id}-input".replace("_", "-"),
+    )
+    kaggle_client.upload_dataset(
+        dataset_input_dir,
+        DatasetMetadata(
+            dataset_ref=input_dataset_ref,
+            # Kaggle likely derives a dataset's *actual* slug from this
+            # title the same way it does for kernels (see
+            # _kaggle_kernel_title's docstring) - confirmed live even after
+            # adding the 30s processing delay below: the kernel push still
+            # warned "not valid dataset sources" for the exact id we asked
+            # for, meaning no dataset existed at that ref regardless of how
+            # long we waited. Using the dataset_slug itself as the title
+            # guarantees title and id always resolve to the same slug, the
+            # same fix already proven for kernels.
+            title=input_dataset_ref.dataset_slug,
+            # Kaggle's real dataset-create API rejects subtitles outside
+            # 20-80 chars (found live: "Subtitle length must be between 20
+            # and 80 characters" on the first real dispatch attempt that got
+            # this far - the previous 87-char subtitle was silently never
+            # exercised until then).
+            subtitle="config.yaml + dataset_manifest.jsonl for one Wan2.2 training run",
+        ),
+        is_new=True,
+    )
+    # A freshly created dataset is processed asynchronously - pushing a
+    # kernel that references it before Kaggle finishes makes Kaggle
+    # silently drop it from the kernel's dataset_sources (confirmed live
+    # twice: run 30278022296 and run 31707456042, both ending in "No
+    # dataset mounted under /kaggle/input" / "not valid dataset sources").
+    # poll_dataset_downloadable raises KaggleAutomationError on timeout,
+    # which propagates straight out of dispatch_via_kaggle - a dataset
+    # that never becomes readable must fail the whole dispatch loudly,
+    # not push a kernel with a dataset silently missing from it.
+    readiness_probe_dir = Path(command.config_path).parent / "kaggle_dataset_readiness_probe"
+    kaggle_client.poll_dataset_downloadable(
+        input_dataset_ref,
+        dest_dir=readiness_probe_dir,
+        poll_interval_sec=dataset_readiness_poll_interval_sec,
+        timeout_sec=dataset_readiness_timeout_sec,
+        sleep_fn=sleep_fn or time.sleep,
+    )
+
     entrypoint_path = Path(command.entrypoint)
+    runner_path = entrypoint_path.parent / _KAGGLE_RUNNER_FILENAME
     push_config = KernelPushConfig(
         kernel_ref=kernel_ref,
-        title=f"Sallehly Wan2.2 LoRA training - {job.job_id}",
-        code_file=entrypoint_path.name,
-        dataset_sources=dataset_sources,
+        title=_kaggle_kernel_title(kernel_ref.kernel_slug),
+        code_file=runner_path.name,
+        dataset_sources=(input_dataset_ref, *extra_dataset_sources),
     )
     return kaggle_client.push_kernel(entrypoint_path.parent, push_config)
 

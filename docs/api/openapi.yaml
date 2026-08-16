@@ -81,6 +81,33 @@ paths:
         "401":
           description: Invalid email or password
 
+  /auth/refresh:
+    post:
+      summary: Rotate the caller's bearer token
+      description: >
+        Issues a new bearer token and invalidates the one supplied in the
+        `Authorization` header - full rotation (ITokenStore.set() +
+        invalidation of the old token), not just a TTL extension of the
+        same token, so a refreshed-away token can never be replayed. See
+        docs/DECISIONS.md decision 77 / docs/adr/0020-security-hardening.md.
+        Deliberately does not use the same bearer-auth mechanism as every
+        other authenticated route (see `security` below): the handler
+        needs the raw old token string to invalidate it, not just the
+        resolved User get_current_user would hand back.
+      responses:
+        "200":
+          description: New bearer token + the authenticated user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
+                  user:
+                    $ref: "../../packages/schemas/json/user.schema.json"
+        "401":
+          description: Missing/malformed Authorization header, or the supplied token is invalid/already rotated
+
   /users/me:
     get:
       summary: Get the currently authenticated user

@@ -1,0 +1,904 @@
+"""Real Wan2.1/2.2 text-to-video inference - the piece
+`workers/gpu-worker/handler.py::run()` used to be a bare
+`NotImplementedError` stub for, and what `LocalInferenceProvider`
+(../compute/local_inference_provider.py) calls in-process for a
+zero-credentials, zero-external-GPU real generation path.
+
+Two real (never mocked) modes:
+
+- `smoke_test=True` (default): builds every `WanPipeline` component from
+  the real `diffusers`/`transformers` classes - `WanTransformer3DModel`,
+  `AutoencoderKLWan`, `UMT5EncoderModel`, a real (if tiny, in-process,
+  no-network) tokenizer, `FlowMatchEulerDiscreteScheduler` - at a scale
+  of tens of thousands of parameters instead of billions, and always
+  generates at a small fixed resolution (`_SMOKE_HEIGHT`/`_SMOKE_WIDTH`/
+  `_SMOKE_NUM_FRAMES`) regardless of what the job payload requested.
+  This is a genuine, complete forward pass through the real denoising
+  loop and real VAE decode - same mechanism verified end-to-end before
+  being committed here (see this module's tests) - not a stub. It
+  proves the generation pipeline is real code; it does not, and cannot,
+  prove real Wan output quality (see `_SMOKE_TEST_NOTE`).
+- `smoke_test=False`: loads a real, full-scale Wan2.1/2.2 checkpoint via
+  `WanPipeline.from_pretrained(model_id)` and requires a real CUDA GPU
+  (never silently falls back to CPU - same fail-fast convention as
+  services/training/entrypoints/wan22_lora_train.py's own
+  `_resolve_device`). Needs real Hugging Face network access to
+  download weights the first time - untestable in this sandbox (its own
+  network egress blocks huggingface.co, a previously-documented
+  limitation, see docs/EXECUTION_PLAN_FIRST_GPU_RUN.md), but this is the
+  same real code a real GPU machine or a real RunPod worker runs.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+try:
+    import torch
+except ImportError:  # pragma: no cover - exercised via WanInferenceUnavailableError below
+    torch = None  # type: ignore[assignment]
+
+_MISSING_DEPS_MESSAGE = (
+    "video-engine-adapter[real-inference] extra is not installed - torch/diffusers/transformers "
+    "are required for real Wan inference. Install with `uv sync --all-packages --extra real-inference` "
+    "or `pip install \"video-engine-adapter[real-inference]\"`."
+)
+
+# Verified by hand (not guessed) in an isolated probe before being
+# committed here: these dimensions match diffusers.AutoencoderKLWan's
+# real assumed scale factors (vae_scale_factor_spatial=8, temporal=4)
+# with the *number* of down/up-sample stages unchanged from the real
+# Wan2.1 VAE (dim_mult has 4 entries -> 3 spatial-downsample
+# transitions = 2**3 = 8; temperal_downsample has 2 True entries =
+# 2**2 = 4) - only the channel width (base_dim) and block count are
+# shrunk. Getting this wrong produces a shape mismatch inside
+# WanPipeline's internal latent-size math, not a silent wrong answer.
+_TINY_VAE_KWARGS: dict[str, Any] = {
+    "base_dim": 4,
+    "z_dim": 16,
+    "dim_mult": [1, 1, 1, 1],
+    "num_res_blocks": 1,
+    "attn_scales": [],
+    "temperal_downsample": [False, True, True],
+    "latents_mean": [0.0] * 16,
+    "latents_std": [1.0] * 16,
+}
+_TINY_TRANSFORMER_KWARGS: dict[str, Any] = {
+    "patch_size": (1, 2, 2),
+    "num_attention_heads": 2,
+    "attention_head_dim": 16,
+    "in_channels": 16,
+    "out_channels": 16,
+    "text_dim": 32,
+    "freq_dim": 16,
+    "ffn_dim": 32,
+    "num_layers": 1,
+    "cross_attn_norm": True,
+    "qk_norm": "rms_norm_across_heads",
+    "rope_max_seq_len": 32,
+}
+_TINY_T5_KWARGS: dict[str, Any] = {
+    "vocab_size": 128,
+    "d_model": 32,
+    "d_ff": 64,
+    "num_layers": 1,
+    "num_heads": 2,
+    "relative_attention_num_buckets": 4,
+    "is_encoder_decoder": False,
+}
+# Covers the words Wan21Adapter's own generated prompts/negative-prompts
+# actually use (services/video-engine-adapter/.../wan21_adapter.py) -
+# enough for a real (if tiny, fixed-vocabulary) tokenizer to run without
+# any network access to a real pretrained tokenizer. Unknown words map
+# to [UNK], same as any real tokenizer's out-of-vocabulary handling.
+_TINY_VOCAB_WORDS = (
+    "a the of in on at to and or with for scene shot camera lens motion "
+    "video image frame lighting light dark bright color colour still moving "
+    "wide medium close up down left right pan tilt dolly zoom static slow fast "
+    "high low quality blurry distorted extra limbs anatomy inconsistent flickering "
+    "warped geometry smooth natural forest moon alien astronaut lone glowing "
+    "discovers general opening hook establishing subject development core idea "
+    "product story closing beat brand resolution eye level medium shot"
+).split()
+
+# The tiny transformer's rope_max_seq_len=32 (and the O(n^2) attention
+# cost of any transformer, tiny or not) means this smoke pipeline can
+# only run at a small, fixed resolution - never the job's actual
+# requested width/height/num_frames (verified by hand: 1280x720/58
+# frames overflows the tiny transformer's RoPE table; 64x64/9 frames
+# does not). Real full-scale generation (smoke_test=False) uses the
+# job's real values instead - see generate_video().
+_SMOKE_HEIGHT = 64
+_SMOKE_WIDTH = 64
+_SMOKE_NUM_FRAMES = 9
+_SMOKE_TEST_INFERENCE_STEPS = 3
+_SMOKE_TEST_NOTE = (
+    "Tiny, randomly-initialized-but-real WanPipeline (real WanTransformer3DModel, "
+    "AutoencoderKLWan, UMT5EncoderModel, tokenizer, FlowMatchEulerDiscreteScheduler) run at a "
+    f"fixed {_SMOKE_WIDTH}x{_SMOKE_HEIGHT}/{_SMOKE_NUM_FRAMES}-frame smoke scale, not the "
+    "requested resolution. Proves the real generation mechanism end-to-end (real denoising loop, "
+    "real VAE decode) - does not, and cannot, prove real Wan2.1/2.2 output quality. Real "
+    "full-scale generation needs a real model_id (HF weights) and a real GPU - see "
+    "build_real_pipeline() / COMPUTE_PROVIDER=runpod."
+)
+
+
+class WanInferenceUnavailableError(Exception):
+    """Raised when real Wan inference cannot run right now: the
+    real-inference extra isn't installed, a real (non-smoke) request
+    has no CUDA GPU available, or a real request is missing a
+    model_id. Always carries a human-readable reason - this is what
+    surfaces to the demo UI / GenerationJob.error_message instead of a
+    silent mock success (see LocalInferenceProvider)."""
+
+
+def _require_torch() -> None:
+    if torch is None:
+        raise WanInferenceUnavailableError(_MISSING_DEPS_MESSAGE)
+
+
+# Real prompt-adherence metric (not a pixel-stat proxy like
+# eval/quality_metrics.py's sharpness/saturation/frame_delta): does the
+# generated video's own content actually match the text prompt that
+# produced it? A small, standard, HF Hub-hosted CLIP checkpoint - not a
+# new package, `transformers` is already this extra's own dependency -
+# computes real cosine similarity between the prompt's text embedding
+# and each generated frame's image embedding. Deliberately best-effort:
+# a real video is already written to disk by the time this runs (see
+# generate_video below), so a CLIP load/OOM/network failure must be
+# recorded, not allowed to discard an otherwise-successful generation.
+# Confirmed by hand that this raises a real ProxyError in this
+# sandbox's own network-blocked environment (huggingface.co is not
+# reachable here, same documented limitation as this module's own
+# real-mode Wan2.2 weight download) - generate_video's try/except
+# around this call correctly catches it; real validation of the CLIP
+# download/compute itself happens on the next real Kaggle GPU run,
+# same as the rest of this module's real (non-smoke) code path always has.
+_CLIP_MODEL_ID = "openai/clip-vit-base-patch32"
+
+
+def _compute_clip_similarity(frames: Any, prompt: str, device: str) -> dict[str, Any]:
+    """`frames` is `WanPipeline`'s own raw `result.frames[0]` - per
+    `WanPipeline.__call__`'s default `output_type='np'`, a numpy array
+    of float frames in `[0, 1]`, NOT ready-to-view `[0, 255]` uint8
+    images. `diffusers.utils.export_to_video`'s own source does exactly
+    this same `(frame * 255).astype(np.uint8)` conversion before
+    writing the real video file - repeated here so CLIPProcessor's
+    default `do_rescale=True` (which expects `[0, 255]` input and
+    divides by 255 itself) doesn't silently double-rescale an
+    already-`[0, 1]` frame into a near-black image and a meaningless
+    similarity score."""
+    import gc
+
+    import numpy as np
+    from PIL import Image
+    from transformers import CLIPModel, CLIPProcessor
+
+    pil_frames = [Image.fromarray((np.asarray(frame) * 255).astype(np.uint8)) for frame in frames]
+
+    gc.collect()
+    if device == "cuda":
+        torch.cuda.empty_cache()
+
+    clip_model = CLIPModel.from_pretrained(_CLIP_MODEL_ID).to(device).eval()
+    clip_processor = CLIPProcessor.from_pretrained(_CLIP_MODEL_ID)
+
+    inputs = clip_processor(text=[prompt], images=pil_frames, return_tensors="pt", padding=True)
+    inputs = {key: value.to(device) for key, value in inputs.items()}
+    with torch.no_grad():
+        outputs = clip_model(**inputs)
+
+    image_embeds = outputs.image_embeds / outputs.image_embeds.norm(dim=-1, keepdim=True)
+    text_embeds = outputs.text_embeds / outputs.text_embeds.norm(dim=-1, keepdim=True)
+    # Real cosine similarity in [-1, 1], not CLIP's own temperature-
+    # scaled logit_scale output (logits_per_image) - the raw cosine
+    # value is what's comparable across different prompts/runs.
+    similarities = (image_embeds @ text_embeds.T).squeeze(-1)
+    per_frame = [float(s) for s in similarities.detach().cpu()]
+
+    del clip_model, clip_processor
+    gc.collect()
+    if device == "cuda":
+        torch.cuda.empty_cache()
+
+    return {
+        "clip_model": _CLIP_MODEL_ID,
+        "clip_similarity_per_frame": per_frame,
+        "clip_similarity_mean": round(sum(per_frame) / len(per_frame), 4),
+    }
+
+
+def _resolve_device(device: str) -> str:
+    """Same fail-fast, never-silently-CPU convention as
+    services/training/entrypoints/wan22_lora_train.py's own
+    `_resolve_device`: 'auto'/'cuda' require a real CUDA GPU for real
+    (non-smoke) inference and refuse to run otherwise - a real
+    multi-billion-parameter Wan model on CPU would not just be slow, it
+    would misrepresent "real inference" as usable when it isn't."""
+    if device == "cpu":
+        return "cpu"
+    _require_torch()
+    if device in ("auto", "cuda"):
+        if not torch.cuda.is_available():
+            raise WanInferenceUnavailableError(
+                f"device={device!r} requires a CUDA-capable GPU for real (non-smoke) Wan inference, "
+                "but torch.cuda.is_available() is False in this environment. Set device='cpu' only "
+                "for the smoke-test path (smoke_test=True), which never needs a GPU."
+            )
+        return "cuda"
+    return device
+
+
+def _build_tiny_tokenizer() -> Any:
+    try:
+        from tokenizers import Tokenizer
+        from tokenizers.models import WordLevel
+        from tokenizers.pre_tokenizers import Whitespace
+        from transformers import PreTrainedTokenizerFast
+    except ImportError as exc:
+        raise WanInferenceUnavailableError(_MISSING_DEPS_MESSAGE) from exc
+
+    vocab = {"[UNK]": 0, "[PAD]": 1}
+    for word in dict.fromkeys(_TINY_VOCAB_WORDS):
+        vocab.setdefault(word, len(vocab))
+    tokenizer_model = Tokenizer(WordLevel(vocab=vocab, unk_token="[UNK]"))
+    tokenizer_model.pre_tokenizer = Whitespace()
+    return PreTrainedTokenizerFast(tokenizer_object=tokenizer_model, unk_token="[UNK]", pad_token="[PAD]")
+
+
+def build_smoke_test_pipeline(seed: int = 0) -> Any:
+    """A tiny-but-real `diffusers.WanPipeline` - see this module's
+    docstring for exactly what is and isn't proven by running it."""
+    _require_torch()
+    try:
+        from diffusers import WanPipeline
+        from diffusers.models.autoencoders.autoencoder_kl_wan import AutoencoderKLWan
+        from diffusers.models.transformers.transformer_wan import WanTransformer3DModel
+        from diffusers.schedulers.scheduling_flow_match_euler_discrete import FlowMatchEulerDiscreteScheduler
+        from transformers import T5Config, UMT5EncoderModel
+    except ImportError as exc:
+        raise WanInferenceUnavailableError(_MISSING_DEPS_MESSAGE) from exc
+
+    torch.manual_seed(seed)
+    vae = AutoencoderKLWan(**_TINY_VAE_KWARGS)
+    transformer = WanTransformer3DModel(**_TINY_TRANSFORMER_KWARGS)
+    text_encoder = UMT5EncoderModel(T5Config(**_TINY_T5_KWARGS))
+    tokenizer = _build_tiny_tokenizer()
+    scheduler = FlowMatchEulerDiscreteScheduler()
+    pipeline = WanPipeline(
+        tokenizer=tokenizer, text_encoder=text_encoder, vae=vae, scheduler=scheduler, transformer=transformer,
+    )
+    return pipeline.to("cpu")
+
+
+def build_real_pipeline(model_id: str, *, device: str = "cuda", disable_sequential_cpu_offload: bool = False) -> Any:
+    """Loads a real, full-scale Wan2.1/2.2 `WanPipeline` from real HF
+    Hub weights (or a local directory already populated by
+    `training.hf_download`). Requires real network access the first
+    time (tens of GB) and a real CUDA GPU to run at a usable speed -
+    this is the same real code a real RunPod worker
+    (workers/gpu-worker/handler.py) or a real local GPU machine runs;
+    it has not been exercised against real weights in this sandbox (no
+    GPU, no Hugging Face network access here - a previously documented
+    sandbox-only limitation, see docs/EXECUTION_PLAN_FIRST_GPU_RUN.md)."""
+    _require_torch()
+    resolved_device = _resolve_device(device)
+    try:
+        from diffusers import WanPipeline
+    except ImportError as exc:
+        raise WanInferenceUnavailableError(_MISSING_DEPS_MESSAGE) from exc
+
+    pipeline_dtype = torch.bfloat16
+    if resolved_device == "cuda" and not torch.cuda.is_bf16_supported():
+        # Confirmed by hand on a real Kaggle GPU run (30288629219, right
+        # after the cpu-offload fix above resolved the prior OOM): loading
+        # in bf16 on an older CUDA architecture (Kaggle's free tier can
+        # assign a Pascal P100, which has no bf16 tensor-core support,
+        # instead of a T4) fails with "CUDA error: no kernel image is
+        # available for execution on the device" - there is no compiled
+        # bf16 kernel for that architecture. fp16 is supported on every
+        # CUDA GPU Kaggle offers, with no precision-quality difference
+        # that matters here (this is a hardware-compatibility fallback,
+        # not a quality choice).
+        pipeline_dtype = torch.float16
+    pipeline = WanPipeline.from_pretrained(model_id, torch_dtype=pipeline_dtype)
+    if pipeline_dtype == torch.float16:
+        # Confirmed by hand on a real Kaggle GPU run (30303715804): the
+        # kernel completed and wrote a real video.mp4 with no crash, but
+        # every frame decoded to near-flat, muddy, low-contrast noise
+        # (checked by hand: RGB channel means ~90/85/78, std ~10-14,
+        # pixel range compressed to roughly 34-130 out of 0-255) instead
+        # of the requested scene - not a crash, a silent numerical
+        # failure. This is the well-documented diffusers/Stable-Diffusion
+        # failure mode where decoding the VAE in fp16 overflows its
+        # narrow exponent range inside GroupNorm/attention layers,
+        # producing garbage pixels; bf16 has fp32's exponent range and
+        # does not have this problem, but bf16 itself isn't supported on
+        # this GPU (see the fp16 fallback above). WanPipeline's own
+        # decode step (`latents.to(self.vae.dtype)` in
+        # WanPipeline.__call__) already casts whatever dtype the VAE
+        # module is in, so upcasting only the VAE submodule to fp32
+        # keeps the transformer/text-encoder in fp16 (preserving the
+        # memory savings above) while decoding numerically correctly -
+        # the same "upcast just the VAE" pattern diffusers' own SDXL
+        # pipeline uses.
+        pipeline.vae = pipeline.vae.to(torch.float32)
+        # eval/reports/0001-0004 traced the flat/muddy output through 4
+        # real Kaggle runs: the VAE upcast above (0002) and a
+        # guidance_scale 1.0->6.0 fix (0003) both measured as having
+        # zero effect on the output - 0004 confirmed via metadata.json
+        # that guidance_scale=6.0 genuinely reaches pipeline() and
+        # reading the installed diffusers WanPipeline source confirmed
+        # its CFG formula (`noise_uncond + scale*(noise_pred -
+        # noise_uncond)`) is standard/correct. For CFG to be a no-op
+        # despite executing for real (a real, measured +26-38% run
+        # duration each time), the conditional and unconditional
+        # (empty-string) prompt embeddings must be coming out nearly
+        # identical - i.e. numerically degenerate regardless of input
+        # text. `text_encoder` (UMT5EncoderModel, a T5-family model)
+        # was never upcast in any prior fix - only the VAE was - and
+        # T5-family encoders are a separately well-documented case of
+        # fp16 numerical instability, the same overflow failure mode
+        # already found and fixed once for the VAE, just in a
+        # different submodule. `_get_t5_prompt_embeds` already casts
+        # its output down to the transformer's dtype before use
+        # (`prompt_embeds.to(transformer_dtype)` in WanPipeline.__call__),
+        # so this only changes the precision the encoder's own forward
+        # pass runs at, not memory footprint downstream - same pattern
+        # as the VAE fix above.
+        pipeline.text_encoder = pipeline.text_encoder.to(torch.float32)
+        # eval/reports/0005: upcasting text_encoder also measured as
+        # having zero effect on real Kaggle output (5th consecutive
+        # byte-identical result, run 30333553288) - ruling it out the
+        # same way the VAE was ruled out in 0002. VAE and text_encoder
+        # are now both confirmed not to be the cause; `transformer`
+        # (`WanTransformer3DModel`, 5B params) is the only fp16
+        # submodule left untested, and by far the largest/most central
+        # to the model's actual computation - if its own fp16 forward
+        # pass overflows, that would explain every prior observation at
+        # once (degenerate output regardless of VAE/text-encoder
+        # precision, and CFG being a no-op regardless of guidance_scale,
+        # since a saturated transformer output would swamp out whatever
+        # conditioning it's given). This does carry real OOM risk (fp32
+        # roughly doubles the transformer's ~10GB fp16 weight footprint
+        # plus per-step activation memory, on a T4 that already needed
+        # sequential offload + VAE tiling to fit) - an OOM here would
+        # itself be diagnostic, not a wasted run, since it would
+        # confirm the transformer is where memory/numerical pressure
+        # concentrates.
+        pipeline.transformer = pipeline.transformer.to(torch.float32)
+        if pipeline.transformer_2 is not None:
+            pipeline.transformer_2 = pipeline.transformer_2.to(torch.float32)
+    if resolved_device == "cuda":
+        # A full bf16 Wan2.2-TI2V-5B pipeline (transformer + text encoder +
+        # VAE) left resident on GPU via a plain .to("cuda") consumes ~15.6GB
+        # by itself - confirmed by hand on real Kaggle GPU runs
+        # (30284984066, 30286719822): both left only ~33MiB free and failed
+        # on an 18MiB allocation during generation, with byte-identical
+        # numbers regardless of num_frames (17 vs 9). That proves the
+        # ceiling is the resident pipeline's own weight footprint, not
+        # per-step activation memory that scales with frame count.
+        # enable_model_cpu_offload() alone (whole submodules moved between
+        # CPU/GPU) still hit a real CUDA memory-allocation failure on a
+        # pinned T4 (run 30299011624: "CUBLAS_STATUS_ALLOC_FAILED" -
+        # cuBLAS's own error for "no memory left for its workspace", the
+        # same underlying condition as an OOM, just reported through a
+        # different call path). enable_sequential_cpu_offload() is
+        # diffusers' own, more aggressive built-in offload mode - it moves
+        # individual weight tensors to GPU only for their exact forward
+        # call instead of whole submodules, trading some speed for a much
+        # smaller resident footprint. enable_attention_slicing() is a
+        # second, complementary built-in toggle that reduces the peak
+        # memory attention computation itself needs. Neither changes
+        # precision, resolution, or output - both are standard diffusers
+        # memory-management options, not new capabilities of this engine.
+        #
+        # eval/reports/0018 found text_encoder's first parameter reading
+        # as a meta tensor (no materialized data) at a static, outside-
+        # of-forward-pass check - ambiguous between "weights never
+        # loaded" and "enable_sequential_cpu_offload()'s normal resting
+        # representation between forward calls". `disable_sequential_cpu_offload`
+        # is a diagnostic-only opt-in (default False, so every other
+        # call site's behavior is completely unchanged) to isolate that
+        # ambiguity with a real, one-variable A/B: this exact same
+        # config with only this one call skipped. Real OOM risk is
+        # accepted as itself diagnostic here, same as eval/reports/0008/0011.
+        if not disable_sequential_cpu_offload:
+            pipeline.enable_sequential_cpu_offload()
+        pipeline.enable_attention_slicing()
+        # Sequential offload fixed the resident-weight footprint (run
+        # 30301127047 confirmed only 5.43GB in use at failure time, well
+        # under the T4's 14.56GB), but a real, single activation
+        # allocation still failed: OutOfMemoryError, "Tried to allocate
+        # 13.45 GiB" with only 9.13GiB free - the full 17-frame,
+        # 960x544 video being decoded by the VAE in one shot.
+        # AutoencoderKLWan.enable_tiling()/enable_slicing() are
+        # diffusers' own built-in VAE memory options for exactly this:
+        # tiling splits a large decode into smaller spatial tiles, and
+        # slicing decodes one frame group at a time, instead of one
+        # huge tensor. Neither changes precision, resolution, or output.
+        #
+        # eval/reports/0007-0008: every real Kaggle run since tiling
+        # was enabled here (iterations 0002-0007 - 7 consecutive real
+        # runs, spanning every precision/guidance_scale/seed
+        # combination tried) produced a video whose every frame showed
+        # the same fine, regular checkerboard/basket-weave texture,
+        # confirmed by zooming into individual frames - not random
+        # noise, a well-documented deconvolution/tiling artifact
+        # signature. `enable_slicing()` (splits along the batch/frame
+        # dimension) is kept - it isn't implicated in a *spatial*
+        # checkerboard the way tile blending is. Disabling tiling
+        # carries real OOM risk (this is exactly the option that fixed
+        # the earlier "Tried to allocate 13.45 GiB" failure) - an OOM
+        # here would itself be diagnostic, confirming tiling really is
+        # needed for memory and pointing toward a different mitigation
+        # (e.g. lower resolution/frame count) instead of tiling.
+        #
+        # eval/reports/0011: with tiling disabled at a *smaller*
+        # resolution/frame count (480x272, 9 frames - specifically to
+        # dodge the OOM), every one of the 20 `step_latent_norms` came
+        # back NaN (not random, not degenerate-but-real - a complete
+        # numerical failure from the very first denoising step).
+        # Iteration 0007 (tiling ENABLED, 960x544, 17 frames) produced
+        # real, non-NaN, monotonically-converging latent norms with the
+        # exact same model-loading code - this re-enables tiling, at
+        # the *same* reduced 480x272/9-frame configuration 0011 used,
+        # changing only this one variable, to test directly whether
+        # tiling itself is what prevents the NaN (not just a memory
+        # convenience) rather than assuming it from the OOM-blocked
+        # non-tiled attempts in 0008-0010.
+        #
+        # eval/reports/0012: confirmed by a clean, single-variable A/B
+        # test - tiling ON produced all-finite step_latent_norms at the
+        # *same* 480x272/9-frame config that produced all-NaN with
+        # tiling off. But visual inspection of the real video showed a
+        # different real artifact: regular vertical blue banding, not
+        # random noise, not the earlier checkerboard - consistent with
+        # AutoencoderKLWan.tiled_decode()'s own tile-blending seams
+        # (default tile_sample_min_width=256 against our 480px-wide
+        # frame produces exactly ~2 overlapping tiles with visible
+        # blend boundaries, confirmed by reading tiled_decode()'s real
+        # source: `for j in range(0, width, tile_latent_stride_width)`).
+        # Setting tile_sample_min_height/width (and matching strides)
+        # larger than the actual frame dimensions makes that same loop
+        # produce exactly ONE tile - still going through the "tiled"
+        # code path (whatever in it avoids the NaN), but decoding the
+        # whole frame in one pass with no real splitting or blending,
+        # to test directly whether NaN-avoidance depends on which
+        # function is called (tiled_decode vs decode) or on genuinely
+        # splitting into >=2 tiles.
+        pipeline.vae.enable_tiling(
+            tile_sample_min_height=608,
+            tile_sample_min_width=1024,
+            tile_sample_stride_height=608,
+            tile_sample_stride_width=1024,
+        )
+        pipeline.vae.enable_slicing()
+        return pipeline
+    return pipeline.to(resolved_device)
+
+
+def generate_video(
+    job_input: dict[str, Any],
+    *,
+    output_path: Path,
+    smoke_test: bool = True,
+    model_id: str | None = None,
+    device: str = "cpu",
+    seed: int | None = None,
+    disable_sequential_cpu_offload: bool = False,
+    compute_clip_similarity: bool = True,
+) -> dict[str, Any]:
+    """Runs one real Wan text-to-video generation from an
+    `EngineJobPayload.input` dict (the shape `Wan21Adapter.build_job_payload`
+    produces: prompt/negative_prompt/width/height/num_frames/fps/
+    guidance_scale/sampling_steps/seed/...) and writes a real `.mp4` to
+    `output_path` via `diffusers.utils.export_to_video`. Returns metadata
+    describing what actually ran - `LocalInferenceProvider` and
+    `workers/gpu-worker/handler.py` attach this as `engine_metadata` so
+    callers can always tell smoke-scale output from real output."""
+    _require_torch()
+    resolved_seed = seed if seed is not None else int(job_input.get("seed") or 0)
+    gpu_name: str | None = None
+    torch_version: str | None = None
+    diffusers_version: str | None = None
+    pipeline_dtype_str: str | None = None
+    weight_diagnostics: dict[str, Any] = {}
+
+    if smoke_test:
+        pipeline = build_smoke_test_pipeline(seed=resolved_seed)
+        height, width, num_frames = _SMOKE_HEIGHT, _SMOKE_WIDTH, _SMOKE_NUM_FRAMES
+        num_inference_steps = min(int(job_input.get("sampling_steps", _SMOKE_TEST_INFERENCE_STEPS)), _SMOKE_TEST_INFERENCE_STEPS)
+        mode = "smoke_test"
+        note = _SMOKE_TEST_NOTE
+        resolved_model_id = "tiny-smoke-wan"
+        resolved_device = "cpu"
+    else:
+        if not model_id:
+            raise WanInferenceUnavailableError(
+                "Real (non-smoke) Wan inference requires a model_id (e.g. a real HF Hub Wan2.1/2.2 "
+                "repo id, or a local directory from training.hf_download.resolve_local_weights)."
+            )
+        pipeline = build_real_pipeline(model_id, device=device, disable_sequential_cpu_offload=disable_sequential_cpu_offload)
+        height, width, num_frames = int(job_input["height"]), int(job_input["width"]), int(job_input["num_frames"])
+        num_inference_steps = int(job_input.get("sampling_steps", 40))
+        mode = "real"
+        note = f"Real Wan inference from model_id={model_id!r}."
+        resolved_model_id = model_id
+        resolved_device = _resolve_device(device)
+
+        # eval/reports/0014: the whole investigation had been assuming
+        # fp16 was the active dtype on Kaggle's T4 (per the comment in
+        # build_real_pipeline above) without ever directly confirming
+        # it - reading torch.cuda.is_bf16_supported()'s real source
+        # showed it returns True on a T4 via software emulation, so
+        # bf16 was almost certainly the real dtype all along. Printed
+        # directly (not just inferred from a comment) so every future
+        # run settles this with hard evidence instead of a guess.
+        import diffusers as _diffusers_module
+
+        gpu_name = torch.cuda.get_device_name(0) if resolved_device == "cuda" else "cpu"
+        torch_version = torch.__version__
+        diffusers_version = _diffusers_module.__version__
+        pipeline_dtype_str = str(pipeline.dtype)
+        print(f"[wan_inference] GPU: {gpu_name}")
+        print(f"[wan_inference] torch: {torch_version}")
+        print(f"[wan_inference] diffusers: {diffusers_version}")
+        print(f"[wan_inference] pipeline.dtype: {pipeline_dtype_str}")
+        print(f"[wan_inference] transformer.dtype: {pipeline.transformer.dtype}")
+        print(f"[wan_inference] vae.dtype: {pipeline.vae.dtype}")
+        print(f"[wan_inference] text_encoder.dtype: {pipeline.text_encoder.dtype}")
+
+        # eval/reports/0017 pinpointed the flat/muddy output's cause to
+        # text_encoder's own forward pass returning an all-zero
+        # last_hidden_state, despite healthy tokenization and a healthy
+        # attention mask. Per the user's own next-step plan: inspect the
+        # encoder's actual weights directly (not its output) to check
+        # whether the problem is upstream of the forward pass entirely -
+        # unloaded/meta/zero weights - before considering
+        # enable_sequential_cpu_offload() or the forward computation
+        # itself as the cause. Read-only: no weight is modified, no
+        # model/scheduler/seed/resolution/dtype/tiling setting changed.
+        with torch.no_grad():
+            first_param_name, first_param = next(pipeline.text_encoder.named_parameters())
+            text_encoder_num_parameter_tensors = sum(1 for _ in pipeline.text_encoder.parameters())
+            text_encoder_total_numel = sum(p.numel() for p in pipeline.text_encoder.parameters())
+            text_encoder_any_meta_tensor = any(p.is_meta for p in pipeline.text_encoder.parameters())
+            weight_diagnostics.update({
+                "text_encoder_training_mode": pipeline.text_encoder.training,
+                "text_encoder_num_parameter_tensors": text_encoder_num_parameter_tensors,
+                "text_encoder_total_numel": text_encoder_total_numel,
+                "text_encoder_any_meta_tensor": text_encoder_any_meta_tensor,
+                "text_encoder_first_param_name": first_param_name,
+                "text_encoder_first_param_shape": list(first_param.shape),
+                "text_encoder_first_param_dtype": str(first_param.dtype),
+                "text_encoder_first_param_device": str(first_param.device),
+                "text_encoder_first_param_is_meta": bool(first_param.is_meta),
+            })
+            if not first_param.is_meta:
+                first_param_float = first_param.detach().float()
+                weight_diagnostics.update(
+                    {
+                        "text_encoder_first_param_min": float(first_param_float.min().item()),
+                        "text_encoder_first_param_max": float(first_param_float.max().item()),
+                        "text_encoder_first_param_mean": float(first_param_float.mean().item()),
+                        "text_encoder_first_param_std": float(first_param_float.std().item()),
+                        "text_encoder_first_param_norm": float(first_param_float.norm().item()),
+                        "text_encoder_first_param_nonzero_count": int((first_param_float != 0).sum().item()),
+                    }
+                )
+        for _key, _value in weight_diagnostics.items():
+            print(f"[wan_inference][weights] {_key} = {_value}")
+
+    resolved_prompt = job_input["prompt"]
+    resolved_negative_prompt = job_input.get("negative_prompt")
+    resolved_guidance_scale = float(job_input.get("guidance_scale", 1.0))
+
+    # eval/reports/0015: callback_on_step_end reported prompt_embeds/
+    # negative_prompt_embeds with an exact 0.0 norm in every one of 4
+    # real Kaggle runs (3 different prompts + a control re-run of
+    # iteration 0013's own prompt, which had a real 41.77 norm in 0013
+    # itself) - proving the zero result isn't prompt-dependent, but
+    # leaving open whether it's a real text-encoding bug or an artifact
+    # of reading these specific tensors through the callback while
+    # enable_sequential_cpu_offload() is active (its device-transfer
+    # hooks could plausibly race the callback's read of the same
+    # tensor). This calls WanPipeline's own real `encode_prompt()`
+    # directly, once, before the denoising loop and its callback exist
+    # at all - the exact same method `pipeline.__call__` itself invokes
+    # internally (confirmed by reading diffusers 0.37.1's real source:
+    # `prompt_embeds, negative_prompt_embeds = self.encode_prompt(...)`)
+    # - to get an independent, non-callback reading of the same
+    # encoder output. Deliberately not wired into the actual generation
+    # call below (that still runs its own separate, real encode_prompt
+    # call exactly as it always has) - this is a read-only, additional
+    # measurement changing no model/scheduler/seed/resolution/dtype/
+    # tiling setting.
+    diag_do_cfg = resolved_guidance_scale > 1.0
+    if mode == "real":
+        # eval/reports/0016 confirmed (via a direct, no-grad,
+        # non-callback call to encode_prompt()) that prompt_embeds is
+        # genuinely all-zero - min/max/abs_mean/norm all exactly 0.0,
+        # not a callback/enable_sequential_cpu_offload artifact. This
+        # replaces that call with a manual, step-by-step walk through
+        # `WanPipeline._get_t5_prompt_embeds`'s own real logic (read
+        # directly from diffusers 0.37.1's source), printing every
+        # intermediate the user asked for, to find exactly which stage
+        # first produces/discards real values: tokenizer output, the
+        # attention mask, the raw (pre-slicing) text encoder output,
+        # the computed seq_lens, and whether the zero-padding branch
+        # (`u[:v]` with `v=seq_lens`, then zero-padded to
+        # max_sequence_length) is what erases everything. Deliberately
+        # replaces rather than adds to iteration 0016's call so this
+        # still costs only one extra encoder forward pass per prompt
+        # string, same memory footprint as the already-fixed,
+        # non-OOMing prior run - not two. Read-only: no model,
+        # scheduler, seed, resolution, dtype, or tiling setting is
+        # touched, and the actual generation call below still runs its
+        # own separate, untouched, real encode_prompt() exactly as it
+        # always has.
+        from diffusers.pipelines.wan.pipeline_wan import prompt_clean
+
+        trace_max_sequence_length = 226  # WanPipeline.encode_prompt()'s own default
+        trace_device = pipeline._execution_device
+        trace_dtype = pipeline.text_encoder.dtype
+        pad_token_id = pipeline.tokenizer.pad_token_id
+
+        def _trace_t5_encoding(label: str, raw_prompt: str) -> dict[str, Any]:
+            cleaned_prompt = prompt_clean(raw_prompt)
+            print(f"[wan_inference][trace:{label}] raw_prompt = {raw_prompt!r}")
+            print(f"[wan_inference][trace:{label}] cleaned_prompt = {cleaned_prompt!r}")
+
+            text_inputs = pipeline.tokenizer(
+                [cleaned_prompt],
+                padding="max_length",
+                max_length=trace_max_sequence_length,
+                truncation=True,
+                add_special_tokens=True,
+                return_attention_mask=True,
+                return_tensors="pt",
+            )
+            input_ids = text_inputs.input_ids
+            mask = text_inputs.attention_mask
+            non_pad_token_count = int((input_ids != pad_token_id).sum().item())
+
+            print(f"[wan_inference][trace:{label}] input_ids.shape = {list(input_ids.shape)}")
+            print(f"[wan_inference][trace:{label}] input_ids[:20] = {input_ids[0, :20].tolist()}")
+            print(f"[wan_inference][trace:{label}] pad_token_id = {pad_token_id}")
+            print(f"[wan_inference][trace:{label}] non_pad_token_count = {non_pad_token_count}")
+            print(f"[wan_inference][trace:{label}] attention_mask.shape = {list(mask.shape)}")
+            print(f"[wan_inference][trace:{label}] attention_mask.sum() = {int(mask.sum().item())}")
+            print(f"[wan_inference][trace:{label}] attention_mask.unique() = {mask.unique().tolist()}")
+
+            with torch.no_grad():
+                raw_output = pipeline.text_encoder(input_ids.to(trace_device), mask.to(trace_device)).last_hidden_state
+
+            raw_shape = list(raw_output.shape)
+            raw_min = float(raw_output.float().min().item())
+            raw_max = float(raw_output.float().max().item())
+            raw_abs_mean = float(raw_output.float().abs().mean().item())
+            raw_norm = float(raw_output.float().norm().item())
+            print(f"[wan_inference][trace:{label}] raw_encoder_output.shape = {raw_shape}")
+            print(f"[wan_inference][trace:{label}] raw_encoder_output.dtype = {raw_output.dtype}")
+            print(f"[wan_inference][trace:{label}] raw_encoder_output.min = {raw_min}")
+            print(f"[wan_inference][trace:{label}] raw_encoder_output.max = {raw_max}")
+            print(f"[wan_inference][trace:{label}] raw_encoder_output.abs_mean = {raw_abs_mean}")
+            print(f"[wan_inference][trace:{label}] raw_encoder_output.norm = {raw_norm}")
+
+            seq_lens = mask.gt(0).sum(dim=1).long()
+            zero_pad_condition_triggered = bool(seq_lens[0].item() == 0)
+            print(f"[wan_inference][trace:{label}] seq_lens = {seq_lens.tolist()}")
+            print(f"[wan_inference][trace:{label}] zero_pad_condition_triggered (seq_lens==0) = {zero_pad_condition_triggered}")
+
+            # Reproduces _get_t5_prompt_embeds's own final slicing/
+            # zero-padding step exactly, to see the same final tensor
+            # the real pipeline call would produce.
+            final_output = raw_output.to(dtype=trace_dtype, device=trace_device)
+            sliced = [u[:v] for u, v in zip(final_output, seq_lens)]
+            final_embeds = torch.stack(
+                [torch.cat([u, u.new_zeros(trace_max_sequence_length - u.size(0), u.size(1))]) for u in sliced], dim=0
+            )
+            final_min = float(final_embeds.float().min().item())
+            final_max = float(final_embeds.float().max().item())
+            final_abs_mean = float(final_embeds.float().abs().mean().item())
+            final_norm = float(final_embeds.float().norm().item())
+            print(f"[wan_inference][trace:{label}] final_embeds (post slice+zero-pad).min = {final_min}")
+            print(f"[wan_inference][trace:{label}] final_embeds (post slice+zero-pad).max = {final_max}")
+            print(f"[wan_inference][trace:{label}] final_embeds (post slice+zero-pad).abs_mean = {final_abs_mean}")
+            print(f"[wan_inference][trace:{label}] final_embeds (post slice+zero-pad).norm = {final_norm}")
+
+            del raw_output, final_output, sliced, final_embeds
+            torch.cuda.empty_cache()
+
+            return {
+                f"trace_{label}_raw_prompt": raw_prompt,
+                f"trace_{label}_cleaned_prompt": cleaned_prompt,
+                f"trace_{label}_input_ids_shape": list(input_ids.shape),
+                f"trace_{label}_input_ids_first20": input_ids[0, :20].tolist(),
+                f"trace_{label}_pad_token_id": pad_token_id,
+                f"trace_{label}_non_pad_token_count": non_pad_token_count,
+                f"trace_{label}_attention_mask_shape": list(mask.shape),
+                f"trace_{label}_attention_mask_sum": int(mask.sum().item()),
+                f"trace_{label}_attention_mask_unique": mask.unique().tolist(),
+                f"trace_{label}_raw_encoder_output_shape": raw_shape,
+                f"trace_{label}_raw_encoder_output_min": raw_min,
+                f"trace_{label}_raw_encoder_output_max": raw_max,
+                f"trace_{label}_raw_encoder_output_abs_mean": raw_abs_mean,
+                f"trace_{label}_raw_encoder_output_norm": raw_norm,
+                f"trace_{label}_seq_lens": seq_lens.tolist(),
+                f"trace_{label}_zero_pad_condition_triggered": zero_pad_condition_triggered,
+                f"trace_{label}_final_embeds_min": final_min,
+                f"trace_{label}_final_embeds_max": final_max,
+                f"trace_{label}_final_embeds_abs_mean": final_abs_mean,
+                f"trace_{label}_final_embeds_norm": final_norm,
+            }
+
+        direct_embed_diagnostics: dict[str, Any] = {}
+        direct_embed_diagnostics.update(_trace_t5_encoding("prompt", resolved_prompt))
+        if diag_do_cfg:
+            direct_embed_diagnostics.update(_trace_t5_encoding("negative_prompt", resolved_negative_prompt or ""))
+    else:
+        direct_embed_diagnostics = {}
+
+    # eval/reports/0001-0006 ruled out fp16 overflow in the VAE, text
+    # encoder, and transformer (all individually upcast to fp32, all
+    # measured zero effect on 6 consecutive real Kaggle runs - every
+    # one producing a byte-for-byte identical video.mp4) and confirmed
+    # guidance_scale/prompt genuinely reach pipeline() correctly. The
+    # remaining, untested question is whether the denoising loop is
+    # actually updating `latents` at all - if `scheduler.step()`'s
+    # effective per-step update is negligible, the final decoded video
+    # would be dominated almost entirely by the initial random noise
+    # (always the same for seed=0, used in every prior iteration),
+    # which would explain byte-identical output regardless of
+    # precision, guidance_scale, or prompt. `callback_on_step_end` is
+    # diffusers' own official, non-invasive hook for observing
+    # intermediate tensors during generation - not a reimplementation
+    # of the pipeline's internals.
+    # eval/reports/0011 found step_latent_norms all came back NaN, from
+    # the very first denoising step, at a reduced resolution with
+    # tiling disabled - a real numerical failure, not just a
+    # checkerboard artifact. A single scalar norm-per-step can't say
+    # *where* the corruption first appears. `prompt_embeds`/
+    # `negative_prompt_embeds` (the real text-encoder output, requested
+    # alongside `latents`) are the only other tensors WanPipeline's own
+    # `_callback_tensor_inputs` whitelist allows through this official,
+    # non-invasive callback mechanism (`noise_pred` is not in that
+    # whitelist - confirmed by a real `ValueError` when requesting it
+    # against the actual diffusers class, not assumed) - but checking
+    # them directly answers the "does the text encoder's own output
+    # already look broken before any denoising step runs" question
+    # (eval/reports/0004's still-unconfirmed hypothesis) more precisely
+    # than an empty-prompt trial would.
+    step_diagnostics: list[dict[str, Any]] = []
+
+    def _tensor_report(name: str, tensor: Any) -> dict[str, Any]:
+        if tensor is None:
+            return {}
+        is_nan = bool(torch.isnan(tensor).any().item())
+        is_inf = bool(torch.isinf(tensor).any().item())
+        report: dict[str, Any] = {
+            f"{name}_dtype": str(tensor.dtype),
+            f"{name}_shape": list(tensor.shape),
+            f"{name}_isnan": is_nan,
+            f"{name}_isinf": is_inf,
+        }
+        if not is_nan and not is_inf:
+            report[f"{name}_norm"] = float(tensor.float().norm().item())
+        return report
+
+    def _record_step_diagnostics(pipe: Any, step: int, timestep: Any, callback_kwargs: dict) -> dict:
+        entry: dict[str, Any] = {
+            "step": step,
+            "timestep": float(timestep.item()) if hasattr(timestep, "item") else timestep,
+        }
+        entry.update(_tensor_report("latents", callback_kwargs.get("latents")))
+        entry.update(_tensor_report("prompt_embeds", callback_kwargs.get("prompt_embeds")))
+        entry.update(_tensor_report("negative_prompt_embeds", callback_kwargs.get("negative_prompt_embeds")))
+        sigmas = getattr(pipe.scheduler, "sigmas", None)
+        if sigmas is not None and step < len(sigmas):
+            entry["sigma"] = float(sigmas[step].item())
+        step_diagnostics.append(entry)
+        return callback_kwargs
+
+    generator = torch.Generator(device="cpu").manual_seed(resolved_seed)
+    result = pipeline(
+        prompt=resolved_prompt,
+        negative_prompt=resolved_negative_prompt,
+        height=height,
+        width=width,
+        num_frames=num_frames,
+        num_inference_steps=num_inference_steps,
+        guidance_scale=resolved_guidance_scale,
+        generator=generator,
+        callback_on_step_end=_record_step_diagnostics,
+        callback_on_step_end_tensor_inputs=["latents", "prompt_embeds", "negative_prompt_embeds"],
+    )
+    frames = result.frames[0]
+
+    from diffusers.utils import export_to_video
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fps = int(job_input.get("fps", 16))
+    export_to_video(list(frames), str(output_path), fps=fps)
+
+    # Real prompt-adherence metric (the user's own explicit request: "a
+    # number that says whether the video actually represents the text
+    # you wrote"), computed only after the real video is already
+    # written to disk - a CLIP load/OOM/network failure below must be
+    # recorded, never allowed to discard an otherwise-successful
+    # generation.
+    clip_diagnostics: dict[str, Any] = {}
+    if compute_clip_similarity and mode == "real":
+        try:
+            clip_diagnostics = _compute_clip_similarity(frames, resolved_prompt, resolved_device)
+        except Exception as exc:  # noqa: BLE001 - a CLIP eval failure must not discard a real video
+            clip_diagnostics = {"clip_similarity_error": f"{type(exc).__name__}: {exc}"}
+
+    return {
+        "mode": mode,
+        "note": note,
+        "model_id": resolved_model_id,
+        "device": resolved_device,
+        "seed": resolved_seed,
+        "requested_resolution": f"{job_input.get('width')}x{job_input.get('height')}",
+        "actual_resolution": f"{width}x{height}",
+        "num_frames": num_frames,
+        "fps": fps,
+        "num_inference_steps": num_inference_steps,
+        # Added after eval/reports/0003 found guidance_scale=1.0->6.0
+        # made zero measurable difference to real Kaggle output (a
+        # byte-for-byte identical video.mp4 - see that report) - this
+        # closes the "did the fix even reach pipeline()" ambiguity by
+        # echoing back the exact values the real call actually used,
+        # directly in every future run's metadata.json, instead of
+        # having to infer them from dispatch_inference.py's CLI args.
+        "prompt": resolved_prompt,
+        "negative_prompt": resolved_negative_prompt,
+        "guidance_scale": resolved_guidance_scale,
+        # Added after eval/reports/0011 found step_latent_norms all NaN
+        # from the first denoising step at a reduced resolution with
+        # tiling disabled - replaced by the richer step_diagnostics
+        # above (per-tensor NaN/Inf/dtype/shape/sigma at every step)
+        # to pinpoint exactly which tensor first breaks, instead of
+        # just knowing that something did.
+        "step_diagnostics": step_diagnostics,
+        # Submodule dtypes, logged directly rather than inferred - a
+        # real fp16/fp32 mismatch between any two of these could
+        # explain a NaN on its own (e.g. a fp16 tensor overflowing when
+        # multiplied against an fp32 one, or vice versa).
+        "transformer_dtype": str(pipeline.transformer.dtype) if getattr(pipeline, "transformer", None) is not None else None,
+        "vae_dtype": str(pipeline.vae.dtype) if getattr(pipeline, "vae", None) is not None else None,
+        "text_encoder_dtype": str(pipeline.text_encoder.dtype) if getattr(pipeline, "text_encoder", None) is not None else None,
+        # Added per eval/reports/0014's request: direct evidence of the
+        # real GPU/library versions in play, instead of inferring them
+        # from a comment or a same-code-path assumption.
+        "gpu_name": gpu_name,
+        "torch_version": torch_version,
+        "diffusers_version": diffusers_version,
+        "pipeline_dtype": pipeline_dtype_str,
+        # eval/reports/0018/0019: echoes back whether this run's
+        # enable_sequential_cpu_offload() call was skipped - a
+        # diagnostic-only opt-in (default False) used for exactly one
+        # A/B comparison against eval/reports/0017's offload=ON baseline.
+        "disable_sequential_cpu_offload": disable_sequential_cpu_offload,
+        # eval/reports/0015: a direct, non-callback call to
+        # pipeline.encode_prompt() (the same real method __call__ uses
+        # internally) made once before the denoising loop, to check
+        # whether callback_on_step_end's exact-0.0 embedding norm is a
+        # real text-encoding result or an artifact of reading these
+        # tensors through the callback while enable_sequential_cpu_offload
+        # is active.
+        **direct_embed_diagnostics,
+        # eval/reports/0018: inspects text_encoder's own weights
+        # directly (training mode, parameter count, meta-tensor check,
+        # and the first parameter's shape/dtype/device/min/max/mean/
+        # std/norm/nonzero-count) to check whether the all-zero
+        # last_hidden_state found in eval/reports/0017 traces back to
+        # unloaded/zero weights, before considering
+        # enable_sequential_cpu_offload() or the forward computation
+        # itself.
+        **weight_diagnostics,
+        **clip_diagnostics,
+    }

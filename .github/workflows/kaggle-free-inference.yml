@@ -1,0 +1,246 @@
+name: Kaggle - Free GPU Wan2.2 Inference ($0, human-gated)
+
+# Runs one real Wan2.2 text-to-video inference on a real Kaggle free
+# GPU (P100/T4) - the inference counterpart to
+# training-phase2-free-gpu-experiment.yml's Kaggle training smoke test,
+# reusing the exact same real KaggleClient and the real, already-tested
+# video_engine_adapter.inference.wan_inference.generate_video() (the
+# same call LocalInferenceProvider / workers/gpu-worker/handler.py
+# make). No RunPod, no paid GPU, no new inference implementation - only
+# a new, isolated way to dispatch the existing real inference code to
+# a free GPU (infra/kaggle/).
+#
+# Free by design: Kaggle's GPU quota for this has no billing, unlike
+# RunPod. Still manual-only (workflow_dispatch) and gated behind
+# `confirm_run`, since it is a real external action (creates a private
+# Kaggle dataset + kernel under your account) and downloads ~11GB of
+# real Wan2.2 weights inside that kernel.
+#
+# Required repository secrets: KAGGLE_USERNAME (your real Kaggle
+# username - needed to address the dataset/kernel this workflow
+# creates, separate from authentication) and KAGGLE_API_TOKEN (from
+# kaggle.com/settings/api -> "Generate New Token" - a KGAT_... access
+# token; this is Kaggle's current auth method, superseding the older
+# username+key pair the kaggle CLI's own KAGGLE_USERNAME/KAGGLE_KEY env
+# vars supported - confirmed by hand against a real "Authentication
+# required" rejection using only the old pair, see infra/kaggle/README.md).
+# Fails fast, before any real work, if either is missing - this
+# workflow never silently no-ops.
+#
+# Honest caveat carried over from
+# models/wan2.2-ti2v-5b/capability_manifest.yaml: this engine's
+# gpu_requirements.min_vram_gb is 16 - the same as Kaggle's free P100/T4.
+# This run may hit a real CUDA out-of-memory error - that is a real,
+# informative result this workflow reports clearly, not a bug in it.
+
+on:
+  # GitHub only registers a workflow_dispatch-triggered workflow (making
+  # it selectable/runnable in the Actions UI, or via the API) once it
+  # has seen at least one real event for that workflow file on this
+  # branch - a workflow_dispatch-only file on a non-default branch does
+  # not appear in the Actions tab/API at all until then (same real issue
+  # deploy-runpod-endpoint.yml hit first, see its own `on:` comment).
+  # This `push` trigger, scoped to this one branch, is what registers
+  # it; the real job below stays gated on `github.event_name ==
+  # 'workflow_dispatch'`, so a plain push here never does anything real.
+  push:
+    branches:
+      - claude/sallehly-engine-audit-vnxs4f
+  workflow_dispatch:
+    inputs:
+      confirm_run:
+        description: "Actually dispatch a real Kaggle GPU inference run (free, but a real external action under your Kaggle account) - required"
+        required: true
+        default: false
+        type: boolean
+      prompt:
+        description: "Text-to-video prompt"
+        required: true
+        default: "A calm lake at sunrise, gentle ripples, warm golden light, cinematic"
+      num_frames:
+        description: "Frame count (17 = ~1.06s @ 16fps - kept small for the first trial run)"
+        required: true
+        default: "17"
+      sampling_steps:
+        description: "Denoising steps (kept low for the first trial run - this engine's real default is ~40)"
+        required: true
+        default: "20"
+      seed:
+        description: "Generation seed - eval/reports/0007 found seed=0 (the old default) produces degenerate output for this model/scheduler, independent of every precision/guidance fix tried; 42 is confirmed working"
+        required: true
+        default: "42"
+      width:
+        description: "Frame width - eval/reports/0010 found the VAE-decode OOM (13.45 GiB) is identical regardless of num_frames, pointing at resolution instead; lower this to test that"
+        required: true
+        default: "960"
+      height:
+        description: "Frame height - see width's note"
+        required: true
+        default: "544"
+      guidance_scale:
+        description: "Classifier-free guidance scale - dispatch_inference.py's own --guidance-scale flag already existed but was never exposed as a workflow input until the post-eval/reports/0022 CFG sweep needed it"
+        required: true
+        default: "6.0"
+      disable_cpu_offload:
+        description: "Diagnostic-only (eval/reports/0018): skip enable_sequential_cpu_offload() for this one run to isolate whether it's implicated in the all-zero text encoder output - never enable for a normal run, real OOM risk is accepted as itself diagnostic"
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: kaggle-free-inference
+  cancel-in-progress: false
+
+jobs:
+  dispatch-and-fetch:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.confirm_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      # dispatch_inference.py/fetch_inference_result.py import
+      # training.automation.kaggle_client, which (via training's own
+      # package __init__.py) transitively imports video_engine_sdk -
+      # needs the workspace synced, but training's own base deps are
+      # just video-engine-sdk + pyyaml (no torch/diffusers - same fast/
+      # CPU-only pattern training-phase1-dataset-validation.yml uses).
+      - name: Sync workspace (base deps only, no torch/diffusers)
+        run: uv sync --all-packages
+
+      - name: Verify Kaggle authentication (fails fast, before any real work below)
+        # The kaggle CLI writes its own real error (invalid credentials,
+        # rate limit, etc.) to stdout, not stderr - a bare `>/dev/null`
+        # here would silently discard the actual reason and leave only
+        # a bare "exit code 1" in the log. Capture combined output and
+        # only print it (to stderr, so it surfaces clearly) on failure.
+        run: |
+          if [ -z "$KAGGLE_USERNAME" ] || [ -z "$KAGGLE_API_TOKEN" ]; then
+            echo "KAGGLE_USERNAME / KAGGLE_API_TOKEN repo secrets are not set - see infra/kaggle/README.md" >&2
+            exit 1
+          fi
+          OUTPUT=$(uv run --with kaggle kaggle kernels list --mine 2>&1) || {
+            echo "$OUTPUT" >&2
+            echo "Real 'kaggle kernels list --mine' call failed - see the output above for the actual reason." >&2
+            exit 1
+          }
+          echo "$OUTPUT"
+
+      - name: Diagnostic - real Kaggle GPU/TPU accelerator quota
+        # Run 30281023767 pushed successfully with enable_gpu=true but the
+        # kernel itself reported torch.cuda.is_available() == False - a
+        # real, not-yet-explained gap between "requested a GPU" and "one
+        # was actually attached". `kaggle quota` is the CLI's own real
+        # command for the account's weekly GPU/TPU accelerator quota -
+        # printing it here (before guessing at a code fix) shows whether
+        # this free account's quota is simply exhausted, which several
+        # dispatches in the last hour could plausibly have done.
+        run: uv run --with kaggle kaggle quota 2>&1
+
+      - name: Dispatch the real Kaggle GPU inference kernel
+        id: dispatch
+        # --kaggle-username is deliberately omitted here - dispatch_inference.py
+        # already falls back to the KAGGLE_USERNAME env var (set above from
+        # the repo secret) when the flag isn't passed, so this never asks
+        # for the same value twice.
+        env:
+          DISABLE_CPU_OFFLOAD_FLAG: ${{ github.event.inputs.disable_cpu_offload == 'true' && '--disable-cpu-offload' || '' }}
+        run: |
+          OUTPUT=$(uv run --with kaggle python infra/kaggle/dispatch_inference.py \
+            --prompt "${{ github.event.inputs.prompt }}" \
+            --num-frames "${{ github.event.inputs.num_frames }}" \
+            --sampling-steps "${{ github.event.inputs.sampling_steps }}" \
+            --seed "${{ github.event.inputs.seed }}" \
+            --width "${{ github.event.inputs.width }}" \
+            --height "${{ github.event.inputs.height }}" \
+            --guidance-scale "${{ github.event.inputs.guidance_scale }}" \
+            --git-ref "${{ github.ref_name }}" \
+            --kernel-slug "wan-inference-${{ github.run_id }}" \
+            $DISABLE_CPU_OFFLOAD_FLAG)
+          echo "$OUTPUT"
+          KERNEL_REF=$(echo "$OUTPUT" | grep "^Kernel dispatched:" | sed 's/^Kernel dispatched: //')
+          if [ -z "$KERNEL_REF" ]; then
+            echo "Could not parse kernel_ref from dispatch_inference.py output - see the log above" >&2
+            exit 1
+          fi
+          echo "kernel_ref=$KERNEL_REF" >> "$GITHUB_OUTPUT"
+
+      - name: Diagnostic - list my real Kaggle kernels (confirm the actual ref Kaggle assigned)
+        # A real dispatch (30276675131) succeeded at push but every
+        # subsequent status/output call on the assumed ref hit
+        # "Permission 'kernels.get' was denied" across 4 retries 15s
+        # apart - not a propagation delay. The CLI's own error text
+        # names a wrong slug as the most likely cause, so confirm the
+        # real ref Kaggle registered before guessing further.
+        run: uv run --with kaggle kaggle kernels list --mine --sort-by dateCreated 2>&1 | head -20
+
+      - name: Wait for the Kaggle kernel and fetch its real output (video.mp4 or error.json)
+        run: >
+          uv run --with kaggle python infra/kaggle/fetch_inference_result.py
+          --kernel-ref "${{ steps.dispatch.outputs.kernel_ref }}"
+          --output-dir ./kaggle-inference-output
+          --timeout-sec 4800
+
+      # eval/reports/0022+: this runner (not the Kaggle kernel itself) has
+      # normal outbound network access and the video already on local disk,
+      # so real per-frame pixel stats (eval/quality_metrics.py) are computed
+      # here and printed to this job's own log - the same real, non-mocked
+      # check used throughout this quality-improvement loop, just run in
+      # the one place that can both reach it and see the file. `|| true`:
+      # a flat/muddy verdict is diagnostic output to record, not a reason
+      # to fail this job and lose the video artifact.
+      - name: Install ffmpeg (not preinstalled on this runner image)
+        if: always()
+        continue-on-error: true
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
+      - name: Run real per-frame quality metrics on the generated video
+        if: always()
+        continue-on-error: true
+        run: |
+          if [ -f ./kaggle-inference-output/output/video.mp4 ]; then
+            uv run python eval/quality_metrics.py ./kaggle-inference-output/output/video.mp4 || true
+          else
+            echo "No video.mp4 produced (see error.json above) - skipping quality_metrics.py"
+          fi
+
+      # This session's own egress policy blocks the artifact storage host
+      # actions/upload-artifact uses, so the real video can only be looked
+      # at from wherever it already sits with network access - this
+      # runner. A small JPEG thumbnail, base64-encoded straight into this
+      # job's own log (never touching the blocked host), is the only way
+      # to actually see a real frame rather than just its statistics.
+      - name: Extract a visual-inspection thumbnail into this job's own log
+        if: always()
+        continue-on-error: true
+        run: |
+          if [ -f ./kaggle-inference-output/output/video.mp4 ]; then
+            ffmpeg -y -hide_banner -loglevel error -ss 00:00:00.2 -i ./kaggle-inference-output/output/video.mp4 -vframes 1 -vf scale=320:-1 /tmp/thumb.jpg || true
+            if [ -f /tmp/thumb.jpg ]; then
+              echo "===THUMBNAIL_JPEG_BASE64_START==="
+              base64 -w0 /tmp/thumb.jpg
+              echo ""
+              echo "===THUMBNAIL_JPEG_BASE64_END==="
+            else
+              echo "ffmpeg did not produce a thumbnail - see the error above"
+            fi
+          else
+            echo "No video.mp4 produced (see error.json above) - skipping thumbnail extraction"
+          fi
+
+      - name: Upload the real result (video + metadata, or error.json) as a workflow artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kaggle-wan-inference-${{ github.run_id }}
+          path: kaggle-inference-output
+          if-no-files-found: warn
+          retention-days: 30

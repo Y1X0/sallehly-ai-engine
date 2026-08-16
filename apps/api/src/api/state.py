@@ -108,10 +108,49 @@ def build_app_state(settings: Settings) -> AppState:
     compiler = CreativeCompiler(capability_manifest=capability_manifest, memory=memory)
 
     compute: IComputeProvider
-    if settings.compute_provider == "runpod" and settings.runpod_api_key:
+    if settings.compute_provider == "runpod":
+        # Fail fast and loud, not silently: an explicit COMPUTE_PROVIDER=runpod
+        # with incomplete credentials used to fall straight through to
+        # LocalProvider (a mock stub) with no indication why - exactly
+        # the silent-failure gap this raises against instead.
+        if not settings.runpod_api_key or not settings.runpod_endpoint_id:
+            raise RuntimeError(
+                "COMPUTE_PROVIDER=runpod requires both RUNPOD_API_KEY and RUNPOD_ENDPOINT_ID "
+                "(a real deployed RunPod serverless endpoint - see infra/runpod/README.md and "
+                "workers/gpu-worker). Missing: "
+                + ", ".join(
+                    name for name, value in (
+                        ("RUNPOD_API_KEY", settings.runpod_api_key),
+                        ("RUNPOD_ENDPOINT_ID", settings.runpod_endpoint_id),
+                    )
+                    if not value
+                )
+                + ". Set both, or choose COMPUTE_PROVIDER=local-inference (real but tiny-scale "
+                "local generation, no credentials needed) or COMPUTE_PROVIDER=local (mock stub) "
+                "instead."
+            )
         from video_engine_adapter.compute import RunPodProvider
 
         compute = RunPodProvider(api_key=settings.runpod_api_key, endpoint_id=settings.runpod_endpoint_id)
+    elif settings.compute_provider == "local-inference":
+        # Real (never mocked) generation with zero external credentials -
+        # see video_engine_adapter.compute.LocalInferenceProvider and
+        # video_engine_adapter.inference.wan_inference's docstrings for
+        # what "real" means here (tiny-scale by default, real full-scale
+        # if video_inference_smoke_test=False + a real GPU + real weights).
+        if not settings.video_inference_smoke_test and not settings.video_inference_model_id:
+            raise RuntimeError(
+                "COMPUTE_PROVIDER=local-inference with VIDEO_INFERENCE_SMOKE_TEST=false requires "
+                "VIDEO_INFERENCE_MODEL_ID (a real Wan2.1/2.2 HF Hub repo id or local weights "
+                "directory) to be set."
+            )
+        from video_engine_adapter.compute import LocalInferenceProvider
+
+        compute = LocalInferenceProvider(
+            smoke_test=settings.video_inference_smoke_test,
+            model_id=settings.video_inference_model_id or None,
+            device=settings.video_inference_device,
+        )
     else:
         compute = LocalProvider()
 

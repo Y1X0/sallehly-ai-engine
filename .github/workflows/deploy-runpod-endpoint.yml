@@ -1,0 +1,287 @@
+name: Deploy - RunPod Wan2.2 Production Endpoint (free by default, real deploy human-gated)
+
+# Builds workers/gpu-worker into a real image, pushes it to GHCR, and -
+# only if real_deploy is explicitly requested - deploys a real RunPod
+# Serverless endpoint from it (infra/runpod/deploy_endpoint.py) and
+# verifies the endpoint is actually healthy (infra/runpod/check_health.py)
+# - the exact build -> push -> deploy -> health-check sequence documented
+# in infra/runpod/README.md, now automated instead of run by hand.
+#
+# This workflow exists because this project's own development sandbox
+# cannot reach either the Docker Hub registry CDN or api.runpod.ai/
+# api.runpod.io (confirmed by hand) - a real GitHub-hosted runner has
+# neither restriction, so this is where the real build/push/deploy
+# actually happens.
+#
+# DEFAULT MODE IS FREE (real_deploy=false, the default): build-and-push
+# still runs for real (so CI genuinely builds and pushes the image), but
+# deploy-endpoint runs infra/runpod/deploy_endpoint.py --dry-run, which
+# validates every argument and prints exactly what would be created
+# WITHOUT calling the real RunPod API - no RUNPOD_API_KEY required, no
+# RunPod account balance required, and verify-health is skipped entirely
+# (there is no real endpoint to check). This mode never creates a paid
+# RunPod resource. This is deliberate: the original goal of this project
+# is a free/near-free experimental environment, not a paid RunPod
+# endpoint by default (see the RunPod "$0.01 minimum balance" rejection
+# that a real create_endpoint() call hit before this mode existed).
+#
+# REAL DEPLOYMENT is opt-in only, and requires ALL of:
+#   1. real_deploy=true explicitly selected on this workflow's inputs.
+#   2. The RUNPOD_API_KEY repository secret is set.
+#   3. The `runpod-production-deploy` Environment's required reviewers
+#      approve the run (see below) - real, ongoing cost potential even
+#      at workers_min=0, same real gate training-phase3-paid-gpu-gate.yml
+#      uses for paid training spend. No code in this repository can
+#      bypass that reviewer check.
+#
+# Required repository secrets (real-deploy mode only): RUNPOD_API_KEY
+# (required). HF_TOKEN (optional - only needed if models/registry.yaml's
+# configured Wan2.2 repo becomes gated; public as of this writing).
+# GITHUB_TOKEN (already provided by Actions) is sufficient to push to
+# this repo's own GHCR packages - no extra registry secret needed, in
+# either mode.
+
+on:
+  # GitHub only registers a workflow_dispatch-triggered workflow (making
+  # it selectable/runnable in the Actions UI, or via `gh workflow run`)
+  # once it has seen at least one real event for that workflow file on
+  # this branch - a workflow_dispatch-only file freshly added to a
+  # non-default branch does not appear in the Actions tab at all until
+  # then (confirmed GitHub Actions behavior, not a bug in this file).
+  # This `push` trigger, scoped to this one branch, is what registers
+  # it; every job below stays gated on `github.event_name ==
+  # 'workflow_dispatch'`, so a plain push here never does anything real
+  # - it only makes the manual "Run workflow" button appear.
+  push:
+    branches:
+      - claude/sallehly-engine-audit-vnxs4f
+  workflow_dispatch:
+    inputs:
+      confirm_deploy:
+        description: "Run this workflow (build + push the image, then either dry-run or real-deploy per real_deploy below) - required"
+        required: true
+        default: false
+        type: boolean
+      real_deploy:
+        description: "Actually create a real, billable RunPod endpoint (real, ongoing cost potential). Leave false for the free dry-run mode: build+push still runs for real, but deploy-endpoint only validates - no RUNPOD_API_KEY or RunPod balance needed, and verify-health is skipped."
+        required: true
+        default: false
+        type: boolean
+      image_tag:
+        description: "Docker image tag (also always tagged :latest)"
+        required: true
+        default: "2.2.0"
+      endpoint_name:
+        description: "RunPod template/endpoint name"
+        required: true
+        default: "sallehly-wan22-ti2v-5b"
+      gpu_ids:
+        description: "RunPod GPU pool id(s) - see infra/runpod/deploy_endpoint.py --help / RunPod console for valid values"
+        required: true
+        default: "AMPERE_24"
+      workers_min:
+        description: "Minimum workers (0 = scale to zero when idle, no cost while unused)"
+        required: true
+        default: "0"
+      workers_max:
+        description: "Maximum workers"
+        required: true
+        default: "1"
+
+concurrency:
+  group: deploy-runpod-endpoint
+  cancel-in-progress: false
+
+jobs:
+  build-and-push:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.confirm_deploy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.image-ref.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set image ref
+        id: image-ref
+        run: |
+          # GHCR (and OCI registries in general) reject any uppercase in
+          # a repository/image name - github.repository preserves the
+          # owner's real casing (e.g. "Y1X0/sallehly-ai-engine"), which
+          # broke the build below with "repository name must be
+          # lowercase" until this was lowercased explicitly.
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/$REPO_LOWER/wan22-worker"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push workers/gpu-worker (real Wan2.2 inference image)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: workers/gpu-worker/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.image-ref.outputs.image }}:${{ github.event.inputs.image_tag }}
+            ${{ steps.image-ref.outputs.image }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-endpoint:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The real approval gate only applies to a real deployment - see this
+    # workflow's own header comment. In free/dry-run mode (real_deploy
+    # not "true") this job runs under `runpod-free-dry-run` instead - an
+    # environment name with no configured protection rules, so it never
+    # waits for approval (GitHub auto-creates unconfigured environment
+    # names with no rules the first time they're referenced - no manual
+    # setup needed for this one). Configure `runpod-production-deploy`
+    # (Settings -> Environments) with required reviewers before the
+    # first real (real_deploy=true) run, the same way
+    # training-phase3-paid-gpu-gate.yml's paid-gpu-approval Environment
+    # already works in this repo.
+    environment: ${{ github.event.inputs.real_deploy == 'true' && 'runpod-production-deploy' || 'runpod-free-dry-run' }}
+    outputs:
+      endpoint_id: ${{ steps.deploy-real.outputs.endpoint_id || steps.deploy-dry.outputs.endpoint_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Sync workspace
+        run: uv sync --all-packages
+
+      - name: Verify RUNPOD_API_KEY is set (real_deploy=true only - fails fast, before any real work below)
+        if: github.event.inputs.real_deploy == 'true'
+        run: |
+          if [ -z "${{ secrets.RUNPOD_API_KEY }}" ]; then
+            echo "RUNPOD_API_KEY repository secret is not set - see infra/runpod/README.md" >&2
+            exit 1
+          fi
+
+      - name: Free mode - validate deploy logic without calling the RunPod API (no cost, no secrets required)
+        id: deploy-dry
+        if: github.event.inputs.real_deploy != 'true'
+        run: |
+          set +e
+          OUTPUT=$(uv run --with runpod python infra/runpod/deploy_endpoint.py \
+            --dry-run \
+            --image "${{ needs.build-and-push.outputs.image }}:${{ github.event.inputs.image_tag }}" \
+            --name "${{ github.event.inputs.endpoint_name }}" \
+            --gpu-ids "${{ github.event.inputs.gpu_ids }}" \
+            --workers-min "${{ github.event.inputs.workers_min }}" \
+            --workers-max "${{ github.event.inputs.workers_max }}")
+          STATUS=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$STATUS" -ne 0 ]; then
+            echo "deploy_endpoint.py --dry-run reported invalid configuration - see the log above" >&2
+            exit 1
+          fi
+          ENDPOINT_ID=$(echo "$OUTPUT" | grep "^Endpoint created:" | sed 's/^Endpoint created: //')
+          echo "endpoint_id=$ENDPOINT_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy the real RunPod template + endpoint (real_deploy=true only)
+        id: deploy-real
+        if: github.event.inputs.real_deploy == 'true'
+        env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          OUTPUT=$(uv run --with runpod python infra/runpod/deploy_endpoint.py \
+            --image "${{ needs.build-and-push.outputs.image }}:${{ github.event.inputs.image_tag }}" \
+            --name "${{ github.event.inputs.endpoint_name }}" \
+            --gpu-ids "${{ github.event.inputs.gpu_ids }}" \
+            --workers-min "${{ github.event.inputs.workers_min }}" \
+            --workers-max "${{ github.event.inputs.workers_max }}")
+          echo "$OUTPUT"
+          ENDPOINT_ID=$(echo "$OUTPUT" | grep "^Endpoint created:" | sed 's/^Endpoint created: //')
+          if [ -z "$ENDPOINT_ID" ]; then
+            echo "Could not parse endpoint_id from deploy_endpoint.py output - see the log above" >&2
+            exit 1
+          fi
+          echo "endpoint_id=$ENDPOINT_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Record the free/dry-run result in the job summary
+        if: github.event.inputs.real_deploy != 'true'
+        run: |
+          {
+            echo "## Free mode - dry run only, no RunPod endpoint created"
+            echo ""
+            echo "- **Image built and pushed for real:** \`${{ needs.build-and-push.outputs.image }}:${{ github.event.inputs.image_tag }}\`"
+            echo "- **deploy_endpoint.py --dry-run:** validated arguments, did not call the RunPod API"
+            echo "- No RUNPOD_API_KEY was required, no RunPod balance was touched, verify-health is skipped."
+            echo ""
+            echo "Re-run with **real_deploy=true** (and RUNPOD_API_KEY set, plus"
+            echo "runpod-production-deploy approval) to actually create a billable endpoint."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record the deployed endpoint in the job summary
+        if: github.event.inputs.real_deploy == 'true'
+        run: |
+          {
+            echo "## RunPod endpoint deployed"
+            echo ""
+            echo "- **Image:** \`${{ needs.build-and-push.outputs.image }}:${{ github.event.inputs.image_tag }}\`"
+            echo "- **Endpoint id:** \`${{ steps.deploy-real.outputs.endpoint_id }}\`"
+            echo ""
+            echo "Set these as repository secrets/variables for apps/api's own"
+            echo "\`COMPUTE_PROVIDER=runpod\` path:"
+            echo ""
+            echo '```'
+            echo "RUNPOD_ENDPOINT_ID=${{ steps.deploy-real.outputs.endpoint_id }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  verify-health:
+    needs: deploy-endpoint
+    if: github.event.inputs.real_deploy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Sync workspace
+        run: uv sync --all-packages
+
+      - name: Check endpoint health (real GET {endpoint_id}/health)
+        env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+          RUNPOD_ENDPOINT_ID: ${{ needs.deploy-endpoint.outputs.endpoint_id }}
+        run: uv run python infra/runpod/check_health.py
+
+      - name: Record health-check result in the job summary
+        if: always()
+        run: |
+          {
+            echo "## Health check"
+            echo ""
+            echo "Endpoint \`${{ needs.deploy-endpoint.outputs.endpoint_id }}\` health check: ${{ job.status }}"
+            echo ""
+            echo "A worker cold start (first real request - downloading + verifying"
+            echo "real Wan2.2 weights, then loading them) can take several minutes."
+            echo "0 ready workers right after deploy is expected, not a failure - see"
+            echo "check_health.py's own warning output above."
+          } >> "$GITHUB_STEP_SUMMARY"

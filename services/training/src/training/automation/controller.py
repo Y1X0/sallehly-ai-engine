@@ -144,8 +144,12 @@ class InMemoryJobStatusStore(IJobStatusStore):
 
 
 class FilesystemJobStatusStore(IJobStatusStore):
-    def __init__(self, root_dir: Path) -> None:
-        self._root = root_dir
+    def __init__(self, root_dir: str | Path) -> None:
+        # Real bug found in live CI use: a plain string (from an inline
+        # script, not argparse's type=Path) reached here and crashed on
+        # `.mkdir()`, since every existing caller/test happened to already
+        # pass a real Path. Coerce rather than assume.
+        self._root = Path(root_dir)
         self._root.mkdir(parents=True, exist_ok=True)
 
     def save(self, job: JobRecord) -> None:

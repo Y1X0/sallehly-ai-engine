@@ -115,9 +115,42 @@ class TestKaggleClient:
 
         client = KaggleClient(runner=runner)
         ref = KaggleDatasetRef(owner_slug="sallehly", dataset_slug="training-clips")
-        client.upload_dataset(tmp_path, DatasetMetadata(dataset_ref=ref, title="x"), is_new=True)
+        client.upload_dataset(tmp_path, DatasetMetadata(dataset_ref=ref, title="Training clips"), is_new=True)
 
         assert calls[0][:3] == ["kaggle", "datasets", "create"]
+
+    def test_upload_dataset_rejects_a_title_outside_kaggles_real_6_to_50_char_bound(self, tmp_path):
+        # Real bug found live (infra/kaggle/diagnose_dataset_attach.py's
+        # first real run): `kaggle datasets create` rejected a 54-char
+        # title with "The dataset title must be between 6 and 50
+        # characters" - nothing previously checked this locally.
+        client = KaggleClient(runner=lambda args: _fake_result())
+        ref = KaggleDatasetRef(owner_slug="sallehly", dataset_slug="x")
+        with pytest.raises(ValueError, match="6-50 chars"):
+            client.upload_dataset(tmp_path, DatasetMetadata(dataset_ref=ref, title="abcde"), is_new=True)
+        with pytest.raises(ValueError, match="6-50 chars"):
+            client.upload_dataset(tmp_path, DatasetMetadata(dataset_ref=ref, title="x" * 51), is_new=True)
+
+    def test_upload_dataset_rejects_a_nonempty_subtitle_outside_kaggles_real_20_to_80_char_bound(self, tmp_path):
+        # Real bug found live a second time (infra/kaggle/diagnose_dataset_attach.py's
+        # second real run, after the title fix): `kaggle datasets create`
+        # rejected a 93-char subtitle with "Subtitle length must be
+        # between 20 and 80 characters".
+        client = KaggleClient(runner=lambda args: _fake_result())
+        ref = KaggleDatasetRef(owner_slug="sallehly", dataset_slug="x")
+        with pytest.raises(ValueError, match="20-80 chars"):
+            client.upload_dataset(
+                tmp_path, DatasetMetadata(dataset_ref=ref, title="Training clips", subtitle="too short"),
+                is_new=True,
+            )
+        with pytest.raises(ValueError, match="20-80 chars"):
+            client.upload_dataset(
+                tmp_path, DatasetMetadata(dataset_ref=ref, title="Training clips", subtitle="x" * 81),
+                is_new=True,
+            )
+        # An empty subtitle (the default) is not checked - no real
+        # evidence exists for how Kaggle treats that case.
+        client.upload_dataset(tmp_path, DatasetMetadata(dataset_ref=ref, title="Training clips"), is_new=True)
 
     def test_download_dataset_creates_dest_and_runs_download_command(self, tmp_path):
         calls = []
@@ -192,6 +225,28 @@ class TestKaggleClient:
         with pytest.raises(KaggleAutomationError):
             client.get_kernel_status(KaggleKernelRef(owner_slug="sallehly", kernel_slug="x"))
 
+    def test_get_kernel_status_parses_real_enum_repr(self):
+        # Real `kernels status` output (confirmed by hand, run 30278022296)
+        # prints the enum's own repr - "KernelWorkerStatus.RUNNING" - not
+        # the bare "running" originally assumed.
+        client = KaggleClient(
+            runner=lambda args: _fake_result(stdout='sallehly/x has status "KernelWorkerStatus.RUNNING"')
+        )
+        status = client.get_kernel_status(KaggleKernelRef(owner_slug="sallehly", kernel_slug="x"))
+        assert status == KaggleKernelStatus.RUNNING
+
+    def test_get_kernel_status_parses_real_cancel_acknowledged(self):
+        client = KaggleClient(
+            runner=lambda args: _fake_result(stdout='sallehly/x has status "KernelWorkerStatus.CANCEL_ACKNOWLEDGED"')
+        )
+        status = client.get_kernel_status(KaggleKernelRef(owner_slug="sallehly", kernel_slug="x"))
+        assert status == KaggleKernelStatus.CANCELLED
+
+    def test_get_dataset_status_returns_stripped_stdout(self):
+        client = KaggleClient(runner=lambda args: _fake_result(stdout="ready\n"))
+        status = client.get_dataset_status(KaggleDatasetRef(owner_slug="sallehly", dataset_slug="x"))
+        assert status == "ready"
+
     def test_command_failure_raises_kaggle_automation_error(self):
         client = KaggleClient(runner=lambda args: _fake_result(returncode=1, stderr="401 unauthorized"))
         with pytest.raises(KaggleAutomationError, match="401 unauthorized"):
@@ -227,12 +282,157 @@ class TestKaggleClient:
         assert calls["n"] == 3
         assert len(sleeps) == 2
 
+    def test_poll_kernel_until_terminal_captures_the_real_failure_message(self):
+        # `kaggle kernels status` prints a real "Failure message: ..." line
+        # right after the status line whenever a kernel errored (confirmed
+        # by reading kaggle's own kernels_status_cli source) - this is the
+        # actual reason the run failed, for free, with no extra API call.
+        # Must be captured in KaggleJobResult.raw_status_output, not
+        # discarded like get_kernel_status() alone does.
+        raw_output = 'me/x has status "error"\nFailure message: "Traceback: ImportError: no module named foo"\n'
+        client = KaggleClient(runner=lambda args: _fake_result(stdout=raw_output))
+        sleeps: list[float] = []
+
+        result = client.poll_kernel_until_terminal(
+            KaggleKernelRef(owner_slug="me", kernel_slug="x"),
+            poll_interval_sec=1.0,
+            timeout_sec=100.0,
+            sleep_fn=sleeps.append,
+            clock=iter([0.0, 0.0]).__next__,
+        )
+
+        assert result.status == KaggleKernelStatus.ERROR
+        assert result.raw_status_output == raw_output
+
     def test_poll_kernel_until_terminal_raises_on_timeout(self):
         client = KaggleClient(runner=lambda args: _fake_result(stdout='"running"'))
         clock_values = iter([0.0, 0.0, 50.0, 50.0, 200.0])
         with pytest.raises(KaggleAutomationError, match="Timed out"):
             client.poll_kernel_until_terminal(
                 KaggleKernelRef(owner_slug="sallehly", kernel_slug="x"),
+                poll_interval_sec=10.0,
+                timeout_sec=100.0,
+                sleep_fn=lambda _s: None,
+                clock=clock_values.__next__,
+            )
+
+    def test_poll_kernel_until_terminal_retries_a_transient_status_check_failure(self):
+        # Real bug found live (run 31711116854): `kaggle kernels status`
+        # got "Permission 'kernels.get' was denied" on the very first check
+        # right after `kernels push` reported success for that exact same
+        # slug - a transient read-side lag, not a wrong ref (unlike the
+        # earlier dataset bug). Must be retried like any other non-terminal
+        # status, not raised immediately.
+        responses = iter([
+            _fake_result(returncode=1, stderr="Permission 'kernels.get' was denied"),
+            _fake_result(stdout='"complete"'),
+        ])
+        client = KaggleClient(runner=lambda args: next(responses))
+        sleeps: list[float] = []
+
+        result = client.poll_kernel_until_terminal(
+            KaggleKernelRef(owner_slug="sallehly", kernel_slug="x"),
+            poll_interval_sec=1.0,
+            timeout_sec=100.0,
+            sleep_fn=sleeps.append,
+            clock=iter([0.0, 0.0, 1.0, 1.0]).__next__,
+        )
+
+        assert result.status == KaggleKernelStatus.COMPLETE
+        assert len(sleeps) == 1
+
+    def test_poll_dataset_until_ready_stops_on_ready(self):
+        statuses = iter(["blobs_received", "ready"])
+        calls = {"n": 0}
+
+        def runner(args):
+            calls["n"] += 1
+            return _fake_result(stdout=next(statuses))
+
+        client = KaggleClient(runner=runner)
+        sleeps: list[float] = []
+
+        result = client.poll_dataset_until_ready(
+            KaggleDatasetRef(owner_slug="sallehly", dataset_slug="x-input"),
+            poll_interval_sec=1.0,
+            timeout_sec=100.0,
+            sleep_fn=sleeps.append,
+            clock=iter([0.0, 0.0, 1.0, 1.0]).__next__,
+        )
+
+        assert result == "ready"
+        assert calls["n"] == 2
+        assert len(sleeps) == 1
+
+    def test_poll_dataset_until_ready_retries_a_transient_status_check_failure(self):
+        # Real bug found live (run 31708887912): `kaggle datasets status`
+        # itself got a bare "403 Client Error: Forbidden" on the very
+        # first check right after `datasets create` returned - the
+        # freshly created dataset wasn't visible to the API yet. That
+        # must be retried like any other "not ready" state, not raised
+        # immediately (which crashed the whole dispatch before this fix).
+        responses = iter([
+            _fake_result(returncode=1, stderr="403 Client Error: Forbidden"),
+            _fake_result(stdout="ready"),
+        ])
+        client = KaggleClient(runner=lambda args: next(responses))
+        sleeps: list[float] = []
+
+        result = client.poll_dataset_until_ready(
+            KaggleDatasetRef(owner_slug="sallehly", dataset_slug="x-input"),
+            poll_interval_sec=1.0,
+            timeout_sec=100.0,
+            sleep_fn=sleeps.append,
+            clock=iter([0.0, 0.0, 1.0, 1.0]).__next__,
+        )
+
+        assert result == "ready"
+        assert len(sleeps) == 1
+
+    def test_poll_dataset_until_ready_raises_on_timeout(self):
+        client = KaggleClient(runner=lambda args: _fake_result(stdout="blobs_received"))
+        clock_values = iter([0.0, 0.0, 50.0, 50.0, 200.0])
+        with pytest.raises(KaggleAutomationError, match="Timed out"):
+            client.poll_dataset_until_ready(
+                KaggleDatasetRef(owner_slug="sallehly", dataset_slug="x-input"),
+                poll_interval_sec=10.0,
+                timeout_sec=100.0,
+                sleep_fn=lambda _s: None,
+                clock=clock_values.__next__,
+            )
+
+    def test_poll_dataset_downloadable_stops_once_download_succeeds(self, tmp_path):
+        # Real evidence (infra/kaggle/diagnose_dataset_attach.py's
+        # push-kernel diagnostic, run 31795945773): `datasets download` is
+        # a trustworthy readiness signal where `datasets status` was not
+        # (that endpoint 403'd on every real production attempt).
+        responses = iter([
+            _fake_result(returncode=1, stderr="404 Client Error: Not Found"),
+            _fake_result(stdout="Dataset downloaded"),
+        ])
+        client = KaggleClient(runner=lambda args: next(responses))
+        sleeps: list[float] = []
+
+        client.poll_dataset_downloadable(
+            KaggleDatasetRef(owner_slug="sallehly", dataset_slug="x-input"),
+            dest_dir=tmp_path / "probe",
+            poll_interval_sec=1.0,
+            timeout_sec=100.0,
+            sleep_fn=sleeps.append,
+            clock=iter([0.0, 0.0, 1.0, 1.0]).__next__,
+        )
+
+        assert len(sleeps) == 1
+
+    def test_poll_dataset_downloadable_raises_on_timeout_without_ever_succeeding(self, tmp_path):
+        client = KaggleClient(
+            runner=lambda args: _fake_result(returncode=1, stderr="404 Client Error: Not Found")
+        )
+        clock_values = iter([0.0, 0.0, 50.0, 50.0, 200.0])
+        with pytest.raises(KaggleAutomationError, match="Timed out"):
+            client.poll_dataset_downloadable(
+                KaggleDatasetRef(owner_slug="sallehly", dataset_slug="x-input"),
+                dest_dir=tmp_path / "probe",
                 poll_interval_sec=10.0,
                 timeout_sec=100.0,
                 sleep_fn=lambda _s: None,
@@ -640,6 +840,16 @@ class TestTrainingController:
         assert reloaded is not None
         assert reloaded.config.run_id == job.config.run_id
         assert len(store2.list_all()) == 1
+
+    def test_filesystem_job_status_store_accepts_a_plain_string_path(self, tmp_path):
+        # Regression test: a real CI run (training-phase2-free-gpu-experiment.yml's
+        # inline report-building script) passed a plain string, not a
+        # pathlib.Path, and crashed with "'str' object has no attribute
+        # 'mkdir'" - every existing caller/test happened to already pass a
+        # real Path, so this was never caught until it hit CI for real.
+        store = FilesystemJobStatusStore(str(tmp_path / "jobs"))
+        assert (tmp_path / "jobs").is_dir()
+        assert store.list_all() == []
 
 
 def test_uses_real_base_model_registry_entry():

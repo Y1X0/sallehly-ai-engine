@@ -6,26 +6,57 @@ name: Training - Phase 2 Free GPU Experiment (Kaggle/Modal, $0)
 # CostGuard/approval is needed at this tier - only PAID_GPU jobs (Phase
 # 3, training-phase3-paid-gpu-gate.yml) go through the approval gate.
 #
-# Real Kaggle/Modal dispatch (--dispatch) additionally requires a real
-# training entrypoint this repo does not ship yet (see the script's own
-# docstring) - until then this workflow exercises the real, tested
-# planning/tracking/reporting path and stops there, by design.
+# `plan-experiment` (nightly + manual) only ever plans - never
+# downloads weights, never touches a real GPU, never spends a Kaggle/
+# Modal quota. It never needs secrets and is unaffected by anything
+# below.
+#
+# `wan22-ti2v5b-kaggle-smoke-test` is the real thing: downloads real
+# Wan2.2 TI2V-5B weights, ingests a small CI-generated dataset, and
+# dispatches a real LoRA training smoke test to a real Kaggle free GPU
+# (docs/adr/0025-kaggle-dispatch-argv-fix.md is what makes this actually
+# runnable, not just "kaggle kernels push exits 0"). It is manual-only
+# (workflow_dispatch, never the nightly schedule) and requires an
+# explicit confirmation input - a real GPU + real weights download is a
+# deliberate, human-triggered action here, never an unattended one.
+#
+# *** REAL STAGE 0 DATA, MECHANISM-PROOF SCOPE ***
+# This job fetches the real, rights-cleared multi_entity_interaction
+# Stage 0 clips (dataset/sources/stage0_urls_multi_entity.json - 9 real
+# Wikimedia Commons videos, see dataset/sources/stage0_sources.md and
+# docs/DATASET_SPEC.md) directly inside the runner - GitHub-hosted
+# runners have real internet access, so this is a real fetch, not a
+# placeholder. This is still Stage 0 scope, not the full Dataset v1:
+# every clip's category-level license (Wikimedia Commons, CONDITIONALLY
+# APPROVED per docs/DATASET_SPEC.md Section 6) is verified, but
+# per-clip CC-BY vs CC-BY-SA verification has not been done yet - fine
+# for proving the pipeline/checking if training changes behavior at
+# all, not yet the bar for the full 600-clip Dataset v1.
 
 on:
   schedule:
-    - cron: "0 3 * * *" # nightly, 03:00 UTC
+    - cron: "0 3 * * *" # nightly, 03:00 UTC - plan-experiment only, see above
   workflow_dispatch:
     inputs:
       provider:
-        description: "Free-tier GPU provider to target"
+        description: "[plan-experiment] Free-tier GPU provider to target"
         required: true
         default: "modal"
         type: choice
         options: ["modal", "kaggle"]
       base_config:
-        description: "TrainingConfig YAML under services/training/configs/"
+        description: "[plan-experiment] TrainingConfig YAML under services/training/configs/"
         required: true
         default: "services/training/configs/wan21_finetune.yaml"
+      run_wan22_kaggle_smoke_test:
+        description: "[wan22-ti2v5b-kaggle-smoke-test] Actually download real weights and dispatch a real Kaggle GPU run (free tier, but a real external action - requires KAGGLE_USERNAME/KAGGLE_API_TOKEN repo secrets)"
+        required: true
+        default: false
+        type: boolean
+      kaggle_username:
+        description: "[wan22-ti2v5b-kaggle-smoke-test] Kaggle username the pushed kernel is owned by (usually not the same as your GitHub username)"
+        required: false
+        default: ""
 
 concurrency:
   group: training-phase2-free-gpu
@@ -59,4 +90,203 @@ jobs:
         with:
           name: training-phase2-job-records
           path: .training-automation/jobs
+          retention-days: 30
+
+  wan22-ti2v5b-kaggle-smoke-test:
+    # Manual-only, explicit opt-in - never runs on the nightly schedule
+    # and never runs from a plain "Run workflow" click without also
+    # checking this box.
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_wan22_kaggle_smoke_test == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ffmpeg (needed by ffprobe-based dataset ingestion)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Sync workspace with the gpu-training extra
+        run: uv sync --all-packages --extra gpu-training
+
+      - name: Verify Kaggle authentication (fails fast, before any real work below)
+        # KAGGLE_API_TOKEN, not the older KAGGLE_KEY - confirmed by hand in
+        # infra/kaggle/README.md's own troubleshooting log that Kaggle's
+        # current API token flow no longer authenticates reliably through
+        # the older username+key pair (real dispatch attempt hit
+        # "Authentication required to call the Kaggle API"); the same fix
+        # kaggle-free-inference.yml already uses successfully. `--with
+        # kaggle`: the `kaggle` CLI/package is not part of the
+        # gpu-training extra synced above (real failure hit in CI: "Failed
+        # to spawn: kaggle - No such file or directory" on a bare `uv run
+        # kaggle ...`) - kaggle-free-inference.yml's every kaggle-CLI call
+        # already uses this same flag.
+        run: |
+          if [ -z "$KAGGLE_USERNAME" ] || [ -z "$KAGGLE_API_TOKEN" ]; then
+            echo "KAGGLE_USERNAME / KAGGLE_API_TOKEN repo secrets are not set - see docs/EXECUTION_PLAN_FIRST_GPU_RUN.md" >&2
+            exit 1
+          fi
+          uv run --with kaggle kaggle kernels list --mine >/dev/null
+
+      # *** REAL Stage 0 clips, mechanism-proof scope (see the file-top note) ***
+      # GitHub-hosted runners have real internet access, so this fetches
+      # the actual 9 rights-cleared multi_entity_interaction clips
+      # (dataset/sources/stage0_urls_multi_entity.json) directly - not
+      # solid-color placeholders. dataset/sources/fetch_stage0.py already
+      # does exactly this (resolve Commons File: URLs -> real files,
+      # retry-with-backoff on Wikimedia's rate limiting, stable per-URL
+      # filenames) and is already tested (tests/test_dataset_fetch_stage0.py).
+      - name: Fetch the real multi_entity_interaction Stage 0 clips
+        run: >
+          uv run python dataset/sources/fetch_stage0.py
+          --urls dataset/sources/stage0_urls_multi_entity.json
+          --out-dir dataset/raw
+
+      - name: Ingest the real Stage 0 clips (real DatasetManager pipeline, real footage)
+        # --tag-from-subdir: auto-tags each clip with its category
+        # (multi_entity_interaction, from the folder name) - see
+        # ingest_dataset.py's own --tag-from-subdir help text.
+        # --val-fraction 0 --test-fraction 0: only 9 clips - a nonzero
+        # val/test split has a real chance of leaving "train" empty,
+        # which would break the next step's manifest glob. A held-out
+        # split is meaningless at this size; real split fractions apply
+        # once Dataset v1 (600 clips) is ingested for a real training run.
+        run: >
+          uv run python services/training/scripts/ingest_dataset.py
+          --clips-dir dataset/raw --tag-from-subdir --rights-cleared --tag stage0
+          --version-store-dir .training-data/dataset-versions
+          --manifest-output-dir .training-data/manifests
+          --base-model-config services/training/configs/wan22_finetune.yaml
+          --val-fraction 0 --test-fraction 0
+
+      - name: Build a scratch smoke-test config (real dataset_version, real LoRA training run)
+        # max_train_steps=75 (midpoint of the 50-100 range requested for
+        # the first real LoRA training attempt, now that the dataset-attach
+        # dispatch bug has real evidence-backed proof of a fix) - previous
+        # attempts used 20 steps purely to prove the dispatch mechanism
+        # worked, not to actually observe training behavior (loss movement,
+        # checkpoint output, VRAM). checkpoint_every_steps/eval_every_steps=25
+        # gives 3 checkpoints across the run to actually inspect.
+        run: |
+          uv run python - <<'PY'
+          import dataclasses
+          import glob
+          from pathlib import Path
+          from training import TrainingConfig
+
+          manifest = sorted(glob.glob(".training-data/manifests/*_train.jsonl"))[-1]
+          version_id = Path(manifest).name.removesuffix("_train.jsonl")
+          config = TrainingConfig.from_yaml("services/training/configs/wan22_finetune.yaml")
+          config = dataclasses.replace(
+              config, dataset_version=version_id, max_train_steps=75,
+              checkpoint_every_steps=25, eval_every_steps=25,
+          )
+          config.to_yaml(".training-data/ci_smoke_config.yaml")
+          print(f"dataset_version={version_id}")
+          PY
+
+      - name: Dispatch the LoRA training smoke test to Kaggle's free GPU
+        id: dispatch
+        # --with kaggle: dispatch_via_kaggle -> KaggleClient shells out to
+        # the real `kaggle` CLI, same gap as the auth-check step above.
+        # KERNEL_REF's owner previously defaulted to github.repository_owner
+        # (the GitHub org/user, "Y1X0" - not a real Kaggle username) when
+        # kaggle_username was left blank, silently pushing under the wrong
+        # account. infra/kaggle/dispatch_inference.py's proven-working
+        # pattern (kaggle-free-inference.yml) never asks for a manual
+        # kaggle_username input at all - it falls back to the real
+        # KAGGLE_USERNAME secret already set as this job's own env var
+        # above. Matching that here removes the same footgun.
+        run: |
+          MANIFEST=$(ls .training-data/manifests/*_train.jsonl | tail -1)
+          KERNEL_REF="${{ github.event.inputs.kaggle_username || env.KAGGLE_USERNAME }}/wan22-ci-smoke-${{ github.run_id }}"
+          uv run --with kaggle python services/training/scripts/run_experiment.py \
+            --base-config .training-data/ci_smoke_config.yaml \
+            --allowed-ranges services/training/automation/allowed_ranges.example.json \
+            --tier free_gpu --provider kaggle --dispatch \
+            --dataset-manifest "$MANIFEST" \
+            --kaggle-kernel-ref "$KERNEL_REF" \
+            --git-ref "${{ github.ref_name }}" \
+            --job-store-dir .training-automation/jobs \
+            --job-id "ci-smoke-${{ github.run_id }}"
+          echo "kernel_ref=$KERNEL_REF" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the Kaggle kernel and fetch its output (checkpoints)
+        id: fetch
+        # Always attempts to pull whatever output exists even on a
+        # polling timeout (fetch_kaggle_kernel_result.py's own fix for
+        # this - see docs/adr/0025-kaggle-dispatch-argv-fix.md), and
+        # --validate-checkpoint fails this step if no loadable
+        # adapter_model.safetensors was actually produced, rather than
+        # reporting success on an empty or corrupt result. --with kaggle:
+        # same KaggleClient/kaggle-CLI gap as the earlier steps.
+        run: >
+          uv run --with kaggle python services/training/scripts/fetch_kaggle_kernel_result.py
+          --kernel-ref "${{ steps.dispatch.outputs.kernel_ref }}"
+          --output-dir .training-automation/kaggle-output
+          --timeout-sec 5400
+          --validate-checkpoint
+
+      - name: Record the real outcome and build the training report
+        if: always()
+        # Guards the case where an earlier step (fetch/ingest/dispatch)
+        # failed before run_experiment.py ever created the job record -
+        # mark_failed/mark_completed both require an existing job, and
+        # crashed with a bare KeyError here the first time an earlier
+        # step failed (real CI evidence, run 31704814436). When the job
+        # was never created, the real failure is already visible in that
+        # earlier step's own log - this step just says so plainly instead
+        # of crashing on top of it.
+        run: |
+          uv run python - <<'PY'
+          from pathlib import Path
+          from training.automation import ExperimentConfigGenerator, FilesystemJobStatusStore, TrainingController
+
+          job_store = FilesystemJobStatusStore(".training-automation/jobs")
+          controller = TrainingController(
+              job_store=job_store, config_generator=ExperimentConfigGenerator(allowed_ranges={}),
+          )
+          job_id = "ci-smoke-${{ github.run_id }}"
+          fetch_succeeded = "${{ steps.fetch.outcome }}" == "success"
+
+          if job_store.get(job_id) is None:
+              Path(".training-automation/report.md").write_text(
+                  f"# {job_id}\n\nNo job record exists - an earlier step (fetch/ingest/build-config/"
+                  "dispatch) failed before this job was ever registered. See that step's own log "
+                  "for the real reason.\n"
+              )
+          else:
+              if fetch_succeeded:
+                  controller.mark_completed(
+                      job_id, result_summary="Kaggle kernel finished - see kaggle-output/ for checkpoints and logs.",
+                  )
+              else:
+                  controller.mark_failed(
+                      job_id, error_message="Kaggle kernel did not finish successfully - see the "
+                      "'Wait for the Kaggle kernel' step's own log for the real reason.",
+                  )
+              report = controller.report(job_id)
+              Path(".training-automation/report.md").write_text(report)
+
+          print(Path(".training-automation/report.md").read_text())
+          PY
+
+      - name: Upload checkpoint + report artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wan22-ti2v5b-kaggle-smoke-${{ github.run_id }}
+          path: |
+            .training-automation/kaggle-output
+            .training-automation/report.md
+            .training-data/manifests
+            .training-data/ci_smoke_config.yaml
           retention-days: 30

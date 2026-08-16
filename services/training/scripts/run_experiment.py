@@ -7,17 +7,17 @@ Actions workflows under .github/workflows/training-*.yml invoke.
 By default it runs in --plan-only mode: it generates the experiment's
 TrainingConfig variant (within the human-set allowed_ranges), for
 PAID_GPU tier enforces CostGuard's approval+budget gate, records a
-JobRecord, and prints a report. That is the entire loop this repository
-currently automates for real.
+JobRecord, and prints a report.
 
---dispatch would additionally call out to KaggleClient/ModalJobLauncher
-to actually push/launch a job - but doing so requires a real training
-entrypoint script (the code_file a Kaggle kernel runs, or the Modal
-app_entrypoint a `modal run` invokes), which this repository deliberately
-does not ship yet: writing the actual Wan 2.2 LoRA training script is
-Phase 9 execution, out of scope for the automation-infrastructure-only
-work this script is part of. --dispatch therefore fails fast with a
-clear message rather than silently doing nothing.
+--dispatch additionally calls out to a real KaggleClient/ModalJobLauncher
+to actually push/launch `services/training/entrypoints/wan22_lora_train.py`
+against a pre-built dataset manifest (`--dataset-manifest`, built ahead
+of time via `services/training/scripts/ingest_dataset.py`) - see
+docs/adr/0024-wan22-real-training-backend.md for why this was safe to
+wire in now that a real training entrypoint exists. Only provider=kaggle
+and provider=modal are supported for --dispatch (the only two providers
+this repository has a real automation client for); any other provider
+fails fast rather than silently doing nothing.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -36,8 +37,13 @@ from training.automation import (
     FilesystemApprovalStore,
     FilesystemJobStatusStore,
     FilesystemUsageLedger,
+    GPUType,
+    KaggleClient,
+    KaggleKernelRef,
+    ModalJobLauncher,
     TrainingController,
 )
+from training.wan22 import build_training_command_for_job, dispatch_via_kaggle, dispatch_via_modal, write_job_inputs
 
 
 def load_allowed_ranges(path: Path) -> dict[str, tuple[float, float]]:
@@ -71,8 +77,33 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--estimated-cost-usd", type=float, default=0.0)
     parser.add_argument(
         "--dispatch", action="store_true",
-        help="Actually call out to the provider. Requires a real training entrypoint - not yet available.",
+        help="Actually call out to the provider (kaggle or modal only) and launch "
+        "services/training/entrypoints/wan22_lora_train.py. Requires --dataset-manifest.",
     )
+    parser.add_argument(
+        "--dataset-manifest", type=Path, default=None,
+        help="JSONL manifest built via services/training/scripts/ingest_dataset.py - required with --dispatch",
+    )
+    parser.add_argument(
+        "--dispatch-runs-dir", type=Path, default=Path(".training-automation/runs"),
+        help="Where the dispatched job's config.yaml/dataset_manifest.jsonl/output/checkpoints live",
+    )
+    parser.add_argument(
+        "--entrypoint", default="services/training/entrypoints/wan22_lora_train.py",
+        help="Path to the training entrypoint script a Kaggle kernel/Modal function runs. "
+        "dispatch_via_kaggle writes kernel-metadata.json into this path's own directory.",
+    )
+    parser.add_argument("--kaggle-kernel-ref", default=None, help="'owner_slug/kernel_slug' - required for provider=kaggle")
+    parser.add_argument(
+        "--git-ref", default="master",
+        help="Branch/tag/commit of this repo for the Kaggle kernel to clone (it has no persistent "
+        "disk, so it clones fresh every run - see docs/adr/0025-kaggle-dispatch-argv-fix.md). "
+        "Dispatching from a feature branch in CI must pass that branch name here "
+        "(e.g. ${{ github.ref_name }}), not the default 'master'.",
+    )
+    parser.add_argument("--modal-gpu-type", default="T4", choices=[t.value for t in GPUType])
+    parser.add_argument("--modal-function-timeout-sec", type=int, default=3600)
+    parser.add_argument("--modal-max-wall-clock-sec", type=int, default=4200)
     return parser
 
 
@@ -114,13 +145,49 @@ def main(argv: list[str] | None = None) -> int:
         print(controller.report(job.job_id))
         return 0
 
-    print(
-        "No training entrypoint is wired into this script yet, so real dispatch is not available "
-        "- see docs/adr/0022-training-automation-layer.md.",
-        file=sys.stderr,
-    )
-    controller.mark_failed(job.job_id, error_message="dispatch attempted with no training entrypoint configured")
-    return 1
+    if args.dataset_manifest is None:
+        print("--dispatch requires --dataset-manifest (build one with ingest_dataset.py first)", file=sys.stderr)
+        controller.mark_failed(job.job_id, error_message="dispatch attempted with no --dataset-manifest supplied")
+        return 1
+    if not args.dataset_manifest.is_file():
+        print(f"--dataset-manifest not found: {args.dataset_manifest}", file=sys.stderr)
+        controller.mark_failed(job.job_id, error_message=f"dataset manifest not found: {args.dataset_manifest}")
+        return 1
+
+    command = build_training_command_for_job(job, base_dir=str(args.dispatch_runs_dir), entrypoint=args.entrypoint)
+    Path(command.dataset_manifest_path).parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(args.dataset_manifest, command.dataset_manifest_path)
+    write_job_inputs(job, command)
+
+    try:
+        if args.provider == "kaggle":
+            if not args.kaggle_kernel_ref or "/" not in args.kaggle_kernel_ref:
+                raise ValueError("--kaggle-kernel-ref 'owner_slug/kernel_slug' is required for provider=kaggle")
+            owner_slug, _, kernel_slug = args.kaggle_kernel_ref.partition("/")
+            kernel_ref = KaggleKernelRef(owner_slug=owner_slug, kernel_slug=kernel_slug)
+            result = dispatch_via_kaggle(job, command, KaggleClient(), kernel_ref, git_ref=args.git_ref)
+            print(f"Pushed Kaggle kernel {kernel_ref.full_ref}: {result}")
+        elif args.provider == "modal":
+            handle = dispatch_via_modal(
+                job, command, ModalJobLauncher(),
+                gpu_type=GPUType(args.modal_gpu_type),
+                function_timeout_sec=args.modal_function_timeout_sec,
+                max_wall_clock_sec=args.modal_max_wall_clock_sec,
+            )
+            print(f"Launched Modal app {handle.app_name} at {handle.started_at.isoformat()}")
+        else:
+            raise ValueError(
+                f"--dispatch only supports provider in ('kaggle', 'modal'), got {args.provider!r} - no "
+                "automation client exists in services/training/automation for this provider"
+            )
+    except Exception as exc:  # noqa: BLE001 - top-level CLI boundary, real failure reason goes to stderr
+        print(f"Dispatch failed: {exc}", file=sys.stderr)
+        controller.mark_failed(job.job_id, error_message=f"dispatch failed: {exc}")
+        return 1
+
+    controller.mark_started(job.job_id)
+    print(controller.report(job.job_id))
+    return 0
 
 
 if __name__ == "__main__":

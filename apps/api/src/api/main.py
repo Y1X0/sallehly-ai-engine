@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from config_sdk import get_settings
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from observability import configure_logging, configure_tracing, context, render_metrics
 
 from .middleware import ObservabilityMiddleware, SecurityHeadersMiddleware, apply_security_headers
@@ -66,7 +67,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     body: dict[str, str] = {"detail": "Internal server error"}
     if correlation_id is not None:
         body["correlation_id"] = correlation_id
-    return apply_security_headers(JSONResponse(status_code=500, content=body))
+    return apply_security_headers(JSONResponse(status_code=500, content=body), path=request.url.path)
 
 
 app.include_router(auth.router)
@@ -79,6 +80,54 @@ app.include_router(assets.router)
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+_STATIC_DIR = Path(__file__).parent / "static"
+_DEMO_DATA_ROOT = (Path.cwd() / ".docker-data").resolve()
+"""Sandbox for GET /demo/asset-content: both `LocalProvider` (render
+stubs) and `LocalFilesystemStorageProvider` (registered assets) default
+to paths under `./.docker-data` (see apps/api/src/api/state.py) - this
+demo-only endpoint refuses to read anything outside that directory."""
+
+
+@app.get("/demo")
+def demo_page() -> FileResponse:
+    """Serves the zero-setup click-through demo (apps/api/src/api/static/demo.html):
+    prompt in, real CreativeDirector/ShotPlanner/CreativeCompiler/
+    ProjectLifecycle pipeline runs, real generated video artifacts out
+    (COMPUTE_PROVIDER=local-inference - see
+    video_engine_adapter.compute.LocalInferenceProvider) or a mock job
+    payload (COMPUTE_PROVIDER=local, the server's unset-env-var default).
+    Uses the same running server and its AppState - no separate build
+    step or frontend project required."""
+    return FileResponse(_STATIC_DIR / "demo.html")
+
+
+_VIDEO_MEDIA_TYPES = {".mp4": "video/mp4", ".webm": "video/webm"}
+
+
+@app.get("/demo/asset-content")
+def demo_asset_content(uri: str) -> Response:
+    """Lets the demo page preview or play a generated artifact. Assets
+    are `file://` paths under `.docker-data/` - either a real `.mp4`
+    (LocalInferenceProvider's actual generated video - streamed back as
+    `video/mp4` so the page's `<video>` tag can play it directly) or a
+    JSON stub (LocalProvider's mock render, or
+    LocalFilesystemStorageProvider's uploads). Refuses anything outside
+    `.docker-data/` to keep this demo convenience from becoming an
+    arbitrary file read.
+    """
+    if not uri.startswith("file://"):
+        raise HTTPException(status_code=400, detail="Only file:// asset URIs can be previewed here")
+    path = Path(uri.removeprefix("file://")).resolve()
+    if _DEMO_DATA_ROOT != path and _DEMO_DATA_ROOT not in path.parents:
+        raise HTTPException(status_code=403, detail="Refusing to read a path outside .docker-data/")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"No such file: {path}")
+    video_media_type = _VIDEO_MEDIA_TYPES.get(path.suffix.lower())
+    if video_media_type is not None:
+        return FileResponse(path, media_type=video_media_type)
+    return Response(content=path.read_text(), media_type="application/json")
 
 
 @app.get("/metrics")

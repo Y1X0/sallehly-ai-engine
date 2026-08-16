@@ -104,6 +104,22 @@ class RunPodProvider(IComputeProvider):
     def cancel(self, handle: ComputeJobHandle) -> None:
         self._request("POST", f"/cancel/{handle.external_job_id}")
 
+    def health_check(self) -> dict:
+        """Real `GET /health` call against this endpoint - RunPod's own
+        documented worker/job-queue health surface (path confirmed
+        against the official `runpod` PyPI package's
+        `endpoint.Endpoint.health()` implementation:
+        `f"{self.endpoint_id}/health"`). Returns RunPod's raw JSON
+        (typically `{"jobs": {...}, "workers": {...}}` - exact field
+        names are RunPod's own and not independently re-verified here
+        beyond confirming the path itself; treat them as informational).
+        Raises the same `RunPodComputeError` as every other call on
+        transport failure or a non-2xx response - used by
+        infra/runpod/check_health.py after a real deployment to confirm
+        the endpoint is actually reachable and has ready workers before
+        relying on it, not just that `create_endpoint()` returned an id."""
+        return self._request("GET", "/health")
+
     def _request(self, method: str, path: str, **kwargs: object) -> dict:
         last_error: RunPodComputeError | None = None
 

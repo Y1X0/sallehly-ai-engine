@@ -1,0 +1,90 @@
+name: Kaggle - Diagnose dataset-attach warning ($0, fully automated, no GPU)
+
+# 10 real dispatches of training-phase2-free-gpu-experiment.yml all hit
+# the identical "not valid dataset sources and could not be added to
+# the kernel" warning at push time - unchanged across 0s/30s/90s
+# processing delays, and unchanged after making the dataset title
+# match its slug exactly (the fix that *did* resolve the analogous
+# kernel-slug mismatch). infra/kaggle/dispatch_inference.py (this
+# project's other real Kaggle dispatch path) uses the same
+# non-slug dataset-title pattern, which rules that out as the cause
+# too. This workflow isolates the dataset-upload/kernel-attach step
+# completely from training/LoRA code and from any GPU request. Steps
+# "upload" and "push-kernel" are fully automated (no browser needed):
+# push-kernel probes real dataset readiness via `datasets download`
+# (not the persistently-403ing `datasets status`) and then pushes a
+# trivial no-GPU kernel with the dataset attached via production-
+# identical code, so the "not valid dataset sources" warning (if it
+# happens) shows up directly in that step's own log - see
+# infra/kaggle/diagnose_dataset_attach.py's own module docstring for
+# full details, including the optional manual-UI "pull-kernel-metadata"
+# step.
+#
+# Required repository secrets: same KAGGLE_USERNAME/KAGGLE_API_TOKEN as
+# kaggle-free-inference.yml - see infra/kaggle/README.md.
+
+on:
+  push:
+    branches:
+      - claude/sallehly-engine-audit-vnxs4f
+  workflow_dispatch:
+    inputs:
+      step:
+        description: "Which part of the diagnostic to run"
+        required: true
+        type: choice
+        options:
+          - upload
+          - push-kernel
+          - pull-kernel-metadata
+      dataset_ref:
+        description: "step=push-kernel only: dataset_slug (or owner_slug/dataset_slug) printed by the upload step"
+        required: false
+        default: ""
+      kernel_ref:
+        description: "step=pull-kernel-metadata only: owner_slug/kernel_slug of a kernel a human manually attached the dataset to in the Kaggle UI"
+        required: false
+        default: ""
+
+concurrency:
+  group: kaggle-diagnose-dataset-attach
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Sync workspace (base deps only, no torch/diffusers)
+        run: uv sync --all-packages
+
+      - name: Verify Kaggle authentication (fails fast, before any real work below)
+        run: |
+          if [ -z "$KAGGLE_USERNAME" ] || [ -z "$KAGGLE_API_TOKEN" ]; then
+            echo "KAGGLE_USERNAME / KAGGLE_API_TOKEN repo secrets are not set - see infra/kaggle/README.md" >&2
+            exit 1
+          fi
+          OUTPUT=$(uv run --with kaggle kaggle kernels list --mine 2>&1) || {
+            echo "$OUTPUT" >&2
+            echo "Real 'kaggle kernels list --mine' call failed - see the output above for the actual reason." >&2
+            exit 1
+          }
+          echo "$OUTPUT"
+
+      - name: Run the diagnostic step
+        run: |
+          uv run --with kaggle python infra/kaggle/diagnose_dataset_attach.py \
+            --step "${{ github.event.inputs.step }}" \
+            --dataset-ref "${{ github.event.inputs.dataset_ref }}" \
+            --kernel-ref "${{ github.event.inputs.kernel_ref }}"
